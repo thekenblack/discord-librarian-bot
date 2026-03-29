@@ -38,12 +38,12 @@ class LibrarianDB:
                 )
             """)
 
-            # 별칭 (검색 확장용)
+            # 별칭 그룹 (검색 확장용)
             await db.execute("""
-                CREATE TABLE IF NOT EXISTS aliases (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name    TEXT NOT NULL,
-                    alias   TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS alias_groups (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id INTEGER NOT NULL,
+                    name     TEXT NOT NULL
                 )
             """)
 
@@ -77,6 +77,12 @@ class LibrarianDB:
                     pass
 
             await _add_column("knowledge_base", "alias", "TEXT")
+
+            # aliases → alias_groups 마이그레이션
+            try:
+                await db.execute("DROP TABLE IF EXISTS aliases")
+            except Exception:
+                pass
 
             await db.commit()
             logger.info("사서 DB 초기화 완료")
@@ -126,27 +132,24 @@ class LibrarianDB:
                             fc += 1
                 logger.info(f"지식 로드: {category} ({fc}건)")
                 total += fc
-            # 별칭도 aliases 테이블에 등록
-            await db.execute("DELETE FROM aliases WHERE name LIKE 'kb:%'")
+            # 별칭 그룹 등록
+            await db.execute("DELETE FROM alias_groups")
             cursor = await db.execute("SELECT content, alias FROM knowledge_base WHERE alias IS NOT NULL")
             alias_count = 0
+            group_id = 0
             for row in await cursor.fetchall():
-                content_short = row[0][:50]
-                for a in row[1].split(","):
-                    a = a.strip()
-                    if a:
-                        await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)",
-                                        (f"kb:{content_short}", a))
-                        # 역방향도 등록 (별칭 → 원문 키워드)
-                        # content에서 핵심 단어 추출 (콜론 앞 또는 괄호 앞)
-                        main_name = content_short.split(":")[0].split("(")[0].strip()
-                        if main_name and main_name != a:
-                            await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)",
-                                            (a, main_name))
-                        alias_count += 1
+                main_name = row[0].split(":")[0].split("(")[0].strip()
+                aliases = [a.strip() for a in row[1].split(",") if a.strip()]
+                if main_name and aliases:
+                    group_id += 1
+                    # 대표 이름 + 모든 별칭을 같은 그룹에
+                    all_names = [main_name] + aliases
+                    for n in all_names:
+                        await db.execute("INSERT INTO alias_groups (group_id, name) VALUES (?, ?)", (group_id, n))
+                    alias_count += len(aliases)
 
             await db.commit()
-            logger.info(f"지식 베이스 로드 완료: 총 {total}건, 별칭 {alias_count}건")
+            logger.info(f"지식 베이스 로드 완료: 총 {total}건, 별칭 그룹 {group_id}개 ({alias_count}건)")
 
     async def cleanup_learned(self):
         """질문형 학습 데이터 정리"""
@@ -191,34 +194,50 @@ class LibrarianDB:
 
         return result
 
-    # ── 별칭 ──────────────────────────────────────────────
+    # ── 별칭 그룹 ────────────────────────────────────────
 
     async def add_alias(self, name: str, alias: str):
+        """name과 alias를 같은 그룹에 넣음. 기존 그룹이 있으면 합류."""
         async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            # name 또는 alias가 이미 속한 그룹 찾기
             cursor = await db.execute(
-                "SELECT id FROM aliases WHERE name = ? AND alias = ?", (name, alias))
-            if not await cursor.fetchone():
-                await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)", (name, alias))
-                await db.commit()
+                "SELECT group_id FROM alias_groups WHERE name = ? OR name = ?", (name, alias))
+            row = await cursor.fetchone()
+            if row:
+                gid = row["group_id"]
+            else:
+                # 새 그룹 생성
+                cursor = await db.execute("SELECT COALESCE(MAX(group_id), 0) + 1 FROM alias_groups")
+                gid = (await cursor.fetchone())[0]
+
+            # 둘 다 그룹에 추가 (중복 방지)
+            for n in (name, alias):
+                cursor = await db.execute(
+                    "SELECT id FROM alias_groups WHERE group_id = ? AND name = ?", (gid, n))
+                if not await cursor.fetchone():
+                    await db.execute("INSERT INTO alias_groups (group_id, name) VALUES (?, ?)", (gid, n))
+            await db.commit()
 
     async def expand_keyword(self, keyword: str) -> list[str]:
-        """키워드에 대한 별칭을 찾아서 검색어 목록 확장"""
+        """키워드가 속한 그룹의 모든 이름으로 검색어 확장"""
         like = f"%{keyword}%"
         keywords = [keyword]
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            # keyword가 name이면 alias들 추가
+            # 키워드가 속한 그룹 ID 찾기
             cursor = await db.execute(
-                "SELECT alias FROM aliases WHERE name LIKE ?", (like,))
+                "SELECT group_id FROM alias_groups WHERE name LIKE ?", (like,))
+            group_ids = set()
             for row in await cursor.fetchall():
-                if row["alias"] not in keywords:
-                    keywords.append(row["alias"])
-            # keyword가 alias면 name 추가
-            cursor = await db.execute(
-                "SELECT name FROM aliases WHERE alias LIKE ?", (like,))
-            for row in await cursor.fetchall():
-                if row["name"] not in keywords:
-                    keywords.append(row["name"])
+                group_ids.add(row["group_id"])
+            # 해당 그룹의 모든 이름 가져오기
+            for gid in group_ids:
+                cursor = await db.execute(
+                    "SELECT name FROM alias_groups WHERE group_id = ?", (gid,))
+                for row in await cursor.fetchall():
+                    if row["name"] not in keywords:
+                        keywords.append(row["name"])
         return keywords
 
     # ── 저장 ──────────────────────────────────────────────
