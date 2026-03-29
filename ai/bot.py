@@ -464,10 +464,24 @@ class AILibrarianBot(discord.Client):
                 try:
                     # 히스토리 없이 유저 메시지만으로 재시도
                     clean_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
-                    idx, client = _next_client()
-                    if client:
-                        response = client.models.generate_content(
-                            model=MODEL, contents=clean_history, config=_clean_config())
+
+                    def _retry_call(contents):
+                        last_err = None
+                        for _ in range(len(self._gemini_clients) * 2):
+                            ri, rc = _next_client()
+                            if rc is None:
+                                break
+                            try:
+                                return rc.models.generate_content(
+                                    model=MODEL, contents=contents, config=_clean_config())
+                            except Exception as e:
+                                last_err = e
+                                continue
+                        if last_err:
+                            raise last_err
+
+                    response = _retry_call(clean_history)
+                    if response:
                         # 도구 호출 루프
                         for _ in range(5):
                             fc = None
@@ -487,8 +501,7 @@ class AILibrarianBot(discord.Client):
                             clean_history.append(response.candidates[0].content)
                             clean_history.append(types.Content(role="user", parts=[types.Part.from_function_response(
                                 name=fc.name, response=tool_data)]))
-                            response = client.models.generate_content(
-                                model=MODEL, contents=clean_history, config=_clean_config())
+                            response = _retry_call(clean_history)
                         reply_parts = []
                         for part in response.candidates[0].content.parts:
                             if part.text:
