@@ -231,6 +231,12 @@ class AILibrarianBot(discord.Client):
                                 if past_replies and norm in past_replies:
                                     logger.warning(f"웹 검색 반복: {cleaned[:50]}...")
                                     return ""
+                                # 웹 검색 결과를 지식으로 저장
+                                try:
+                                    await self.librarian_db.save(f"[웹검색] {query}: {cleaned[:200]}")
+                                    logger.info(f"웹 검색 지식 저장: {query}")
+                                except Exception:
+                                    pass
                                 return cleaned
                 return ""
             except ClientError as e:
