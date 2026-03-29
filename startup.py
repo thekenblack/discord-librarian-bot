@@ -9,24 +9,22 @@ import sys
 import os
 import signal
 
-# venv 자동 설치 + 감지
+# venv 자동 설치 + 감지 (리눅스만)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VENV_DIR = os.path.join(BASE_DIR, "venv")
-if sys.platform == "win32":
-    VENV_PYTHON = os.path.join(VENV_DIR, "Scripts", "python.exe")
-else:
+if sys.platform != "win32":
+    VENV_DIR = os.path.join(BASE_DIR, "venv")
     VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
 
-if not os.path.exists(VENV_PYTHON):
-    print("[설치] venv 생성 중...")
-    subprocess.run([sys.executable, "-m", "venv", VENV_DIR], check=True)
-    print("[설치] 패키지 설치 중...")
-    subprocess.run([VENV_PYTHON, "-m", "pip", "install", "-r",
-                    os.path.join(BASE_DIR, "requirements.txt")], check=True)
-    print("[설치] 완료!")
+    if not os.path.exists(VENV_PYTHON):
+        print("[설치] venv 생성 중...")
+        subprocess.run([sys.executable, "-m", "venv", VENV_DIR], check=True)
+        print("[설치] 패키지 설치 중...")
+        subprocess.run([VENV_PYTHON, "-m", "pip", "install", "-r",
+                        os.path.join(BASE_DIR, "requirements.txt")], check=True)
+        print("[설치] 완료!")
 
-if sys.executable != VENV_PYTHON:
-    os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
+    if sys.executable != VENV_PYTHON:
+        os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
 
 RESTART_CODE = 42
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
