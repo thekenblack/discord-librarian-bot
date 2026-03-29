@@ -572,6 +572,7 @@ class AILibrarianBot(discord.Client):
                     idx = line.find("]: ")
                     if idx != -1:
                         past_replies.add(line[idx + 3:])
+            logger.info(f"반복 비교: reply={reply[:50] if reply else '없음'}... past={len(past_replies)}개")
             if reply and reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
@@ -617,6 +618,28 @@ class AILibrarianBot(discord.Client):
                             if not fc:
                                 break
                             logger.info(f"도구 호출 (재시도): {fc.name}({fc.args})")
+
+                            # 재시도에서도 web_search 처리
+                            if fc.name == "web_search":
+                                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
+                                logger.info(f"재시도 웹 검색: {query}")
+                                try:
+                                    web_h = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                                    web_cfg = types.GenerateContentConfig(
+                                        system_instruction=clean_prompt,
+                                        tools=google_search_tool,
+                                        max_output_tokens=500, temperature=0.9)
+                                    wr = _retry_call(web_h)
+                                    if wr and wr.candidates and wr.candidates[0].content.parts:
+                                        for p in wr.candidates[0].content.parts:
+                                            if p.text:
+                                                reply = self._clean_reply(p.text)
+                                                if reply:
+                                                    return reply, file_to_send, ai_saved
+                                except Exception as e:
+                                    logger.error(f"재시도 웹 검색 실패: {e}")
+                                break
+
                             tool_args = dict(fc.args) if fc.args else {}
                             if fc.name in ("search", "save_memory"):
                                 tool_args["_user_id"] = user_id
