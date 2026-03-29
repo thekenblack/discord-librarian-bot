@@ -148,6 +148,32 @@ class AdminCog(commands.Cog):
         await interaction.followup.send(embed=e, ephemeral=True)
 
 
+    # ── /admin log ──────────────────────────────────────────
+    @admin.command(name="log", description="AI 봇 로그 파일 전송")
+    async def admin_log(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai_bot.log")
+        if not os.path.exists(log_path):
+            return await interaction.followup.send(
+                embed=error_embed("로그 없음", "로그 파일이 없습니다."), ephemeral=True
+            )
+        try:
+            await interaction.user.send(
+                content="AI 봇 로그",
+                file=discord.File(log_path, filename="ai_bot.log")
+            )
+            await interaction.followup.send(
+                embed=success_embed("로그 전송", "DM으로 로그 파일을 전송했습니다."), ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                embed=error_embed("전송 실패", "DM을 보낼 수 없습니다."), ephemeral=True
+            )
+
     # ── /admin entries ──────────────────────────────────────
     @admin.command(name="entries", description="전체 엔트리 편집/삭제")
     async def admin_entries(self, interaction: discord.Interaction):
