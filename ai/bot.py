@@ -288,6 +288,7 @@ class AILibrarianBot(discord.Client):
 
         # 빈 응답(안전 필터 차단 등)이면 무시
         if not reply_text and not file_to_send:
+            logger.warning("모든 시도 실패 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
         # 응답 로그
@@ -664,8 +665,8 @@ class AILibrarianBot(discord.Client):
                                     reply_parts.append(cleaned)
                         reply = "\n".join(reply_parts) if reply_parts else ""
                         # 재시도에서도 같은 답이면 에러
-                        if _normalize(reply) in past_replies:
-                            logger.warning("재시도에서도 동일 - 에러 처리")
+                        if reply and _normalize(reply) in past_replies:
+                            logger.warning(f"2차 재시도에서도 반복: {reply[:50]}...")
                             reply = ""
                 except Exception as e:
                     logger.error(f"재시도 실패: {e}")
@@ -700,8 +701,11 @@ class AILibrarianBot(discord.Client):
                             for part in web_response.candidates[0].content.parts:
                                 if part.text:
                                     cleaned = self._clean_reply(part.text)
-                                    if cleaned and _normalize(cleaned) not in past_replies:
-                                        reply = cleaned
+                                    if cleaned:
+                                        if _normalize(cleaned) in past_replies:
+                                            logger.warning(f"3차 웹 폴백에서도 반복: {cleaned[:50]}...")
+                                        else:
+                                            reply = cleaned
                                         break
                 except Exception as e:
                     logger.error(f"웹 검색 폴백 실패: {e}")
