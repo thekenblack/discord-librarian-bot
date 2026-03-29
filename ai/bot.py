@@ -4,6 +4,7 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 
 import os
 import json
+import asyncio
 import discord
 import logging
 from collections import deque
@@ -20,7 +21,7 @@ from ai.tools import library_tools, execute_tool
 logger = logging.getLogger("AILibrarian")
 
 MODEL = "gemini-2.5-flash-lite"
-BUFFER_SIZE = 50
+BUFFER_SIZE = 15
 
 
 class AILibrarianBot(discord.Client):
@@ -37,6 +38,7 @@ class AILibrarianBot(discord.Client):
         self.chat_histories: dict[int, list] = {}  # channel_id -> Gemini 대화 턴
         self.channel_buffers: dict[int, deque] = {}  # channel_id -> 최근 메시지 버퍼
         self.global_buffer: deque = deque(maxlen=BUFFER_SIZE)  # 전체 채널 통합 버퍼
+        self._channel_locks: dict[int, asyncio.Lock] = {}  # 채널별 동시 요청 방지
         self._ready = False
 
         # 기억 트리거 / 공통 기억 패턴 로드
@@ -104,7 +106,7 @@ class AILibrarianBot(discord.Client):
         # 3. 유저 최근 발언 - 현재 채널 히스토리에서 필터
         user = self.get_user(int(user_id))
         user_name = user.display_name if user else user_id
-        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}:")][-10:]
+        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}:")][-5:]
 
         return {
             "channel": "\n".join(ch_lines),
@@ -152,27 +154,43 @@ class AILibrarianBot(discord.Client):
             text,
         )
 
-        # 멘션이 아니면 여기서 끝
-        if not self.user or self.user not in message.mentions:
+        # 멘션 체크 (유저 멘션 또는 역할 멘션)
+        bot_mentioned = self.user and self.user in message.mentions
+        role_mentioned = False
+        if not bot_mentioned and self.user and message.guild:
+            bot_member = message.guild.get_member(self.user.id)
+            if bot_member:
+                role_mentioned = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
+
+        if not bot_mentioned and not role_mentioned:
             return
 
         # 멘션 제거해서 실제 메시지 추출
         for mention in [f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
             text = text.replace(mention, "")
+        # 역할 멘션 태그도 제거
+        for role in message.role_mentions:
+            text = text.replace(f"<@&{role.id}>", "")
         text = text.strip()
 
         # 빈 멘션이면 빈 문자열 그대로 전달 (프롬프트에서 처리)
         if not text:
             text = ""
 
-        async with message.channel.typing():
-            reply_text, file_to_send = await self._ask_gemini(
-                channel_id=message.channel.id,
-                user_id=str(message.author.id),
-                user_name=message.author.display_name,
-                user_text=text,
-                guild=message.guild,
-            )
+        # 채널별 락으로 동시 요청 방지
+        ch_id = message.channel.id
+        if ch_id not in self._channel_locks:
+            self._channel_locks[ch_id] = asyncio.Lock()
+
+        async with self._channel_locks[ch_id]:
+            async with message.channel.typing():
+                reply_text, file_to_send = await self._ask_gemini(
+                    channel_id=ch_id,
+                    user_id=str(message.author.id),
+                    user_name=message.author.display_name,
+                    user_text=text,
+                    guild=message.guild,
+                )
 
         # 기억 트리거 감지 → 공통 패턴 여부에 따라 분기 저장
         if text and any(kw in text.lower() for kw in self._memory_triggers):
@@ -225,7 +243,7 @@ class AILibrarianBot(discord.Client):
         dynamic_prompt += f"\n\n## 현재 대화 상대\n유저 이름: {user_name}\n유저 ID: {user_id}\n권한: {role}"
 
         # 저장된 기억 자동 로드
-        memories = await self.db.recall_memories(20)
+        memories = await self.db.recall_memories(10)
         if memories:
             mem_lines = [f"- {m['content']}" for m in memories]
             dynamic_prompt += f"\n\n## 저장된 기억\n" + "\n".join(mem_lines)
@@ -348,8 +366,8 @@ class AILibrarianBot(discord.Client):
             history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
 
             # 히스토리 20개 초과 시 오래된 것 제거
-            if len(history) > 20:
-                self.chat_histories[channel_id] = history[-20:]
+            if len(history) > 10:
+                self.chat_histories[channel_id] = history[-10:]
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
