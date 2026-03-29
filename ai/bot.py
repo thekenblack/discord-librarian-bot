@@ -708,6 +708,7 @@ class AILibrarianBot(discord.Client):
                         if web_response.candidates and web_response.candidates[0].content.parts:
                             for part in web_response.candidates[0].content.parts:
                                 if part.text:
+                                    logger.info(f"웹 폴백 원문: {part.text[:100]}")
                                     cleaned = self._clean_reply(part.text)
                                     if cleaned:
                                         if _normalize(cleaned) in past_replies:
