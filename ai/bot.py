@@ -18,7 +18,7 @@ from library_db import LibraryDB
 from librarian_db import LibrarianDB
 from config import UPLOAD_DIR, ADMIN_IDS, LIGHTNING_ADDRESS
 from ai.persona import Persona
-from ai.tools import library_tools, google_search_tool, execute_tool
+from ai.tools import library_tools, execute_tool
 
 logger = logging.getLogger("AILibrarian")
 
@@ -160,6 +160,49 @@ class AILibrarianBot(discord.Client):
         text = "\n".join(cleaned).strip()
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return text
+
+    async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
+        """Google Search로 웹 검색 후 정리된 답변 반환"""
+        from ai.tools import google_search_tool
+        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+        web_config = types.GenerateContentConfig(
+            system_instruction=prompt,
+            tools=google_search_tool,
+            max_output_tokens=500,
+            temperature=1.0,
+        )
+        # 멀티 키 시도
+        for _ in range(len(self._gemini_clients) * 2):
+            today = date.today()
+            self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
+            idx = self._client_index
+            self._client_index = (self._client_index + 1) % len(self._gemini_clients)
+            if idx in self._dead_until:
+                continue
+            client = self._gemini_clients[idx]
+            try:
+                response = client.models.generate_content(
+                    model=MODEL, contents=web_history, config=web_config)
+                if response.candidates and response.candidates[0].content.parts:
+                    for part in response.candidates[0].content.parts:
+                        if part.text:
+                            logger.info(f"웹 검색 원문: {part.text[:100]}")
+                            cleaned = self._clean_reply(part.text)
+                            if cleaned:
+                                norm = cleaned.replace("\ufe0f", "").strip()
+                                if past_replies and norm in past_replies:
+                                    logger.warning(f"웹 검색 반복: {cleaned[:50]}...")
+                                    return ""
+                                return cleaned
+                return ""
+            except ClientError as e:
+                if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
+                    self._dead_until[idx] = date.today() + timedelta(days=1)
+                    logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
+                continue
+            except Exception:
+                continue
+        return ""
 
     async def on_ready(self):
         await self.library_db.init()
@@ -437,24 +480,8 @@ class AILibrarianBot(discord.Client):
 
             if use_web:
                 logger.info("웹 검색 모드")
-                web_config = types.GenerateContentConfig(
-                    system_instruction=dynamic_prompt,
-                    tools=google_search_tool,
-                    max_output_tokens=500,
-                    temperature=0.8,
-                )
-                idx, client = _next_client()
-                if client:
-                    response = client.models.generate_content(
-                        model=MODEL, contents=history, config=web_config)
-                    if response.candidates and response.candidates[0].content.parts:
-                        for part in response.candidates[0].content.parts:
-                            if part.text:
-                                cleaned = self._clean_reply(part.text)
-                                if cleaned and _normalize(cleaned) not in past_replies:
-                                    reply = cleaned
-                                    break
-                    if reply:
+                reply = await self._web_search(user_text, dynamic_prompt, past_replies)
+                if reply:
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
                         if len(history) > 6:
                             self.chat_histories[channel_id] = history[-6:]
@@ -483,33 +510,14 @@ class AILibrarianBot(discord.Client):
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                     logger.info(f"AI 판단 웹 검색: {query}")
-                    try:
-                        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-                        web_config = types.GenerateContentConfig(
-                            system_instruction=dynamic_prompt,
-                            tools=google_search_tool,
-                            max_output_tokens=500,
-                            temperature=0.8,
-                        )
-                        idx, client = _next_client()
-                        if client:
-                            web_response = client.models.generate_content(
-                                model=MODEL, contents=web_history, config=web_config)
-                            if web_response.candidates and web_response.candidates[0].content.parts:
-                                for part in web_response.candidates[0].content.parts:
-                                    if part.text:
-                                        reply = self._clean_reply(part.text)
-                                        if reply:
-                                            break
-                            if reply:
-                                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                                if len(history) > 6:
-                                    self.chat_histories[channel_id] = history[-6:]
-                                if len(reply) > 2000:
-                                    reply = reply[:1997] + "..."
-                                return reply, file_to_send, ai_saved
-                    except Exception as e:
-                        logger.error(f"웹 검색 실패: {e}")
+                    reply = await self._web_search(query, dynamic_prompt, past_replies)
+                    if reply:
+                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                        if len(history) > 6:
+                            self.chat_histories[channel_id] = history[-6:]
+                        if len(reply) > 2000:
+                            reply = reply[:1997] + "..."
+                        return reply, file_to_send, ai_saved
                     break
 
                 tool_args = dict(fc.args) if fc.args else {}
@@ -522,33 +530,14 @@ class AILibrarianBot(discord.Client):
                 # search 결과 없으면 웹 검색 폴백
                 if fc.name == "search" and "result" in tool_data and "정보 없음" in tool_data.get("result", ""):
                     logger.info("search 결과 없음 - 웹 검색 시도")
-                    try:
-                        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
-                        web_config = types.GenerateContentConfig(
-                            system_instruction=dynamic_prompt,
-                            tools=google_search_tool,
-                            max_output_tokens=500,
-                            temperature=0.8,
-                        )
-                        idx, client = _next_client()
-                        web_response = client.models.generate_content(
-                            model=MODEL, contents=web_history, config=web_config) if client else None
-                        if web_response and web_response.candidates and web_response.candidates[0].content.parts:
-                            for part in web_response.candidates[0].content.parts:
-                                if part.text:
-                                    reply = self._clean_reply(part.text)
-                                    if reply:
-                                        logger.info(f"웹 검색 답변: {reply[:100]}")
-                                        break
-                            if reply:
-                                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                                if len(history) > 6:
-                                    self.chat_histories[channel_id] = history[-6:]
-                                if len(reply) > 2000:
-                                    reply = reply[:1997] + "..."
-                                return reply, file_to_send, ai_saved
-                    except Exception as e:
-                        logger.error(f"웹 검색 실패: {e}")
+                    reply = await self._web_search(user_text, dynamic_prompt, past_replies)
+                    if reply:
+                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                        if len(history) > 6:
+                            self.chat_histories[channel_id] = history[-6:]
+                        if len(reply) > 2000:
+                            reply = reply[:1997] + "..."
+                        return reply, file_to_send, ai_saved
 
                 # send_file 액션: 실제 파일 전송 준비
                 if tool_data.get("_action") == "send_file":
@@ -636,23 +625,9 @@ class AILibrarianBot(discord.Client):
                             if fc.name == "web_search":
                                 query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                                 logger.info(f"재시도 웹 검색: {query}")
-                                try:
-                                    web_h = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-                                    web_cfg = types.GenerateContentConfig(
-                                        system_instruction=clean_prompt,
-                                        tools=google_search_tool,
-                                        max_output_tokens=500, temperature=0.9)
-                                    ri, rc = _next_client()
-                                    wr = rc.models.generate_content(
-                                        model=MODEL, contents=web_h, config=web_cfg) if rc else None
-                                    if wr and wr.candidates and wr.candidates[0].content.parts:
-                                        for p in wr.candidates[0].content.parts:
-                                            if p.text:
-                                                reply = self._clean_reply(p.text)
-                                                if reply:
-                                                    return reply, file_to_send, ai_saved
-                                except Exception as e:
-                                    logger.error(f"재시도 웹 검색 실패: {e}")
+                                reply = await self._web_search(query, clean_prompt, past_replies)
+                                if reply:
+                                    return reply, file_to_send, ai_saved
                                 break
 
                             tool_args = dict(fc.args) if fc.args else {}
@@ -683,41 +658,9 @@ class AILibrarianBot(discord.Client):
             # 빈 응답이면 웹 검색 폴백
             if not reply and user_text:
                 logger.info("웹 검색 폴백 시도")
-                try:
-                    web_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
-                    clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
-                    web_prompt = "\n\n".join(p for p in clean_parts if p)
-                    web_config = types.GenerateContentConfig(
-                        system_instruction=web_prompt,
-                        tools=google_search_tool,
-                        max_output_tokens=500,
-                        temperature=1.0,
-                    )
-                    web_response = None
-                    for _ in range(len(self._gemini_clients) * 2):
-                        idx, client = _next_client()
-                        if client is None:
-                            break
-                        try:
-                            web_response = client.models.generate_content(
-                                model=MODEL, contents=web_history, config=web_config)
-                            break
-                        except Exception:
-                            continue
-                    if web_response:
-                        if web_response.candidates and web_response.candidates[0].content.parts:
-                            for part in web_response.candidates[0].content.parts:
-                                if part.text:
-                                    logger.info(f"웹 폴백 원문: {part.text[:100]}")
-                                    cleaned = self._clean_reply(part.text)
-                                    if cleaned:
-                                        if _normalize(cleaned) in past_replies:
-                                            logger.warning(f"3차 웹 폴백에서도 반복: {cleaned[:50]}...")
-                                        else:
-                                            reply = cleaned
-                                        break
-                except Exception as e:
-                    logger.error(f"웹 검색 폴백 실패: {e}")
+                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
+                web_prompt = "\n\n".join(p for p in clean_parts if p)
+                reply = await self._web_search(user_text, web_prompt, past_replies)
 
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
