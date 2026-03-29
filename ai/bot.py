@@ -688,7 +688,7 @@ class AILibrarianBot(discord.Client):
                             for part in web_response.candidates[0].content.parts:
                                 if part.text:
                                     cleaned = self._clean_reply(part.text)
-                                    if cleaned:
+                                    if cleaned and _normalize(cleaned) not in past_replies:
                                         reply = cleaned
                                         break
                 except Exception as e:
