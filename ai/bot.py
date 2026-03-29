@@ -319,7 +319,7 @@ class AILibrarianBot(discord.Client):
         # 웹 검색 플래그
         web_keywords = ["검색해", "구글링해", "웹검색", "구글 검색",
                         "조사해", "알아봐",
-                        "뉴스 알려", "소식 알려", "시세 알려"]
+                        "뉴스 알려", "소식 알려", "시세 알려", "날씨 알려"]
         text_normalized = " ".join(text.split())  # 공백 정규화
         use_web = any(kw in text_normalized for kw in web_keywords)
 
