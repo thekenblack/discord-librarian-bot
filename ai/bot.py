@@ -244,7 +244,7 @@ class AILibrarianBot(discord.Client):
 
         async with self._channel_locks[ch_id]:
             async with message.channel.typing():
-                reply_text, file_to_send = await self._ask_gemini(
+                reply_text, file_to_send, ai_saved = await self._ask_gemini(
                     channel_id=ch_id,
                     user_id=str(message.author.id),
                     user_name=message.author.display_name,
@@ -252,8 +252,8 @@ class AILibrarianBot(discord.Client):
                     guild=message.guild,
                 )
 
-        # 기억 트리거 감지
-        if text:
+        # 기억 트리거 감지 (AI가 이미 저장했으면 건너뜀)
+        if text and not ai_saved:
             clean_text = text
             if self.user:
                 for tag in [f"@{self.persona.name}", f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
@@ -294,8 +294,8 @@ class AILibrarianBot(discord.Client):
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
-                          guild=None) -> tuple[str, discord.File | None]:
-        """Gemini에게 질문하고 응답 + 파일(있으면) 반환"""
+                          guild=None) -> tuple[str, discord.File | None, bool]:
+        """Gemini에게 질문하고 응답 + 파일(있으면) + AI저장여부 반환"""
         if channel_id not in self.chat_histories:
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
@@ -348,6 +348,7 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
         file_to_send = None
+        ai_saved = False
         history_snapshot = len(history)  # 롤백 지점
 
         def _gen_config():
@@ -415,9 +416,10 @@ class AILibrarianBot(discord.Client):
                     break
 
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
+                if fc.name in ("save_memory", "add_knowledge"):
+                    ai_saved = True
 
                 tool_args = dict(fc.args) if fc.args else {}
-                # user_id 자동 삽입
                 if fc.name in ("search", "save_memory"):
                     tool_args["_user_id"] = user_id
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
@@ -577,7 +579,7 @@ class AILibrarianBot(discord.Client):
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
 
-            return reply, file_to_send
+            return reply, file_to_send, ai_saved
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
@@ -587,13 +589,13 @@ class AILibrarianBot(discord.Client):
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
-                    return self.persona.daily_limit_message, None
+                    return self.persona.daily_limit_message, None, False
                 else:
                     logger.warning("분당 한도 초과")
-                    return self.persona.rate_limit_message, None
-            return self.persona.error_message, None
+                    return self.persona.rate_limit_message, None, False
+            return self.persona.error_message, None, False
 
         except Exception as e:
             del history[history_snapshot:]
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
-            return self.persona.error_message, None
+            return self.persona.error_message, None, False
