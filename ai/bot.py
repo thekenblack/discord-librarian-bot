@@ -93,10 +93,20 @@ class AILibrarianBot(discord.Client):
                 text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
                 text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
             # 답글 여부
-            if msg.reference and msg.reference.resolved:
-                ref = msg.reference.resolved
-                ref_name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
-                ref_text = ref.content[:50]
+            ref_msg = None
+            if msg.reference:
+                ref_msg = msg.reference.resolved
+                if not ref_msg and msg.reference.message_id:
+                    try:
+                        ref_msg = await channel.fetch_message(msg.reference.message_id)
+                    except Exception:
+                        pass
+            if ref_msg:
+                ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
+                ref_text = ref_msg.content[:50]
+                for u in ref_msg.mentions:
+                    ref_text = ref_text.replace(f"<@{u.id}>", f"@{u.display_name}")
+                    ref_text = ref_text.replace(f"<@!{u.id}>", f"@{u.display_name}")
                 line = f"{name} (→{ref_name}: {ref_text}): {text}"
             else:
                 line = f"{name}: {text}"
@@ -213,6 +223,19 @@ class AILibrarianBot(discord.Client):
         # 빈 멘션이면 빈 문자열 그대로 전달 (프롬프트에서 처리)
         if not text:
             text = ""
+
+        # 답글이면 원본 메시지 맥락 추가
+        if message.reference:
+            ref_msg = message.reference.resolved
+            if not ref_msg and message.reference.message_id:
+                try:
+                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                except Exception:
+                    pass
+            if ref_msg:
+                ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
+                ref_content = ref_msg.content[:100]
+                text = f"(→{ref_name}의 '{ref_content}'에 대한 답글) {text}"
 
         # 채널별 락으로 동시 요청 방지
         ch_id = message.channel.id
