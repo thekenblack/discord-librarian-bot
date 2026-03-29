@@ -560,21 +560,24 @@ class AILibrarianBot(discord.Client):
             reply = "\n".join(reply_parts) if reply_parts else ""
 
             # 반복 방지: Gemini 히스토리 + 채널 히스토리에서 봇 답변 비교
+            def _normalize(t):
+                return t.replace("\ufe0f", "").strip()
+
             past_replies = set()
             for h in history:
                 if h.role == "model" and h.parts and h.parts[0].text:
-                    past_replies.add(h.parts[0].text)
+                    past_replies.add(_normalize(h.parts[0].text))
             bot_name = self.persona.name
             for line in (ctx.get("channel", "") or "").split("\n"):
                 if line.startswith(f"{bot_name}: "):
-                    past_replies.add(line.split(": ", 1)[1])
+                    past_replies.add(_normalize(line.split(": ", 1)[1]))
                 elif line.startswith(f"{bot_name} ["):
-                    # "비트쨩 [원본: ...]: 답변" 패턴
                     idx = line.find("]: ")
                     if idx != -1:
-                        past_replies.add(line[idx + 3:])
-            logger.info(f"반복 비교: reply={reply[:50] if reply else '없음'}... past={len(past_replies)}개")
-            if reply and reply in past_replies:
+                        past_replies.add(_normalize(line[idx + 3:]))
+            norm_reply = _normalize(reply) if reply else ""
+            logger.info(f"반복 비교: reply={norm_reply[:50] if norm_reply else '없음'}... past={len(past_replies)}개")
+            if norm_reply and norm_reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
                 del history[history_snapshot:]
@@ -659,7 +662,7 @@ class AILibrarianBot(discord.Client):
                                     reply_parts.append(cleaned)
                         reply = "\n".join(reply_parts) if reply_parts else ""
                         # 재시도에서도 같은 답이면 에러
-                        if reply in past_replies:
+                        if _normalize(reply) in past_replies:
                             logger.warning("재시도에서도 동일 - 에러 처리")
                             reply = ""
                 except Exception as e:
