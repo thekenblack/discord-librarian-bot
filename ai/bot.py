@@ -151,21 +151,11 @@ class AILibrarianBot(discord.Client):
         cleaned = []
         for l in lines:
             s = l.strip()
-            # JSON 줄 제거
-            if s.startswith("{") or s.startswith("[{"):
-                continue
-            # 내부 제어 토큰 제거
-            if "<ctrl_" in s:
+            if s.startswith("{") or s.startswith("[") or s.startswith("<"):
                 continue
             cleaned.append(l)
         text = "\n".join(cleaned).strip()
-
-        # HTML 태그 제거
-        text = re.sub(r"<[^>]+>", "", text).strip()
-
-        # 빈 줄 정리
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
         return text
 
     async def on_ready(self):
