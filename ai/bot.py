@@ -414,7 +414,9 @@ class AILibrarianBot(discord.Client):
         role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
         logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role}")
 
-        info_block = f"## 상황\n대화 상대: {user_name} ({role})"
+        from datetime import datetime as dt
+        now = dt.now()
+        info_block = f"## 상황\n현재: {now.strftime('%Y년 %m월 %d일 %H:%M')}\n대화 상대: {user_name} ({role})"
         if admin_names:
             info_block += f"\n도서관 주인: {', '.join(admin_names)}"
         if LIGHTNING_ADDRESS:
