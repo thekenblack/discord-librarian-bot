@@ -684,10 +684,18 @@ class AILibrarianBot(discord.Client):
                         max_output_tokens=500,
                         temperature=0.9,
                     )
-                    idx, client = _next_client()
-                    if client:
-                        web_response = client.models.generate_content(
-                            model=MODEL, contents=web_history, config=web_config)
+                    web_response = None
+                    for _ in range(len(self._gemini_clients) * 2):
+                        idx, client = _next_client()
+                        if client is None:
+                            break
+                        try:
+                            web_response = client.models.generate_content(
+                                model=MODEL, contents=web_history, config=web_config)
+                            break
+                        except Exception:
+                            continue
+                    if web_response:
                         if web_response.candidates and web_response.candidates[0].content.parts:
                             for part in web_response.candidates[0].content.parts:
                                 if part.text:
