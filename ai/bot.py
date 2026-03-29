@@ -186,6 +186,12 @@ class AILibrarianBot(discord.Client):
         empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만", "보여줄게", "알려줄게"]
         if text and any(text.rstrip("!.⚡️⚡ ").endswith(p) for p in empty_patterns):
             return ""
+        # 내부 도구 이름 노출 방지
+        tool_names = ["list_entries", "search_entries", "get_entry_detail", "send_file",
+                      "save_memory", "add_knowledge", "add_entry_alias", "add_alias",
+                      "web_search", "search(", "recall_"]
+        if text and any(tn in text for tn in tool_names):
+            return ""
         return text
 
     async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
