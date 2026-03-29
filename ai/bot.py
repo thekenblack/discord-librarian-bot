@@ -23,7 +23,7 @@ from ai.tools import library_tools, execute_tool
 logger = logging.getLogger("AILibrarian")
 
 MODEL = "gemini-2.5-flash-lite"
-BUFFER_SIZE = 15
+BUFFER_SIZE = 30
 
 
 class AILibrarianBot(discord.Client):
