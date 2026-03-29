@@ -426,6 +426,37 @@ class AILibrarianBot(discord.Client):
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
 
+                # search 결과 없으면 웹 검색 폴백
+                if fc.name == "search" and "result" in tool_data and "정보 없음" in tool_data.get("result", ""):
+                    logger.info("search 결과 없음 - 웹 검색 시도")
+                    try:
+                        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+                        web_config = types.GenerateContentConfig(
+                            system_instruction=dynamic_prompt,
+                            tools=google_search_tool,
+                            max_output_tokens=500,
+                            temperature=0.8,
+                        )
+                        idx, client = _next_client()
+                        web_response = client.models.generate_content(
+                            model=MODEL, contents=web_history, config=web_config) if client else None
+                        if web_response and web_response.candidates and web_response.candidates[0].content.parts:
+                            for part in web_response.candidates[0].content.parts:
+                                if part.text:
+                                    reply = self._clean_reply(part.text)
+                                    if reply:
+                                        logger.info(f"웹 검색 답변: {reply[:100]}")
+                                        break
+                            if reply:
+                                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                                if len(history) > 6:
+                                    self.chat_histories[channel_id] = history[-6:]
+                                if len(reply) > 2000:
+                                    reply = reply[:1997] + "..."
+                                return reply, file_to_send, ai_saved
+                    except Exception as e:
+                        logger.error(f"웹 검색 실패: {e}")
+
                 # send_file 액션: 실제 파일 전송 준비
                 if tool_data.get("_action") == "send_file":
                     save_path = os.path.join(UPLOAD_DIR, tool_data["stored_name"])
