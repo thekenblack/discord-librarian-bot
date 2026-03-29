@@ -438,10 +438,15 @@ class AILibrarianBot(discord.Client):
             for h in history:
                 if h.role == "model" and h.parts and h.parts[0].text:
                     past_replies.add(h.parts[0].text)
-            bot_prefix = f"{self.persona.name}: "
+            bot_name = self.persona.name
             for line in (ctx.get("channel", "") or "").split("\n"):
-                if line.startswith(bot_prefix):
-                    past_replies.add(line[len(bot_prefix):])
+                # "비트쨩: 답변" 또는 "비트쨩 (→유저: 내용): 답변" 패턴
+                if line.startswith(f"{bot_name}: "):
+                    past_replies.add(line.split(": ", 1)[1])
+                elif line.startswith(f"{bot_name} ("):
+                    idx = line.find("): ")
+                    if idx != -1:
+                        past_replies.add(line[idx + 3:])
             if reply and reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
