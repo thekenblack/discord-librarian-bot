@@ -183,7 +183,7 @@ class AILibrarianBot(discord.Client):
         text = "\n".join(cleaned).strip()
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         # 중간 응답만으로 끝나는 경우 빈 응답 처리
-        empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만"]
+        empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만", "보여줄게", "알려줄게"]
         if text and any(text.rstrip("!.⚡️⚡ ").endswith(p) for p in empty_patterns):
             return ""
         return text
