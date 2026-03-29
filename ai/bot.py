@@ -177,12 +177,15 @@ class AILibrarianBot(discord.Client):
                 continue
             if s.startswith("[") and not s.startswith("[원본:"):
                 continue
-            # 코드/함수 호출 패턴 제거
             if "(" in s and ")" in s and any(kw in s for kw in ["print(", "search(", "import ", "def ", "await ", "return "]):
                 continue
             cleaned.append(l)
         text = "\n".join(cleaned).strip()
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        # 중간 응답만으로 끝나는 경우 빈 응답 처리
+        empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만"]
+        if text and any(text.rstrip("!.⚡️⚡ ").endswith(p) for p in empty_patterns):
+            return ""
         return text
 
     async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
