@@ -244,7 +244,7 @@ class AILibrarianBot(discord.Client):
                     text = f"[원본: {ref_name}이 쓴 \"{ref_content}\"] {text}"
 
         # 웹 검색 플래그
-        web_keywords = ["검색해줘", "검색해봐", "구글링", "웹검색",
+        web_keywords = ["검색해줘", "검색해봐", "구글링", "웹검색", "구글 검색",
                         "조사해줘", "조사해봐", "알아봐줘",
                         "뉴스 알려", "소식 알려"]
         use_web = any(kw in text for kw in web_keywords)
