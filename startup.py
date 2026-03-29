@@ -9,6 +9,11 @@ import sys
 import os
 import signal
 
+# venv 자동 감지: venv 밖에서 실행되면 venv/bin/python으로 재실행
+VENV_PYTHON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv", "bin", "python")
+if os.path.exists(VENV_PYTHON) and sys.executable != VENV_PYTHON:
+    os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
+
 RESTART_CODE = 42
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
