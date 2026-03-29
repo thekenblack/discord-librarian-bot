@@ -18,6 +18,13 @@ if not os.path.exists(os.path.join(BASE_DIR, ".env")):
     print("  → cp env.example .env 후 토큰과 API 키를 입력하세요.")
     sys.exit(1)
 
+# 마이그레이션 (기존 단일 DB → 분리)
+OLD_DB = os.path.join(BASE_DIR, "librarian_bot.db")
+if os.path.exists(OLD_DB) and not os.path.exists(os.path.join(BASE_DIR, "library.db")):
+    print("[마이그레이션] librarian_bot.db 분리 중...")
+    import subprocess
+    subprocess.run([sys.executable, os.path.join(BASE_DIR, "migrate_db.py")], cwd=BASE_DIR)
+
 # DB 백업
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 os.makedirs(BACKUP_DIR, exist_ok=True)
