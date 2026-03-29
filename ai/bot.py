@@ -288,7 +288,7 @@ class AILibrarianBot(discord.Client):
 
         # 빈 응답(안전 필터 차단 등)이면 무시
         if not reply_text and not file_to_send:
-            return
+            reply_text = self.persona.error_message
 
         # 응답 로그
         guild_name = message.guild.name if message.guild else "DM"
