@@ -577,6 +577,7 @@ class AILibrarianBot(discord.Client):
             reply_parts = []
             for part in response.candidates[0].content.parts:
                 if part.text:
+                    logger.info(f"원문: {part.text[:100]}")
                     cleaned = self._clean_reply(part.text)
                     if cleaned:
                         reply_parts.append(cleaned)
