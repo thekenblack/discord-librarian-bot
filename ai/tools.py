@@ -10,8 +10,9 @@ from librarian_db import LibrarianDB
 
 # ── 도구 정의 ────────────────────────────────────────
 
+google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
+
 library_tools = [
-    types.Tool(google_search=types.GoogleSearch()),
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="search",

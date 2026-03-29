@@ -18,7 +18,7 @@ from library_db import LibraryDB
 from librarian_db import LibrarianDB
 from config import UPLOAD_DIR, ADMIN_IDS, LIGHTNING_ADDRESS
 from ai.persona import Persona
-from ai.tools import library_tools, execute_tool
+from ai.tools import library_tools, google_search_tool, execute_tool
 
 logger = logging.getLogger("AILibrarian")
 
@@ -540,10 +540,34 @@ class AILibrarianBot(discord.Client):
                     logger.error(f"재시도 실패: {e}")
                     reply = ""
 
+            # 빈 응답이면 웹 검색 폴백
+            if not reply and user_text:
+                logger.info("웹 검색 폴백 시도")
+                try:
+                    web_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+                    web_config = types.GenerateContentConfig(
+                        system_instruction=dynamic_prompt,
+                        tools=google_search_tool,
+                        max_output_tokens=500,
+                        temperature=0.8,
+                    )
+                    idx, client = _next_client()
+                    if client:
+                        web_response = client.models.generate_content(
+                            model=MODEL, contents=web_history, config=web_config)
+                        if web_response.candidates and web_response.candidates[0].content.parts:
+                            for part in web_response.candidates[0].content.parts:
+                                if part.text:
+                                    cleaned = self._clean_reply(part.text)
+                                    if cleaned:
+                                        reply = cleaned
+                                        break
+                except Exception as e:
+                    logger.error(f"웹 검색 폴백 실패: {e}")
+
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
             else:
-                # 빈 응답이면 유저 메시지도 히스토리에서 제거 (오염 방지)
                 if history and history[-1].role == "user":
                     history.pop()
 
