@@ -12,7 +12,10 @@ import signal
 # venv 자동 설치 + 감지
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(BASE_DIR, "venv")
-VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
+if sys.platform == "win32":
+    VENV_PYTHON = os.path.join(VENV_DIR, "Scripts", "python.exe")
+else:
+    VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python")
 
 if not os.path.exists(VENV_PYTHON):
     print("[설치] venv 생성 중...")
