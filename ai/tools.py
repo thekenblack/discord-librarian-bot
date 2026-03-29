@@ -11,6 +11,7 @@ from librarian_db import LibrarianDB
 # ── 도구 정의 ────────────────────────────────────────
 
 library_tools = [
+    types.Tool(google_search=types.GoogleSearch()),
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="search",

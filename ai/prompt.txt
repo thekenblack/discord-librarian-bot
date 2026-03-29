@@ -27,6 +27,8 @@ send_file: 파일 전송. file_id 필요.
 save_memory: 기억 저장.
 add_knowledge: 지식 저장.
 add_entry_alias: 엔트리 별칭 추가.
+add_alias: 검색용 별칭 등록.
+google_search: 웹 검색. 내 지식으로 답할 수 없는 최신 정보나 실시간 정보가 필요할 때 사용.
 
 후원 → /donate 안내 또는 시스템이 제공한 라이트닝 주소.
 명령어 → /help 안내.
