@@ -291,6 +291,9 @@ class AILibrarianBot(discord.Client):
                         model=MODEL, contents=contents, config=_gen_config(),
                     )
                 except ClientError as e:
+                    if e.status == "INVALID_ARGUMENT":
+                        # 400 에러는 요청 자체가 잘못됨 - 재시도 의미 없음
+                        raise
                     if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
                         self._dead_until[idx] = date.today() + timedelta(days=1)
                         logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
@@ -376,8 +379,11 @@ class AILibrarianBot(discord.Client):
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
+            if e.status == "INVALID_ARGUMENT":
+                # 히스토리 꼬임 - 리셋
+                logger.warning(f"히스토리 꼬임 감지, 채널 {channel_id} 히스토리 리셋")
+                self.chat_histories[channel_id] = []
             if e.status == "RESOURCE_EXHAUSTED":
-                # 일일 한도 vs 분당 한도 구분
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
