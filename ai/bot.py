@@ -457,11 +457,12 @@ class AILibrarianBot(discord.Client):
                         temperature=0.9,
                     )
                 try:
-                    history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+                    # 히스토리 없이 유저 메시지만으로 재시도
+                    clean_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
                     idx, client = _next_client()
                     if client:
                         response = client.models.generate_content(
-                            model=MODEL, contents=history, config=_clean_config())
+                            model=MODEL, contents=clean_history, config=_clean_config())
                         # 도구 호출 루프
                         for _ in range(5):
                             fc = None
@@ -478,11 +479,11 @@ class AILibrarianBot(discord.Client):
                             tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                             tool_data = json.loads(tool_result)
                             logger.info(f"도구 결과: {tool_result[:200]}")
-                            history.append(response.candidates[0].content)
-                            history.append(types.Content(role="user", parts=[types.Part.from_function_response(
+                            clean_history.append(response.candidates[0].content)
+                            clean_history.append(types.Content(role="user", parts=[types.Part.from_function_response(
                                 name=fc.name, response=tool_data)]))
                             response = client.models.generate_content(
-                                model=MODEL, contents=history, config=_clean_config())
+                                model=MODEL, contents=clean_history, config=_clean_config())
                         reply_parts = []
                         for part in response.candidates[0].content.parts:
                             if part.text:
