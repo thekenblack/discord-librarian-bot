@@ -433,13 +433,12 @@ class AILibrarianBot(discord.Client):
                         reply_parts.append(cleaned)
             reply = "\n".join(reply_parts) if reply_parts else ""
 
-            # 반복 방지: 직전 답변과 동일하거나 유사하면 빈 응답
-            last_bot_reply = ""
-            for h in reversed(history):
+            # 반복 방지: 히스토리 내 모든 봇 답변과 비교
+            past_replies = set()
+            for h in history:
                 if h.role == "model" and h.parts and h.parts[0].text:
-                    last_bot_reply = h.parts[0].text
-                    break
-            if reply and reply == last_bot_reply:
+                    past_replies.add(h.parts[0].text)
+            if reply and reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
                 del history[history_snapshot:]
