@@ -536,13 +536,19 @@ class AILibrarianBot(discord.Client):
             if use_web:
                 logger.info("웹 검색 모드")
                 reply = await self._web_search(user_text, dynamic_prompt, past_replies)
+                if not reply:
+                    # 맥락 제거 후 재시도
+                    logger.info("웹 검색 재시도 (맥락 제거)")
+                    clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
+                    clean_prompt = "\n\n".join(p for p in clean_parts if p)
+                    reply = await self._web_search(user_text, clean_prompt, past_replies)
                 if reply:
-                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                        if len(history) > 6:
-                            self.chat_histories[channel_id] = history[-6:]
-                        if len(reply) > 2000:
-                            reply = reply[:1997] + "..."
-                        return reply, file_to_send, ai_saved
+                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                    if len(history) > 6:
+                        self.chat_histories[channel_id] = history[-6:]
+                    if len(reply) > 2000:
+                        reply = reply[:1997] + "..."
+                    return reply, file_to_send, ai_saved
                 return self.persona.error_message, None, False
 
             response = _call_gemini(history)
