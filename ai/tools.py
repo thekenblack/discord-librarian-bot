@@ -90,6 +90,17 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
+            name="web_search",
+            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "query": types.Schema(type="STRING", description="검색할 내용"),
+                },
+                required=["query"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="add_alias",
             description="별칭을 등록한다. '~를 ~라고도 불러', '~의 별칭은 ~' 같은 말을 할 때 사용.",
             parameters=types.Schema(

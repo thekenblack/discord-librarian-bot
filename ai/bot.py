@@ -453,6 +453,39 @@ class AILibrarianBot(discord.Client):
                 if fc.name in ("save_memory", "add_knowledge"):
                     ai_saved = True
 
+                # AI가 웹 검색이 필요하다고 판단
+                if fc.name == "web_search":
+                    query = (dict(fc.args) if fc.args else {}).get("query", user_text)
+                    logger.info(f"AI 판단 웹 검색: {query}")
+                    try:
+                        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                        web_config = types.GenerateContentConfig(
+                            system_instruction=dynamic_prompt,
+                            tools=google_search_tool,
+                            max_output_tokens=500,
+                            temperature=0.8,
+                        )
+                        idx, client = _next_client()
+                        if client:
+                            web_response = client.models.generate_content(
+                                model=MODEL, contents=web_history, config=web_config)
+                            if web_response.candidates and web_response.candidates[0].content.parts:
+                                for part in web_response.candidates[0].content.parts:
+                                    if part.text:
+                                        reply = self._clean_reply(part.text)
+                                        if reply:
+                                            break
+                            if reply:
+                                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                                if len(history) > 6:
+                                    self.chat_histories[channel_id] = history[-6:]
+                                if len(reply) > 2000:
+                                    reply = reply[:1997] + "..."
+                                return reply, file_to_send, ai_saved
+                    except Exception as e:
+                        logger.error(f"웹 검색 실패: {e}")
+                    break
+
                 tool_args = dict(fc.args) if fc.args else {}
                 if fc.name in ("search", "save_memory"):
                     tool_args["_user_id"] = user_id
