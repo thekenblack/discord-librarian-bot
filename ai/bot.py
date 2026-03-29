@@ -686,7 +686,7 @@ class AILibrarianBot(discord.Client):
                         system_instruction=web_prompt,
                         tools=google_search_tool,
                         max_output_tokens=500,
-                        temperature=0.9,
+                        temperature=1.0,
                     )
                     web_response = None
                     for _ in range(len(self._gemini_clients) * 2):
