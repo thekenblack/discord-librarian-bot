@@ -565,11 +565,11 @@ class AILibrarianBot(discord.Client):
                     past_replies.add(h.parts[0].text)
             bot_name = self.persona.name
             for line in (ctx.get("channel", "") or "").split("\n"):
-                # "비트쨩: 답변" 또는 "비트쨩 (→유저: 내용): 답변" 패턴
                 if line.startswith(f"{bot_name}: "):
                     past_replies.add(line.split(": ", 1)[1])
-                elif line.startswith(f"{bot_name} ("):
-                    idx = line.find("): ")
+                elif line.startswith(f"{bot_name} ["):
+                    # "비트쨩 [원본: ...]: 답변" 패턴
+                    idx = line.find("]: ")
                     if idx != -1:
                         past_replies.add(line[idx + 3:])
             if reply and reply in past_replies:
