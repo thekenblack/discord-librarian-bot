@@ -1,0 +1,4 @@
+__pycache__
+/.env
+/librarian_bot.db
+/uploads
