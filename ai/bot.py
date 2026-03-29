@@ -543,6 +543,8 @@ class AILibrarianBot(discord.Client):
 
             # function call 루프 (최대 5회 - 기억 조회+저장+도서관 조합)
             for _ in range(5):
+                if not response.candidates or not response.candidates[0].content.parts:
+                    break
                 fc = None
                 for part in response.candidates[0].content.parts:
                     if part.function_call:
@@ -651,9 +653,10 @@ class AILibrarianBot(discord.Client):
                     if response:
                         # 도구 호출 루프
                         for _ in range(5):
+                            if not response.candidates or not response.candidates[0].content.parts:
+                                break
                             fc = None
                             for part in response.candidates[0].content.parts:
-                                if part.function_call:
                                     fc = part.function_call
                                     break
                             if not fc:
