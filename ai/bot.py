@@ -233,9 +233,11 @@ class AILibrarianBot(discord.Client):
                 except Exception:
                     pass
             if ref_msg:
-                ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
                 ref_content = ref_msg.content[:100]
-                text = f"(→{ref_name}의 '{ref_content}'에 대한 답글) {text}"
+                # 에러 메시지에 답글한 경우 맥락 제거
+                if ref_content not in self._error_messages:
+                    ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
+                    text = f"(→{ref_name}의 '{ref_content}'에 대한 답글) {text}"
 
         # 웹 검색 플래그
         web_keywords = ["검색해줘", "검색해봐", "구글링", "웹검색", "조사해줘", "조사해봐",
