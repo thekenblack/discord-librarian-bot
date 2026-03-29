@@ -674,11 +674,13 @@ class AILibrarianBot(discord.Client):
                 logger.info("웹 검색 폴백 시도")
                 try:
                     web_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+                    clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
+                    web_prompt = "\n\n".join(p for p in clean_parts if p)
                     web_config = types.GenerateContentConfig(
-                        system_instruction=dynamic_prompt,
+                        system_instruction=web_prompt,
                         tools=google_search_tool,
                         max_output_tokens=500,
-                        temperature=0.8,
+                        temperature=0.9,
                     )
                     idx, client = _next_client()
                     if client:
