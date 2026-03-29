@@ -48,6 +48,11 @@ class AILibrarianBot(discord.Client):
         ai_dir = os.path.join(os.path.dirname(__file__), "ai")
         self._memory_triggers = self._load_patterns(os.path.join(ai_dir, "memory_triggers.txt"), ["기억해"])
 
+        # 에러 메시지 목록 (히스토리 필터용)
+        self._error_messages = set(
+            persona._error_messages + persona._rate_limit_messages + persona._daily_limit_messages
+        )
+
     @staticmethod
     def _load_patterns(path: str, default: list[str]) -> list[str]:
         if os.path.exists(path):
@@ -80,6 +85,7 @@ class AILibrarianBot(discord.Client):
             messages.append(msg)
         messages.reverse()
         lines = []
+        last_line = ""
         for msg in messages:
             name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
             text = msg.content
@@ -91,9 +97,14 @@ class AILibrarianBot(discord.Client):
                 ref = msg.reference.resolved
                 ref_name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
                 ref_text = ref.content[:50]
-                lines.append(f"{name} (→{ref_name}: {ref_text}): {text}")
+                line = f"{name} (→{ref_name}: {ref_text}): {text}"
             else:
-                lines.append(f"{name}: {text}")
+                line = f"{name}: {text}"
+            # 중복 제거 + 봇 에러 메시지 제거
+            is_error = (name == self.persona.name and text in self._error_messages)
+            if line != last_line and not is_error:
+                lines.append(line)
+                last_line = line
         return lines
 
     async def _build_context(self, channel_id: int, user_id: str, guild) -> dict:
@@ -367,12 +378,8 @@ class AILibrarianBot(discord.Client):
                 raise last_err
             raise ClientError("모든 API 키 소진")
 
-        # 사실 확인 패턴 감지용
-        fact_keywords = ["누구", "뭐야", "뭐지", "알아", "무슨", "언제", "어디"]
-
         try:
             response = _call_gemini(history)
-            tool_used = False
 
             # function call 루프 (최대 5회 - 기억 조회+저장+도서관 조합)
             for _ in range(5):
@@ -384,7 +391,6 @@ class AILibrarianBot(discord.Client):
                 if not fc:
                     break
 
-                tool_used = True
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
 
                 tool_args = dict(fc.args) if fc.args else {}
@@ -413,35 +419,6 @@ class AILibrarianBot(discord.Client):
 
                 response = _call_gemini(history)
 
-            # 사실 확인 질문인데 도구를 안 쓴 경우 → 강제 재시도
-            if not tool_used and user_text and any(kw in user_text for kw in fact_keywords):
-                logger.warning("사실 확인 질문인데 도구 미사용 - search_knowledge 강제 유도")
-                history.append(response.candidates[0].content)
-                history.append(types.Content(role="user", parts=[types.Part.from_text(
-                    text="(search_knowledge 도구를 사용해서 확인해.)")]))
-                try:
-                    response = _call_gemini(history)
-                    # 강제 유도 후 도구 호출 루프
-                    for _ in range(3):
-                        fc = None
-                        for part in response.candidates[0].content.parts:
-                            if part.function_call:
-                                fc = part.function_call
-                                break
-                        if not fc:
-                            break
-                        logger.info(f"도구 호출 (강제): {fc.name}({fc.args})")
-                        tool_args = dict(fc.args) if fc.args else {}
-                        tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-                        tool_data = json.loads(tool_result)
-                        logger.info(f"도구 결과: {tool_result[:200]}")
-                        history.append(response.candidates[0].content)
-                        history.append(types.Content(role="user", parts=[types.Part.from_function_response(
-                            name=fc.name, response=tool_data)]))
-                        response = _call_gemini(history)
-                except Exception:
-                    pass
-
             # 안전 필터 차단 체크
             if not response.candidates or not response.candidates[0].content.parts:
                 logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
@@ -463,38 +440,59 @@ class AILibrarianBot(discord.Client):
                     last_bot_reply = h.parts[0].text
                     break
             if reply and reply == last_bot_reply:
-                logger.warning("직전 답변과 동일 - 도구 사용 강제 후 재시도")
-                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                history.append(types.Content(role="user", parts=[types.Part.from_text(
-                    text="(같은 말을 반복했어. search_knowledge나 list_entries 도구를 써서 새로운 정보를 찾고, 다른 표현으로 다시 답해.)")]))
+                logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
+                # 히스토리 롤백
+                del history[history_snapshot:]
+                # 채널 대화 없는 프롬프트로 재구성
+                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
+                clean_prompt = "\n\n".join(p for p in clean_parts if p)
+                def _clean_config():
+                    return types.GenerateContentConfig(
+                        system_instruction=clean_prompt,
+                        tools=library_tools,
+                        max_output_tokens=500,
+                        temperature=0.9,
+                    )
                 try:
-                    response = _call_gemini(history)
-                    # 도구 호출 루프
-                    for _ in range(3):
-                        fc = None
-                        for part in response.candidates[0].content.parts:
-                            if part.function_call:
-                                fc = part.function_call
+                    history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+                    idx, client = _next_client()
+                    if client:
+                        response = client.models.generate_content(
+                            model=MODEL, contents=history, config=_clean_config())
+                        # 도구 호출 루프
+                        for _ in range(5):
+                            fc = None
+                            for part in response.candidates[0].content.parts:
+                                if part.function_call:
+                                    fc = part.function_call
+                                    break
+                            if not fc:
                                 break
-                        if not fc:
-                            break
-                        logger.info(f"도구 호출 (반복방지): {fc.name}({fc.args})")
-                        tool_args = dict(fc.args) if fc.args else {}
-                        tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-                        tool_data = json.loads(tool_result)
-                        logger.info(f"도구 결과: {tool_result[:200]}")
-                        history.append(response.candidates[0].content)
-                        history.append(types.Content(role="user", parts=[types.Part.from_function_response(
-                            name=fc.name, response=tool_data)]))
-                        response = _call_gemini(history)
-                    retry_parts = []
-                    for part in response.candidates[0].content.parts:
-                        if part.text:
-                            cleaned = self._clean_reply(part.text)
-                            if cleaned:
-                                retry_parts.append(cleaned)
-                    reply = "\n".join(retry_parts) if retry_parts else ""
-                except Exception:
+                            logger.info(f"도구 호출 (재시도): {fc.name}({fc.args})")
+                            tool_args = dict(fc.args) if fc.args else {}
+                            if fc.name in ("search", "save_memory"):
+                                tool_args["_user_id"] = user_id
+                            tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                            tool_data = json.loads(tool_result)
+                            logger.info(f"도구 결과: {tool_result[:200]}")
+                            history.append(response.candidates[0].content)
+                            history.append(types.Content(role="user", parts=[types.Part.from_function_response(
+                                name=fc.name, response=tool_data)]))
+                            response = client.models.generate_content(
+                                model=MODEL, contents=history, config=_clean_config())
+                        reply_parts = []
+                        for part in response.candidates[0].content.parts:
+                            if part.text:
+                                cleaned = self._clean_reply(part.text)
+                                if cleaned:
+                                    reply_parts.append(cleaned)
+                        reply = "\n".join(reply_parts) if reply_parts else ""
+                        # 재시도에서도 같은 답이면 에러
+                        if reply == last_bot_reply:
+                            logger.warning("재시도에서도 동일 - 에러 처리")
+                            reply = ""
+                except Exception as e:
+                    logger.error(f"재시도 실패: {e}")
                     reply = ""
 
             if reply:

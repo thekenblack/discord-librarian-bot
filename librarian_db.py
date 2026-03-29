@@ -38,6 +38,15 @@ class LibrarianDB:
                 )
             """)
 
+            # 별칭 (검색 확장용)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS aliases (
+                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name    TEXT NOT NULL,
+                    alias   TEXT NOT NULL
+                )
+            """)
+
             # 마이그레이션: 기존 테이블들 → learned로 통합
             for old_table in ["memories", "user_memories", "long_term_memories",
                               "permanent_memories", "knowledge_learned"]:
@@ -117,8 +126,27 @@ class LibrarianDB:
                             fc += 1
                 logger.info(f"지식 로드: {category} ({fc}건)")
                 total += fc
+            # 별칭도 aliases 테이블에 등록
+            await db.execute("DELETE FROM aliases WHERE name LIKE 'kb:%'")
+            cursor = await db.execute("SELECT content, alias FROM knowledge_base WHERE alias IS NOT NULL")
+            alias_count = 0
+            for row in await cursor.fetchall():
+                content_short = row[0][:50]
+                for a in row[1].split(","):
+                    a = a.strip()
+                    if a:
+                        await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)",
+                                        (f"kb:{content_short}", a))
+                        # 역방향도 등록 (별칭 → 원문 키워드)
+                        # content에서 핵심 단어 추출 (콜론 앞 또는 괄호 앞)
+                        main_name = content_short.split(":")[0].split("(")[0].strip()
+                        if main_name and main_name != a:
+                            await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)",
+                                            (a, main_name))
+                        alias_count += 1
+
             await db.commit()
-            logger.info(f"지식 베이스 로드 완료: 총 {total}건")
+            logger.info(f"지식 베이스 로드 완료: 총 {total}건, 별칭 {alias_count}건")
 
     async def cleanup_learned(self):
         """질문형 학습 데이터 정리"""
@@ -162,6 +190,36 @@ class LibrarianDB:
                 result["기억"] = [r["content"] for r in rows]
 
         return result
+
+    # ── 별칭 ──────────────────────────────────────────────
+
+    async def add_alias(self, name: str, alias: str):
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT id FROM aliases WHERE name = ? AND alias = ?", (name, alias))
+            if not await cursor.fetchone():
+                await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)", (name, alias))
+                await db.commit()
+
+    async def expand_keyword(self, keyword: str) -> list[str]:
+        """키워드에 대한 별칭을 찾아서 검색어 목록 확장"""
+        like = f"%{keyword}%"
+        keywords = [keyword]
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            # keyword가 name이면 alias들 추가
+            cursor = await db.execute(
+                "SELECT alias FROM aliases WHERE name LIKE ?", (like,))
+            for row in await cursor.fetchall():
+                if row["alias"] not in keywords:
+                    keywords.append(row["alias"])
+            # keyword가 alias면 name 추가
+            cursor = await db.execute(
+                "SELECT name FROM aliases WHERE alias LIKE ?", (like,))
+            for row in await cursor.fetchall():
+                if row["name"] not in keywords:
+                    keywords.append(row["name"])
+        return keywords
 
     # ── 저장 ──────────────────────────────────────────────
 

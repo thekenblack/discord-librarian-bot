@@ -87,6 +87,18 @@ library_tools = [
                 required=["entry_id", "alias"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="add_alias",
+            description="별칭을 등록한다. '~를 ~라고도 불러', '~의 별칭은 ~' 같은 말을 할 때 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "name": types.Schema(type="STRING", description="원래 이름"),
+                    "alias": types.Schema(type="STRING", description="별칭"),
+                },
+                required=["name", "alias"],
+            ),
+        ),
     ]),
 ]
 
@@ -102,16 +114,37 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         user_id = args.get("_user_id", "")
         result = {}
 
+        # 키워드 확장: 별칭 + 공백 분리
+        keywords = await librarian_db.expand_keyword(keyword)
+        if " " in keyword:
+            for part in keyword.split():
+                if part not in keywords:
+                    keywords.append(part)
+
         # 도서 검색
-        books = await library_db.search_books(keyword)
-        if books:
-            result["도서"] = [{"id": b["id"], "title": b["title"],
-                             "author": b.get("author") or "", "file_count": b["file_count"]}
-                            for b in books[:3]]
+        seen_book_ids = set()
+        all_books = []
+        for kw in keywords:
+            for b in await library_db.search_books(kw):
+                if b["id"] not in seen_book_ids:
+                    seen_book_ids.add(b["id"])
+                    all_books.append({"id": b["id"], "title": b["title"],
+                                     "author": b.get("author") or "", "file_count": b["file_count"]})
+        if all_books:
+            result["도서"] = all_books[:5]
 
         # 지식 + 기억 통합 검색
-        knowledge = await librarian_db.search_all(keyword)
-        result.update(knowledge)
+        seen_content = set()
+        for kw in keywords:
+            kw_result = await librarian_db.search_all(kw)
+            for key, items in kw_result.items():
+                for item in items:
+                    if item not in seen_content:
+                        seen_content.add(item)
+                        result.setdefault(key, []).append(item)
+        for key in result:
+            if key != "도서":
+                result[key] = result[key][:5]
 
         if not result:
             return json.dumps({"result": f"'{keyword}' 관련 정보 없음."}, ensure_ascii=False)
@@ -163,5 +196,11 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         new_alias = f"{existing}, {alias}" if existing else alias
         await library_db.update_book_alias(entry_id, new_alias)
         return json.dumps({"result": f"'{book['title']}' 엔트리에 별칭 '{alias}' 추가 완료"}, ensure_ascii=False)
+
+    elif name == "add_alias":
+        aname = args.get("name", "")
+        alias = args.get("alias", "")
+        await librarian_db.add_alias(aname, alias)
+        return json.dumps({"result": f"별칭 등록: {aname} = {alias}"}, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)
