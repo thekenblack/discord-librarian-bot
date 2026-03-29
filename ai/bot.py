@@ -491,7 +491,7 @@ class AILibrarianBot(discord.Client):
                                     reply_parts.append(cleaned)
                         reply = "\n".join(reply_parts) if reply_parts else ""
                         # 재시도에서도 같은 답이면 에러
-                        if reply == last_bot_reply:
+                        if reply in past_replies:
                             logger.warning("재시도에서도 동일 - 에러 처리")
                             reply = ""
                 except Exception as e:
