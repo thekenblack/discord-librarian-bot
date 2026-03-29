@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import UPLOAD_DIR, MAX_FILE_SIZE
+from config import UPLOAD_DIR, MAX_FILE_SIZE, LIGHTNING_ADDRESS
 from utils import success_embed, error_embed, info_embed, file_size_fmt, BotView
 
 
@@ -505,6 +505,21 @@ class LibraryCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    @app_commands.command(name="donate", description="⚡ 라이트닝 후원")
+    async def donate(self, interaction: discord.Interaction):
+        if not LIGHTNING_ADDRESS:
+            return await interaction.response.send_message(
+                embed=info_embed("⚡ 후원", "후원 주소가 설정되지 않았습니다."),
+                ephemeral=True,
+            )
+        embed = info_embed(
+            "⚡ 라이트닝 후원",
+            f"시타델 도서관을 후원해주세요!\n\n"
+            f"**Lightning Address**\n`{LIGHTNING_ADDRESS}`\n\n"
+            f"아무 라이트닝 지갑에서 위 주소로 보내면 됩니다."
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="help", description="명령어 도움말")
     async def help(self, interaction: discord.Interaction):

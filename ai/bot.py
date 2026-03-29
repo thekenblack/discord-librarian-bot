@@ -10,7 +10,7 @@ from collections import deque
 from datetime import date, timedelta
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 
 from database import Database
 from config import UPLOAD_DIR, ADMIN_IDS
@@ -20,8 +20,7 @@ from ai.tools import library_tools, execute_tool
 logger = logging.getLogger("AILibrarian")
 
 MODEL = "gemini-2.5-flash-lite"
-CHANNEL_BUFFER_SIZE = 50
-CONTEXT_WINDOW_SIZE = 20  # Gemini에 넘길 최근 채널 메시지 수
+BUFFER_SIZE = 50
 
 
 class AILibrarianBot(discord.Client):
@@ -37,20 +36,24 @@ class AILibrarianBot(discord.Client):
         self._dead_until: dict[int, date] = {}  # client index -> 일일 한도 만료일
         self.chat_histories: dict[int, list] = {}  # channel_id -> Gemini 대화 턴
         self.channel_buffers: dict[int, deque] = {}  # channel_id -> 최근 메시지 버퍼
-        self.global_buffer: deque = deque(maxlen=CHANNEL_BUFFER_SIZE)  # 전체 채널 통합 버퍼
+        self.global_buffer: deque = deque(maxlen=BUFFER_SIZE)  # 전체 채널 통합 버퍼
         self._ready = False
 
-        # 기억 트리거 로드
-        triggers_path = os.path.join(os.path.dirname(__file__), "ai", "memory_triggers.txt")
-        if os.path.exists(triggers_path):
-            with open(triggers_path, encoding="utf-8") as f:
-                self._memory_triggers = [line.strip() for line in f if line.strip()]
-        else:
-            self._memory_triggers = ["기억해"]
+        # 기억 트리거 / 공통 기억 패턴 로드
+        ai_dir = os.path.join(os.path.dirname(__file__), "ai")
+        self._memory_triggers = self._load_patterns(os.path.join(ai_dir, "memory_triggers.txt"), ["기억해"])
+        self._common_memory_patterns = self._load_patterns(os.path.join(ai_dir, "common_memory_patterns.txt"), [])
+
+    @staticmethod
+    def _load_patterns(path: str, default: list[str]) -> list[str]:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return [line.strip() for line in f if line.strip()]
+        return default
 
     def _get_buffer(self, channel_id: int) -> deque:
         if channel_id not in self.channel_buffers:
-            self.channel_buffers[channel_id] = deque(maxlen=CHANNEL_BUFFER_SIZE)
+            self.channel_buffers[channel_id] = deque(maxlen=BUFFER_SIZE)
         return self.channel_buffers[channel_id]
 
     def _add_to_buffer(self, channel_id: int, channel_name: str,
@@ -66,34 +69,47 @@ class AILibrarianBot(discord.Client):
         self._get_buffer(channel_id).append(entry)
         self.global_buffer.append(entry)
 
-    def _build_context(self, channel_id: int, user_id: str) -> dict:
-        """맥락 4종을 조립해서 반환"""
-        def _format(entries, include_channel=False):
+    async def _fetch_channel_history(self, channel, limit: int) -> list[str]:
+        """디스코드 API로 채널 히스토리를 가져와서 텍스트로 변환"""
+        messages = []
+        async for msg in channel.history(limit=limit):
+            messages.append(msg)
+        messages.reverse()
+        lines = []
+        for msg in messages:
+            name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
+            text = msg.content
+            for user in msg.mentions:
+                text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
+                text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
+            lines.append(f"{name}: {text}")
+        return lines
+
+    async def _build_context(self, channel_id: int, user_id: str, guild) -> dict:
+        """현재 채널은 API로, 다른 채널은 버퍼로"""
+        # 1. 현재 채널 - API에서 직접 (재시작해도 히스토리 유지)
+        current_channel = self.get_channel(channel_id)
+        ch_lines = await self._fetch_channel_history(current_channel, BUFFER_SIZE) if current_channel else []
+
+        # 2. 서버 전체 - 버퍼 (봇 가동 중 수집된 것)
+        def _format_buffer(entries):
             lines = []
             for msg in entries:
                 name = self.persona.name if msg["is_bot"] else msg["user_name"]
-                prefix = f"[#{msg['channel_name']}] " if include_channel else ""
-                lines.append(f"{prefix}{name}: {msg['text']}")
-            return "\n".join(lines)
+                lines.append(f"[#{msg['channel_name']}] {name}: {msg['text']}")
+            return lines
 
-        # 1. 현재 채널 최근 대화
-        ch_buf = list(self._get_buffer(channel_id))[-CONTEXT_WINDOW_SIZE:]
-        channel_ctx = _format(ch_buf)
+        global_lines = _format_buffer(list(self.global_buffer))
 
-        # 2. 전체 채널 통합 최근 대화 (현재 채널 제외)
-        global_ctx = _format(
-            [m for m in list(self.global_buffer)[-CONTEXT_WINDOW_SIZE:] if m["channel_name"] != (ch_buf[0]["channel_name"] if ch_buf else "")],
-            include_channel=True,
-        )
-
-        # 3. 말 건 유저의 최근 발언 (전체 채널에서)
-        user_msgs = [m for m in self.global_buffer if m["user_id"] == user_id and not m["is_bot"]]
-        user_ctx = _format(list(user_msgs)[-10:], include_channel=True)
+        # 3. 유저 최근 발언 - 현재 채널 히스토리에서 필터
+        user = self.get_user(int(user_id))
+        user_name = user.display_name if user else user_id
+        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}:")][-10:]
 
         return {
-            "channel": channel_ctx,
-            "global": global_ctx,
-            "user": user_ctx,
+            "channel": "\n".join(ch_lines),
+            "global": "\n".join(global_lines),
+            "user": "\n".join(user_lines),
         }
 
     async def on_ready(self):
@@ -155,17 +171,18 @@ class AILibrarianBot(discord.Client):
                 user_id=str(message.author.id),
                 user_name=message.author.display_name,
                 user_text=text,
+                guild=message.guild,
             )
 
-        # "기억해" 패턴 감지 → 코드에서 직접 저장 (flash-lite가 도구 호출을 못 하므로)
+        # 기억 트리거 감지 → 공통 패턴 여부에 따라 분기 저장
         if text and any(kw in text.lower() for kw in self._memory_triggers):
-            # 멘션 태그 제거 후 저장
             clean_text = text
             if self.user:
                 for tag in [f"@{self.persona.name}", f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
                     clean_text = clean_text.replace(tag, "").strip()
-            await self.db.save_user_memory(str(message.author.id), clean_text)
-            logger.info(f"기억 자동 저장: {clean_text}")
+            clean_text = f"{message.author.display_name}: {clean_text}"
+            await self.db.save_memory(clean_text)
+            logger.info(f"기억 저장: {clean_text}")
 
         # 빈 응답(안전 필터 차단 등)이면 무시
         if not reply_text and not file_to_send:
@@ -183,7 +200,8 @@ class AILibrarianBot(discord.Client):
             await message.reply(reply_text)
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
-                          user_name: str, user_text: str) -> tuple[str, discord.File | None]:
+                          user_name: str, user_text: str,
+                          guild=None) -> tuple[str, discord.File | None]:
         """Gemini에게 질문하고 응답 + 파일(있으면) 반환"""
         if channel_id not in self.chat_histories:
             self.chat_histories[channel_id] = []
@@ -192,12 +210,12 @@ class AILibrarianBot(discord.Client):
         # 시스템 프롬프트에 동적 맥락 삽입
         dynamic_prompt = self.persona.system_prompt
 
-        # 맥락 4종 조립
-        ctx = self._build_context(channel_id, user_id)
+        # 맥락 조립 (디스코드 API에서 직접 가져옴)
+        ctx = await self._build_context(channel_id, user_id, guild)
         if ctx["channel"]:
             dynamic_prompt += f"\n\n## 현재 채널 최근 대화\n{ctx['channel']}"
         if ctx["global"]:
-            dynamic_prompt += f"\n\n## 다른 채널 최근 대화\n{ctx['global']}"
+            dynamic_prompt += f"\n\n## 서버 전체 최근 대화\n{ctx['global']}"
         if ctx["user"]:
             dynamic_prompt += f"\n\n## 이 유저의 최근 발언\n{ctx['user']}"
 
@@ -207,18 +225,9 @@ class AILibrarianBot(discord.Client):
         dynamic_prompt += f"\n\n## 현재 대화 상대\n유저 이름: {user_name}\n유저 ID: {user_id}\n권한: {role}"
 
         # 저장된 기억 자동 로드
-        common_mems = await self.db.recall_memories(5)
-        user_mems = await self.db.recall_user_memories(user_id, 5)
-        if common_mems or user_mems:
-            mem_lines = []
-            if common_mems:
-                mem_lines.append("공통 기억:")
-                for m in common_mems:
-                    mem_lines.append(f"- {m['content']}")
-            if user_mems:
-                mem_lines.append(f"{user_name}에 대한 기억:")
-                for m in user_mems:
-                    mem_lines.append(f"- {m['content']}")
+        memories = await self.db.recall_memories(20)
+        if memories:
+            mem_lines = [f"- {m['content']}" for m in memories]
             dynamic_prompt += f"\n\n## 저장된 기억\n" + "\n".join(mem_lines)
 
         # 유저 메시지 구성
@@ -252,7 +261,7 @@ class AILibrarianBot(discord.Client):
             return None, None
 
         def _call_gemini(contents):
-            """살아있는 키로 호출, 429 시 다음 키로 재시도 (최대 키 수 × 2)"""
+            """살아있는 키로 호출, 실패 시 다음 키로 재시도 (최대 키 수 × 2)"""
             last_err = None
             max_attempts = len(self._gemini_clients) * 2
             for _ in range(max_attempts):
@@ -264,17 +273,17 @@ class AILibrarianBot(discord.Client):
                         model=MODEL, contents=contents, config=_gen_config(),
                     )
                 except ClientError as e:
-                    if e.status == "RESOURCE_EXHAUSTED":
-                        msg = str(e)
-                        if "PerDay" in msg:
-                            # 일일 한도: 내일까지 이 키 비활성화
-                            self._dead_until[idx] = date.today() + timedelta(days=1)
-                            logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
-                        else:
-                            logger.warning(f"키 #{idx} 분당 한도 초과, 다음 키로 재시도...")
-                        last_err = e
-                        continue
-                    raise
+                    if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
+                        self._dead_until[idx] = date.today() + timedelta(days=1)
+                        logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
+                    else:
+                        logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                    last_err = e
+                    continue
+                except Exception as e:
+                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                    last_err = e
+                    continue
             if last_err:
                 raise last_err
             raise ClientError("모든 API 키 소진")

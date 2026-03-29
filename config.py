@@ -18,3 +18,6 @@ GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(","
 AI_NAME         = os.getenv("AI_NAME", "사서봇")
 AI_STATUS_TEXT  = os.getenv("AI_STATUS_TEXT", "Library")
 AI_PERSONA_DIR  = os.getenv("AI_PERSONA_DIR", "ai")
+
+# ── 후원 ─────────────────────────────────────
+LIGHTNING_ADDRESS = os.getenv("LIGHTNING_ADDRESS", "")
