@@ -417,6 +417,23 @@ class AILibrarianBot(discord.Client):
 
         try:
             # 웹 검색 모드
+            # past_replies 구축 (모든 경로에서 사용)
+            def _normalize(t):
+                return t.replace("\ufe0f", "").strip()
+
+            past_replies = set()
+            for h in history:
+                if h.role == "model" and h.parts and h.parts[0].text:
+                    past_replies.add(_normalize(h.parts[0].text))
+            bot_name = self.persona.name
+            for line in (ctx.get("channel", "") or "").split("\n"):
+                if line.startswith(f"{bot_name}: "):
+                    past_replies.add(_normalize(line.split(": ", 1)[1]))
+                elif line.startswith(f"{bot_name} ["):
+                    idx = line.find("]: ")
+                    if idx != -1:
+                        past_replies.add(_normalize(line[idx + 3:]))
+
             if use_web:
                 logger.info("웹 검색 모드")
                 web_config = types.GenerateContentConfig(
@@ -432,8 +449,9 @@ class AILibrarianBot(discord.Client):
                     if response.candidates and response.candidates[0].content.parts:
                         for part in response.candidates[0].content.parts:
                             if part.text:
-                                reply = self._clean_reply(part.text)
-                                if reply:
+                                cleaned = self._clean_reply(part.text)
+                                if cleaned and _normalize(cleaned) not in past_replies:
+                                    reply = cleaned
                                     break
                     if reply:
                         history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
@@ -563,22 +581,7 @@ class AILibrarianBot(discord.Client):
                         reply_parts.append(cleaned)
             reply = "\n".join(reply_parts) if reply_parts else ""
 
-            # 반복 방지: Gemini 히스토리 + 채널 히스토리에서 봇 답변 비교
-            def _normalize(t):
-                return t.replace("\ufe0f", "").strip()
-
-            past_replies = set()
-            for h in history:
-                if h.role == "model" and h.parts and h.parts[0].text:
-                    past_replies.add(_normalize(h.parts[0].text))
-            bot_name = self.persona.name
-            for line in (ctx.get("channel", "") or "").split("\n"):
-                if line.startswith(f"{bot_name}: "):
-                    past_replies.add(_normalize(line.split(": ", 1)[1]))
-                elif line.startswith(f"{bot_name} ["):
-                    idx = line.find("]: ")
-                    if idx != -1:
-                        past_replies.add(_normalize(line[idx + 3:]))
+            # 반복 방지
             norm_reply = _normalize(reply) if reply else ""
             logger.info(f"반복 비교: reply={norm_reply[:50] if norm_reply else '없음'}... past={len(past_replies)}개")
             if norm_reply and norm_reply in past_replies:
