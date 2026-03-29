@@ -433,11 +433,15 @@ class AILibrarianBot(discord.Client):
                         reply_parts.append(cleaned)
             reply = "\n".join(reply_parts) if reply_parts else ""
 
-            # 반복 방지: 히스토리 내 모든 봇 답변과 비교
+            # 반복 방지: Gemini 히스토리 + 채널 히스토리에서 봇 답변 비교
             past_replies = set()
             for h in history:
                 if h.role == "model" and h.parts and h.parts[0].text:
                     past_replies.add(h.parts[0].text)
+            bot_prefix = f"{self.persona.name}: "
+            for line in (ctx.get("channel", "") or "").split("\n"):
+                if line.startswith(bot_prefix):
+                    past_replies.add(line[len(bot_prefix):])
             if reply and reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
