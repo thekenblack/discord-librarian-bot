@@ -570,17 +570,7 @@ class AILibrarianBot(discord.Client):
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
 
-                # search 결과 없으면 웹 검색 폴백
-                if fc.name == "search" and "result" in tool_data and "정보 없음" in tool_data.get("result", ""):
-                    logger.info("search 결과 없음 - 웹 검색 시도")
-                    reply = await self._web_search(user_text, dynamic_prompt, past_replies)
-                    if reply:
-                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                        if len(history) > 6:
-                            self.chat_histories[channel_id] = history[-6:]
-                        if len(reply) > 2000:
-                            reply = reply[:1997] + "..."
-                        return reply, file_to_send, ai_saved
+                # search 결과 없으면 그대로 Gemini에게 돌려줌 (없다고 답하게)
 
                 # send_file 액션: 실제 파일 전송 준비
                 if tool_data.get("_action") == "send_file":
@@ -680,13 +670,6 @@ class AILibrarianBot(discord.Client):
                             tool_data = json.loads(tool_result)
                             logger.info(f"도구 결과: {tool_result[:200]}")
 
-                            # 재시도에서도 search 결과 없으면 웹 검색
-                            if fc.name == "search" and "result" in tool_data and "정보 없음" in tool_data.get("result", ""):
-                                logger.info("재시도 search 결과 없음 - 웹 검색 시도")
-                                reply = await self._web_search(user_text, clean_prompt, past_replies)
-                                if reply:
-                                    return reply, file_to_send, ai_saved
-
                             clean_history.append(response.candidates[0].content)
                             clean_history.append(types.Content(role="user", parts=[types.Part.from_function_response(
                                 name=fc.name, response=tool_data)]))
@@ -705,13 +688,6 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.error(f"재시도 실패: {e}")
                     reply = ""
-
-            # 빈 응답이면 웹 검색 폴백
-            if not reply and user_text:
-                logger.info("웹 검색 폴백 시도")
-                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
-                web_prompt = "\n\n".join(p for p in clean_parts if p)
-                reply = await self._web_search(user_text, web_prompt, past_replies)
 
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
