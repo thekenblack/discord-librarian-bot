@@ -16,4 +16,10 @@ else
     echo "[설치] .env 파일이 이미 존재합니다."
 fi
 
+# 기존 DB 마이그레이션
+if [ -f librarian_bot.db ] && [ ! -f library.db ]; then
+    echo "[설치] DB 마이그레이션 중..."
+    venv/bin/python migrate_db.py
+fi
+
 echo "[설치] 완료! 실행: ./run.sh"

@@ -5,7 +5,8 @@ load_dotenv()
 
 BOT_TOKEN     = os.getenv("DISCORD_BOT_TOKEN", "")
 GUILD_ID      = os.getenv("DISCORD_GUILD_ID", "")
-DATABASE_PATH = os.getenv("DATABASE_PATH", "librarian_bot.db")
+LIBRARY_DB_PATH    = os.getenv("LIBRARY_DB_PATH", "library.db")
+LIBRARIAN_DB_PATH  = os.getenv("LIBRARIAN_DB_PATH", "librarian.db")
 UPLOAD_DIR    = os.getenv("UPLOAD_DIR", "uploads")
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", str(25 * 1024 * 1024)))  # 25MB
 

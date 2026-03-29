@@ -8,7 +8,7 @@ from discord.ext import commands
 import logging
 import traceback
 import sys
-from database import Database
+from library_db import LibraryDB
 from config import BOT_TOKEN, GUILD_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -38,7 +38,7 @@ class BotCommandTree(app_commands.CommandTree):
 class LibrarianBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents, tree_cls=BotCommandTree)
-        self.db = Database()
+        self.db = LibraryDB()
         self.stopped = False
 
     async def on_ready(self):

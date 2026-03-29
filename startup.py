@@ -18,6 +18,25 @@ if not os.path.exists(os.path.join(BASE_DIR, ".env")):
     print("  → cp env.example .env 후 토큰과 API 키를 입력하세요.")
     sys.exit(1)
 
+# DB 백업
+BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+import shutil
+from datetime import datetime
+for db_file in ["library.db", "librarian.db"]:
+    db_path = os.path.join(BASE_DIR, db_file)
+    if os.path.exists(db_path):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(BACKUP_DIR, f"{db_file}.{timestamp}")
+        shutil.copy2(db_path, backup_path)
+        print(f"[백업] {db_file} → {backup_path}")
+
+        # 오래된 백업 정리 (각 DB당 최근 5개만 유지)
+        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith(db_file + ".")])
+        for old in backups[:-5]:
+            os.remove(os.path.join(BACKUP_DIR, old))
+
 BOTS = [
     {"name": "라이브러리 봇", "script": os.path.join(BASE_DIR, "bot.py")},
     {"name": "AI 사서봇",      "script": os.path.join(BASE_DIR, "ai.py")},

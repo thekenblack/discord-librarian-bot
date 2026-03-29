@@ -87,16 +87,16 @@ class AdminCog(commands.Cog):
 
         import shutil, os
         from datetime import datetime, timezone
-        from config import DATABASE_PATH
+        from config import LIBRARY_DB_PATH
 
-        if not os.path.exists(DATABASE_PATH):
+        if not os.path.exists(LIBRARY_DB_PATH):
             return await interaction.followup.send(
                 embed=error_embed("백업 실패", "데이터베이스 파일을 찾을 수 없습니다."), ephemeral=True
             )
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         backup_path = f"backup_{ts}.db"
-        shutil.copy2(DATABASE_PATH, backup_path)
+        shutil.copy2(LIBRARY_DB_PATH, backup_path)
 
         try:
             await interaction.user.send(
@@ -127,9 +127,9 @@ class AdminCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         import aiosqlite
-        from config import DATABASE_PATH
+        from config import LIBRARY_DB_PATH
         from utils import file_size_fmt
-        async with aiosqlite.connect(DATABASE_PATH) as db:
+        async with aiosqlite.connect(LIBRARY_DB_PATH) as db:
             async def q(sql):
                 async with db.execute(sql) as cur:
                     return await cur.fetchone()

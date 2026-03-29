@@ -3,6 +3,7 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 """
 
 import os
+import re
 import json
 import asyncio
 import discord
@@ -13,8 +14,9 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
 
-from database import Database
-from config import UPLOAD_DIR, ADMIN_IDS
+from library_db import LibraryDB
+from librarian_db import LibrarianDB
+from config import UPLOAD_DIR, ADMIN_IDS, LIGHTNING_ADDRESS
 from ai.persona import Persona
 from ai.tools import library_tools, execute_tool
 
@@ -31,7 +33,8 @@ class AILibrarianBot(discord.Client):
         super().__init__(intents=intents)
 
         self.persona = persona
-        self.db = Database()
+        self.library_db = LibraryDB()
+        self.librarian_db = LibrarianDB()
         self._gemini_clients = [genai.Client(api_key=k) for k in gemini_api_keys]
         self._client_index = 0
         self._dead_until: dict[int, date] = {}  # client index -> 일일 한도 만료일
@@ -41,10 +44,9 @@ class AILibrarianBot(discord.Client):
         self._channel_locks: dict[int, asyncio.Lock] = {}  # 채널별 동시 요청 방지
         self._ready = False
 
-        # 기억 트리거 / 공통 기억 패턴 로드
+        # 기억 트리거 로드
         ai_dir = os.path.join(os.path.dirname(__file__), "ai")
         self._memory_triggers = self._load_patterns(os.path.join(ai_dir, "memory_triggers.txt"), ["기억해"])
-        self._common_memory_patterns = self._load_patterns(os.path.join(ai_dir, "common_memory_patterns.txt"), [])
 
     @staticmethod
     def _load_patterns(path: str, default: list[str]) -> list[str]:
@@ -72,7 +74,7 @@ class AILibrarianBot(discord.Client):
         self.global_buffer.append(entry)
 
     async def _fetch_channel_history(self, channel, limit: int) -> list[str]:
-        """디스코드 API로 채널 히스토리를 가져와서 텍스트로 변환"""
+        """디스코드 API로 채널 히스토리를 가져와서 텍스트로 변환 (답글 구조 포함)"""
         messages = []
         async for msg in channel.history(limit=limit):
             messages.append(msg)
@@ -84,29 +86,36 @@ class AILibrarianBot(discord.Client):
             for user in msg.mentions:
                 text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
                 text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
-            lines.append(f"{name}: {text}")
+            # 답글 여부
+            if msg.reference and msg.reference.resolved:
+                ref = msg.reference.resolved
+                ref_name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
+                ref_text = ref.content[:50]
+                lines.append(f"{name} (→{ref_name}: {ref_text}): {text}")
+            else:
+                lines.append(f"{name}: {text}")
         return lines
 
     async def _build_context(self, channel_id: int, user_id: str, guild) -> dict:
-        """현재 채널은 API로, 다른 채널은 버퍼로"""
-        # 1. 현재 채널 - API에서 직접 (재시작해도 히스토리 유지)
+        """현재 채널은 API로, 다른 채널은 버퍼로 (현재 채널은 버퍼에서 제외)"""
+        # 1. 현재 채널 - API에서 직접
         current_channel = self.get_channel(channel_id)
         ch_lines = await self._fetch_channel_history(current_channel, BUFFER_SIZE) if current_channel else []
 
-        # 2. 서버 전체 - 버퍼 (봇 가동 중 수집된 것)
-        def _format_buffer(entries):
-            lines = []
-            for msg in entries:
-                name = self.persona.name if msg["is_bot"] else msg["user_name"]
-                lines.append(f"[#{msg['channel_name']}] {name}: {msg['text']}")
-            return lines
-
-        global_lines = _format_buffer(list(self.global_buffer))
+        # 2. 서버 전체 - 버퍼 (현재 채널 제외)
+        current_ch_name = getattr(current_channel, "name", "") if current_channel else ""
+        global_lines = []
+        for msg in self.global_buffer:
+            if msg["channel_name"] == current_ch_name:
+                continue
+            name = self.persona.name if msg["is_bot"] else msg["user_name"]
+            global_lines.append(f"[#{msg['channel_name']}] {name}: {msg['text']}")
+        global_lines = global_lines[-BUFFER_SIZE:]
 
         # 3. 유저 최근 발언 - 현재 채널 히스토리에서 필터
         user = self.get_user(int(user_id))
         user_name = user.display_name if user else user_id
-        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}:")][-5:]
+        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}")][-5:]
 
         return {
             "channel": "\n".join(ch_lines),
@@ -114,8 +123,25 @@ class AILibrarianBot(discord.Client):
             "user": "\n".join(user_lines),
         }
 
+    @staticmethod
+    def _clean_reply(text: str) -> str:
+        """응답에서 JSON 줄과 HTML 태그를 정리"""
+        # JSON 줄 제거 ({로 시작하는 줄)
+        lines = text.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("{")]
+        text = "\n".join(lines).strip()
+
+        # HTML 태그 제거
+        text = re.sub(r"<[^>]+>", "", text).strip()
+
+        return text
+
     async def on_ready(self):
-        await self.db.init()
+        await self.library_db.init()
+        await self.librarian_db.init()
+        knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge")
+        await self.librarian_db.load_knowledge_from_files(knowledge_dir)
+        await self.librarian_db.cleanup_learned()
         logger.info(f"{self.user} 온라인! ({self.persona.name})")
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
@@ -192,15 +218,30 @@ class AILibrarianBot(discord.Client):
                     guild=message.guild,
                 )
 
-        # 기억 트리거 감지 → 공통 패턴 여부에 따라 분기 저장
-        if text and any(kw in text.lower() for kw in self._memory_triggers):
+        # 기억 트리거 감지
+        if text:
             clean_text = text
             if self.user:
                 for tag in [f"@{self.persona.name}", f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
                     clean_text = clean_text.replace(tag, "").strip()
-            clean_text = f"{message.author.display_name}: {clean_text}"
-            await self.db.save_memory(clean_text)
-            logger.info(f"기억 저장: {clean_text}")
+            text_lower = text.lower()
+            display = message.author.display_name
+            uid = str(message.author.id)
+
+            # 질문 판별
+            has_question = "?" in text
+            confirm_patterns = ["알았어", "알았지", "알겠어", "알겠지", "알겠니", "알겠냐"]
+            is_question = has_question and not any(cp in text_lower for cp in confirm_patterns)
+
+            # 기억 트리거
+            if not is_question and any(kw in text_lower for kw in self._memory_triggers):
+                await self.librarian_db.save(f"{display}: {clean_text}")
+                logger.info(f"학습 저장: {clean_text}")
+
+            # 설명식 패턴 (트리거 없어도 저장)
+            elif "?" not in clean_text and "뭐" not in clean_text and "누구" not in clean_text and "알아" not in clean_text and re.search(r'.+[은는이가]\s+.+(?:이야|이다|야|다|임)$', clean_text):
+                await self.librarian_db.save(clean_text)
+                logger.info(f"설명식 학습 저장: {clean_text}")
 
         # 빈 응답(안전 필터 차단 등)이면 무시
         if not reply_text and not file_to_send:
@@ -225,28 +266,44 @@ class AILibrarianBot(discord.Client):
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
 
-        # 시스템 프롬프트에 동적 맥락 삽입
-        dynamic_prompt = self.persona.system_prompt
+        # 프롬프트 조립: 페르소나 → 도구 → 맥락 → 도구 → 페르소나
+        parts = []
 
-        # 맥락 조립 (디스코드 API에서 직접 가져옴)
-        ctx = await self._build_context(channel_id, user_id, guild)
-        if ctx["channel"]:
-            dynamic_prompt += f"\n\n## 현재 채널 최근 대화\n{ctx['channel']}"
-        if ctx["global"]:
-            dynamic_prompt += f"\n\n## 서버 전체 최근 대화\n{ctx['global']}"
-        if ctx["user"]:
-            dynamic_prompt += f"\n\n## 이 유저의 최근 발언\n{ctx['user']}"
+        # 1. 페르소나 (앞)
+        parts.append(self.persona.persona_text)
 
-        # 대화 상대 정보
+        # 2. 도구/규칙 (앞)
+        parts.append(self.persona.prompt_text)
+
+        # 3. 맥락
+        admin_names = []
+        if guild:
+            for aid in ADMIN_IDS:
+                member = guild.get_member(int(aid))
+                if member:
+                    admin_names.append(member.display_name)
         role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
         logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role}")
-        dynamic_prompt += f"\n\n## 현재 대화 상대\n유저 이름: {user_name}\n유저 ID: {user_id}\n권한: {role}"
 
-        # 저장된 기억 자동 로드
-        memories = await self.db.recall_memories(10)
-        if memories:
-            mem_lines = [f"- {m['content']}" for m in memories]
-            dynamic_prompt += f"\n\n## 저장된 기억\n" + "\n".join(mem_lines)
+        info_block = f"## 상황\n대화 상대: {user_name} ({role})"
+        if admin_names:
+            info_block += f"\n도서관 주인: {', '.join(admin_names)}"
+        if LIGHTNING_ADDRESS:
+            info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
+        parts.append(info_block)
+
+        ctx = await self._build_context(channel_id, user_id, guild)
+        if ctx["channel"]:
+            parts.append(f"## 현재 채널 대화\n{ctx['channel']}")
+
+        # 4. 도구 리마인드 (뒤)
+        parts.append(self.persona.reminder_text)
+
+        # 5. 페르소나 (뒤)
+        parts.append(self.persona.persona_text)
+
+        dynamic_prompt = "\n\n".join(p for p in parts if p)
+        logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
 
         # 유저 메시지 구성
         if user_text:
@@ -257,6 +314,7 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
         file_to_send = None
+        history_snapshot = len(history)  # 롤백 지점
 
         def _gen_config():
             return types.GenerateContentConfig(
@@ -309,8 +367,12 @@ class AILibrarianBot(discord.Client):
                 raise last_err
             raise ClientError("모든 API 키 소진")
 
+        # 사실 확인 패턴 감지용
+        fact_keywords = ["누구", "뭐야", "뭐지", "알아", "무슨", "언제", "어디"]
+
         try:
             response = _call_gemini(history)
+            tool_used = False
 
             # function call 루프 (최대 5회 - 기억 조회+저장+도서관 조합)
             for _ in range(5):
@@ -322,22 +384,23 @@ class AILibrarianBot(discord.Client):
                 if not fc:
                     break
 
+                tool_used = True
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
 
                 tool_args = dict(fc.args) if fc.args else {}
-                if fc.name == "save_memory" and "user_id" not in tool_args:
-                    tool_args["user_id"] = user_id
-                if fc.name == "recall_memories" and "user_id" not in tool_args:
-                    tool_args["user_id"] = user_id
-                tool_result = await execute_tool(self.db, fc.name, tool_args)
+                # user_id 자동 삽입
+                if fc.name in ("search", "save_memory"):
+                    tool_args["_user_id"] = user_id
+                tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
+                logger.info(f"도구 결과: {tool_result[:200]}")
 
                 # send_file 액션: 실제 파일 전송 준비
                 if tool_data.get("_action") == "send_file":
                     save_path = os.path.join(UPLOAD_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
-                        await self.db.increment_download(tool_data["file_id"])
+                        await self.library_db.increment_download(tool_data["file_id"])
 
                 history.append(response.candidates[0].content)
                 history.append(types.Content(
@@ -350,27 +413,99 @@ class AILibrarianBot(discord.Client):
 
                 response = _call_gemini(history)
 
+            # 사실 확인 질문인데 도구를 안 쓴 경우 → 강제 재시도
+            if not tool_used and user_text and any(kw in user_text for kw in fact_keywords):
+                logger.warning("사실 확인 질문인데 도구 미사용 - search_knowledge 강제 유도")
+                history.append(response.candidates[0].content)
+                history.append(types.Content(role="user", parts=[types.Part.from_text(
+                    text="(search_knowledge 도구를 사용해서 확인해.)")]))
+                try:
+                    response = _call_gemini(history)
+                    # 강제 유도 후 도구 호출 루프
+                    for _ in range(3):
+                        fc = None
+                        for part in response.candidates[0].content.parts:
+                            if part.function_call:
+                                fc = part.function_call
+                                break
+                        if not fc:
+                            break
+                        logger.info(f"도구 호출 (강제): {fc.name}({fc.args})")
+                        tool_args = dict(fc.args) if fc.args else {}
+                        tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                        tool_data = json.loads(tool_result)
+                        logger.info(f"도구 결과: {tool_result[:200]}")
+                        history.append(response.candidates[0].content)
+                        history.append(types.Content(role="user", parts=[types.Part.from_function_response(
+                            name=fc.name, response=tool_data)]))
+                        response = _call_gemini(history)
+                except Exception:
+                    pass
+
             # 안전 필터 차단 체크
             if not response.candidates or not response.candidates[0].content.parts:
                 logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
                 return "", None
 
-            # 텍스트 parts에서 JSON이 아닌 실제 응답만 추출
-            reply = ""
+            # 모든 텍스트 parts를 정리해서 합침
+            reply_parts = []
             for part in response.candidates[0].content.parts:
-                if part.text and not part.text.strip().startswith("{"):
-                    reply = part.text
-                    break
-            # 전부 JSON이면 마지막 텍스트라도 사용
-            if not reply:
-                for part in response.candidates[0].content.parts:
-                    if part.text:
-                        reply = part.text
-            history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                if part.text:
+                    cleaned = self._clean_reply(part.text)
+                    if cleaned:
+                        reply_parts.append(cleaned)
+            reply = "\n".join(reply_parts) if reply_parts else ""
 
-            # 히스토리 20개 초과 시 오래된 것 제거
-            if len(history) > 10:
-                self.chat_histories[channel_id] = history[-10:]
+            # 반복 방지: 직전 답변과 동일하거나 유사하면 빈 응답
+            last_bot_reply = ""
+            for h in reversed(history):
+                if h.role == "model" and h.parts and h.parts[0].text:
+                    last_bot_reply = h.parts[0].text
+                    break
+            if reply and reply == last_bot_reply:
+                logger.warning("직전 답변과 동일 - 도구 사용 강제 후 재시도")
+                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                history.append(types.Content(role="user", parts=[types.Part.from_text(
+                    text="(같은 말을 반복했어. search_knowledge나 list_entries 도구를 써서 새로운 정보를 찾고, 다른 표현으로 다시 답해.)")]))
+                try:
+                    response = _call_gemini(history)
+                    # 도구 호출 루프
+                    for _ in range(3):
+                        fc = None
+                        for part in response.candidates[0].content.parts:
+                            if part.function_call:
+                                fc = part.function_call
+                                break
+                        if not fc:
+                            break
+                        logger.info(f"도구 호출 (반복방지): {fc.name}({fc.args})")
+                        tool_args = dict(fc.args) if fc.args else {}
+                        tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                        tool_data = json.loads(tool_result)
+                        logger.info(f"도구 결과: {tool_result[:200]}")
+                        history.append(response.candidates[0].content)
+                        history.append(types.Content(role="user", parts=[types.Part.from_function_response(
+                            name=fc.name, response=tool_data)]))
+                        response = _call_gemini(history)
+                    retry_parts = []
+                    for part in response.candidates[0].content.parts:
+                        if part.text:
+                            cleaned = self._clean_reply(part.text)
+                            if cleaned:
+                                retry_parts.append(cleaned)
+                    reply = "\n".join(retry_parts) if retry_parts else ""
+                except Exception:
+                    reply = ""
+
+            if reply:
+                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+            else:
+                # 빈 응답이면 유저 메시지도 히스토리에서 제거 (오염 방지)
+                if history and history[-1].role == "user":
+                    history.pop()
+
+            if len(history) > 6:
+                self.chat_histories[channel_id] = history[-6:]
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
@@ -379,10 +514,8 @@ class AILibrarianBot(discord.Client):
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
-            if e.status == "INVALID_ARGUMENT":
-                # 히스토리 꼬임 - 리셋
-                logger.warning(f"히스토리 꼬임 감지, 채널 {channel_id} 히스토리 리셋")
-                self.chat_histories[channel_id] = []
+            # 히스토리 롤백 (도구 호출 중 꼬인 것 복구)
+            del history[history_snapshot:]
             if e.status == "RESOURCE_EXHAUSTED":
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
@@ -394,5 +527,6 @@ class AILibrarianBot(discord.Client):
             return self.persona.error_message, None
 
         except Exception as e:
+            del history[history_snapshot:]
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             return self.persona.error_message, None

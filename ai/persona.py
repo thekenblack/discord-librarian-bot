@@ -31,9 +31,19 @@ class Persona:
         prompt_text = ""
         if os.path.exists(prompt_path):
             with open(prompt_path, encoding="utf-8") as f:
-                prompt_text = f.read()
+                prompt_text = f.read().replace("{name}", name)
 
-        self.system_prompt: str = persona_text + "\n\n" + prompt_text
+        # 마무리 리마인드 프롬프트
+        reminder_path = os.path.join(persona_dir, "reminder.txt")
+        reminder_text = ""
+        if os.path.exists(reminder_path):
+            with open(reminder_path, encoding="utf-8") as f:
+                reminder_text = f.read().replace("{name}", name)
+
+        # 페르소나 → 도구/규칙 → [맥락(동적)] → 도구리마인드 → 페르소나
+        self.persona_text: str = persona_text
+        self.prompt_text: str = prompt_text
+        self.reminder_text: str = reminder_text
 
         # 메시지
         self._error_messages = [

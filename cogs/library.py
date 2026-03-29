@@ -531,9 +531,9 @@ class LibraryCog(commands.Cog):
             "`/library share` - 엔트리 정보를 채널에 공유\n"
             "\n**자료 등록**\n"
             "`/library new` - 새 엔트리 생성\n"
-            "`/library file` - 파일 업로드\n"
+            "`/library add` - 파일 업로드\n"
             "\n**편집**\n"
-            "`/library entries` - 내가 만든 엔트리 편집\n"
+            "`/library edit` - 내가 만든 엔트리 편집\n"
             "`/library files` - 내가 올린 파일 편집\n"
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -560,7 +560,7 @@ class LibraryCog(commands.Cog):
             "엔트리 생성 완료",
             f"**{modal.book_title.value.strip()}**\n"
             f"엔트리 ID: `{book_id}`\n"
-            f"`/library file`으로 파일을 추가하세요."
+            f"`/library add`으로 파일을 추가하세요."
         )
         await modal.interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -589,9 +589,9 @@ class LibraryCog(commands.Cog):
         )
         return file_id
 
-    @library.command(name="file", description="파일을 라이브러리에 업로드")
+    @library.command(name="add", description="파일을 라이브러리에 업로드")
     @app_commands.describe(
-        file="업로드할 파일 (최대 25MB)",
+        file="업로드할 파일 (최대 10MB)",
     )
     async def upload(self, interaction: discord.Interaction,
                      file: discord.Attachment):
@@ -667,7 +667,7 @@ class LibraryCog(commands.Cog):
         embed.set_footer(text="/library info로 상세 조회 및 다운로드")
         await interaction.response.send_message(embed=embed)
 
-    @library.command(name="entries", description="내가 만든 엔트리 편집")
+    @library.command(name="edit", description="내가 만든 엔트리 편집")
     async def edit_entries(self, interaction: discord.Interaction):
         books = await self.bot.db.list_books_by_user(str(interaction.user.id))
 

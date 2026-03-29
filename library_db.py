@@ -1,26 +1,24 @@
 """
-SQLite 데이터베이스 레이어 (aiosqlite 비동기)
+도서관 DB (엔트리, 파일)
 """
 
 import aiosqlite
 import logging
 from datetime import datetime, timezone
-from config import DATABASE_PATH
+from config import LIBRARY_DB_PATH
 
-logger = logging.getLogger("Database")
+logger = logging.getLogger("LibraryDB")
 
 
-class Database:
+class LibraryDB:
     def __init__(self):
-        self.path = DATABASE_PATH
+        self.path = LIBRARY_DB_PATH
 
     async def init(self):
-        """테이블 초기화"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA synchronous=NORMAL")
 
-            # ── 엔트리 ────────────────────────────────────────
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS books (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +33,6 @@ class Database:
                 )
             """)
 
-            # ── 파일 ──────────────────────────────────────────
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS files (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,27 +50,20 @@ class Database:
                     FOREIGN KEY(book_id) REFERENCES books(id)
                 )
             """)
-            # ── 공통 기억 ─────────────────────────────────────
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content    TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-            """)
 
-            # ── 유저별 기억 ───────────────────────────────────
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS user_memories (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id    TEXT NOT NULL,
-                    content    TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-            """)
+            # 마이그레이션
+            async def _add_column(table, column, coltype):
+                try:
+                    await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+                except Exception:
+                    pass
+
+            await _add_column("books", "alias", "TEXT")
+            await _add_column("books", "author", "TEXT")
+            await _add_column("books", "author_alias", "TEXT")
 
             await db.commit()
-            logger.info("데이터베이스 초기화 완료")
+            logger.info("도서관 DB 초기화 완료")
 
     # ── 엔트리 ────────────────────────────────────────────
 
@@ -103,7 +93,6 @@ class Database:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT COUNT(*) as cnt FROM books")
             total = (await cursor.fetchone())["cnt"]
-
             offset = (page - 1) * per_page
             cursor = await db.execute("""
                 SELECT b.*, COUNT(f.id) as file_count,
@@ -145,6 +134,11 @@ class Database:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+    async def update_book_alias(self, book_id: int, alias: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("UPDATE books SET alias = ? WHERE id = ?", (alias, book_id))
+            await db.commit()
+
     async def update_book(self, book_id: int, title: str, alias: str | None,
                           author: str | None, author_alias: str | None,
                           description: str | None):
@@ -183,9 +177,8 @@ class Database:
     async def list_book_files(self, book_id: int) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
-                SELECT * FROM files WHERE book_id = ? ORDER BY uploaded_at DESC
-            """, (book_id,))
+            cursor = await db.execute(
+                "SELECT * FROM files WHERE book_id = ? ORDER BY uploaded_at DESC", (book_id,))
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
@@ -199,8 +192,7 @@ class Database:
     async def increment_download(self, file_id: int):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "UPDATE files SET download_count = download_count + 1 WHERE id = ?",
-                (file_id,))
+                "UPDATE files SET download_count = download_count + 1 WHERE id = ?", (file_id,))
             await db.commit()
 
     async def list_files_by_user(self, uploader_id: str) -> list[dict]:
@@ -231,10 +223,9 @@ class Database:
             await db.commit()
             return cursor.rowcount > 0
 
-    # ── 검색 (비트쨩용) ──────────────────────────────────
+    # ── 검색 ──────────────────────────────────────────────
 
     async def search_books(self, keyword: str) -> list[dict]:
-        """제목/별칭/저자/저자별칭/설명에서 키워드 검색"""
         like = f"%{keyword}%"
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -255,47 +246,9 @@ class Database:
             return [dict(r) for r in rows]
 
     async def get_book_detail(self, book_id: int) -> dict | None:
-        """엔트리 정보 + 파일 목록을 한번에 반환"""
         book = await self.get_book(book_id)
         if not book:
             return None
         files = await self.list_book_files(book_id)
         book["files"] = files
         return book
-
-    # ── 기억 ──────────────────────────────────────────────
-
-    async def save_memory(self, content: str) -> int:
-        now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.path) as db:
-            cursor = await db.execute(
-                "INSERT INTO memories (content, created_at) VALUES (?, ?)",
-                (content, now))
-            await db.commit()
-            return cursor.lastrowid
-
-    async def save_user_memory(self, user_id: str, content: str) -> int:
-        now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.path) as db:
-            cursor = await db.execute(
-                "INSERT INTO user_memories (user_id, content, created_at) VALUES (?, ?, ?)",
-                (user_id, content, now))
-            await db.commit()
-            return cursor.lastrowid
-
-    async def recall_memories(self, limit: int = 10) -> list[dict]:
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?", (limit,))
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
-
-    async def recall_user_memories(self, user_id: str, limit: int = 10) -> list[dict]:
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM user_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-                (user_id, limit))
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]

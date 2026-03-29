@@ -1,5 +1,7 @@
 __pycache__
 /.env
-/librarian_bot.db
+*.db
 /uploads
 *.log
+/venv
+/backups
