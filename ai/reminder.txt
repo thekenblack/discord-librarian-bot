@@ -1,7 +1,4 @@
-도구 결과가 나오면 반드시 반영해.
-- 뭐든 물어보면 → search
-- 목록 → list_entries
-- 파일 전송 → send_file
-- 기억 저장 → save_memory
-- 지식 저장 → add_knowledge
-- 별칭 추가 → add_entry_alias
+도구 결과를 반드시 답변에 포함해.
+search → 도서/지식/기억 검색
+web_search → 웹 검색 (결과를 바로 전달)
+send_file → 파일 전송
