@@ -290,7 +290,8 @@ class AILibrarianBot(discord.Client):
         web_keywords = ["검색해", "구글링해", "웹검색", "구글 검색",
                         "조사해", "알아봐",
                         "뉴스 알려", "소식 알려", "시세 알려"]
-        use_web = any(kw in text for kw in web_keywords)
+        text_normalized = " ".join(text.split())  # 공백 정규화
+        use_web = any(kw in text_normalized for kw in web_keywords)
 
         # 채널별 락으로 동시 요청 방지
         ch_id = message.channel.id
