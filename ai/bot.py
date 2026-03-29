@@ -181,7 +181,9 @@ class AILibrarianBot(discord.Client):
                 continue
             cleaned.append(l)
         text = "\n".join(cleaned).strip()
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        # 잔여 멘션 태그 제거
+        text = re.sub(r"<@!?\d+>", "", text).strip()
         # 중간 응답만으로 끝나는 경우 빈 응답 처리
         empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만", "보여줄게", "알려줄게"]
         if text and any(text.rstrip("!.⚡️⚡ ").endswith(p) for p in empty_patterns):
@@ -330,6 +332,10 @@ class AILibrarianBot(discord.Client):
                     pass
             if ref_msg:
                 ref_content = ref_msg.content[:100]
+                # 멘션 태그를 이름으로 치환
+                for u in ref_msg.mentions:
+                    ref_content = ref_content.replace(f"<@{u.id}>", f"@{u.display_name}")
+                    ref_content = ref_content.replace(f"<@!{u.id}>", f"@{u.display_name}")
                 ref_extras = self._extract_extras(ref_msg)
                 if ref_extras:
                     ref_content = f"{ref_content} {ref_extras}" if ref_content else ref_extras
