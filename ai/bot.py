@@ -619,7 +619,12 @@ class AILibrarianBot(discord.Client):
                     )],
                 ))
 
-                response = _call_gemini(history)
+                try:
+                    response = _call_gemini(history)
+                except Exception:
+                    # API 실패 시 히스토리 전체 폐기
+                    self.chat_histories[channel_id] = []
+                    raise
 
             # 안전 필터 차단 체크
             if not response.candidates or not response.candidates[0].content.parts:
@@ -642,7 +647,7 @@ class AILibrarianBot(discord.Client):
             if norm_reply and norm_reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
                 # 히스토리 롤백
-                del history[history_snapshot:]
+                self.chat_histories[channel_id] = []
                 # 채널 대화 없는 프롬프트로 재구성
                 clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
                 clean_prompt = "\n\n".join(p for p in clean_parts if p)
@@ -738,7 +743,7 @@ class AILibrarianBot(discord.Client):
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
             # 히스토리 롤백 (도구 호출 중 꼬인 것 복구)
-            del history[history_snapshot:]
+            self.chat_histories[channel_id] = []
             if e.status == "RESOURCE_EXHAUSTED":
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
@@ -750,6 +755,6 @@ class AILibrarianBot(discord.Client):
             return self.persona.error_message, None, False
 
         except Exception as e:
-            del history[history_snapshot:]
+            self.chat_histories[channel_id] = []
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             return self.persona.error_message, None, False
