@@ -636,6 +636,14 @@ class AILibrarianBot(discord.Client):
                             tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                             tool_data = json.loads(tool_result)
                             logger.info(f"도구 결과: {tool_result[:200]}")
+
+                            # 재시도에서도 search 결과 없으면 웹 검색
+                            if fc.name == "search" and "result" in tool_data and "정보 없음" in tool_data.get("result", ""):
+                                logger.info("재시도 search 결과 없음 - 웹 검색 시도")
+                                reply = await self._web_search(user_text, clean_prompt, past_replies)
+                                if reply:
+                                    return reply, file_to_send, ai_saved
+
                             clean_history.append(response.candidates[0].content)
                             clean_history.append(types.Content(role="user", parts=[types.Part.from_function_response(
                                 name=fc.name, response=tool_data)]))
