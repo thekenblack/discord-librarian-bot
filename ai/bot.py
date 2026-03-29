@@ -78,6 +78,22 @@ class AILibrarianBot(discord.Client):
         self._get_buffer(channel_id).append(entry)
         self.global_buffer.append(entry)
 
+    @staticmethod
+    def _extract_extras(msg) -> str:
+        """메시지에서 임베드/첨부 정보 추출"""
+        extras = []
+        for embed in msg.embeds:
+            parts = []
+            if embed.title:
+                parts.append(embed.title)
+            if embed.description:
+                parts.append(embed.description[:100])
+            if parts:
+                extras.append(f"[임베드: {' - '.join(parts)}]")
+        for att in msg.attachments:
+            extras.append(f"[첨부: {att.filename}]")
+        return " ".join(extras)
+
     async def _fetch_channel_history(self, channel, limit: int) -> list[str]:
         """디스코드 API로 채널 히스토리를 가져와서 텍스트로 변환 (답글 구조 포함)"""
         messages = []
@@ -89,6 +105,9 @@ class AILibrarianBot(discord.Client):
         for msg in messages:
             name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
             text = msg.content
+            extras = self._extract_extras(msg)
+            if extras:
+                text = f"{text} {extras}" if text else extras
             for user in msg.mentions:
                 text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
                 text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
@@ -104,6 +123,9 @@ class AILibrarianBot(discord.Client):
             if ref_msg:
                 ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
                 ref_text = ref_msg.content[:50]
+                ref_extras = self._extract_extras(ref_msg)
+                if ref_extras:
+                    ref_text = f"{ref_text} {ref_extras}" if ref_text else ref_extras
                 for u in ref_msg.mentions:
                     ref_text = ref_text.replace(f"<@{u.id}>", f"@{u.display_name}")
                     ref_text = ref_text.replace(f"<@!{u.id}>", f"@{u.display_name}")
@@ -267,6 +289,11 @@ class AILibrarianBot(discord.Client):
             text = text.replace(f"<@&{role.id}>", "")
         text = text.strip()
 
+        # 멘션 메시지의 첨부/임베드 정보 추가
+        msg_extras = self._extract_extras(message)
+        if msg_extras:
+            text = f"{text} {msg_extras}" if text else msg_extras
+
         # 빈 멘션이면 빈 문자열 그대로 전달 (프롬프트에서 처리)
         if not text:
             text = ""
@@ -281,8 +308,11 @@ class AILibrarianBot(discord.Client):
                     pass
             if ref_msg:
                 ref_content = ref_msg.content[:100]
+                ref_extras = self._extract_extras(ref_msg)
+                if ref_extras:
+                    ref_content = f"{ref_content} {ref_extras}" if ref_content else ref_extras
                 # 에러 메시지에 답글한 경우 맥락 제거
-                if ref_content not in self._error_messages:
+                if ref_msg.content not in self._error_messages:
                     ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
                     text = f"[원본: {ref_name}이 쓴 \"{ref_content}\"] {text}"
 
