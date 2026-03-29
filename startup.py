@@ -12,6 +12,12 @@ import signal
 RESTART_CODE = 42
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# .env 체크
+if not os.path.exists(os.path.join(BASE_DIR, ".env")):
+    print("[오류] .env 파일이 없습니다.")
+    print("  → cp env.example .env 후 토큰과 API 키를 입력하세요.")
+    sys.exit(1)
+
 BOTS = [
     {"name": "라이브러리 봇", "script": os.path.join(BASE_DIR, "bot.py")},
     {"name": "AI 사서봇",      "script": os.path.join(BASE_DIR, "ai.py")},
