@@ -146,14 +146,25 @@ class AILibrarianBot(discord.Client):
 
     @staticmethod
     def _clean_reply(text: str) -> str:
-        """응답에서 JSON 줄과 HTML 태그를 정리"""
-        # JSON 줄 제거 ({로 시작하는 줄)
+        """응답에서 쓰레기 데이터 정리"""
         lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("{")]
-        text = "\n".join(lines).strip()
+        cleaned = []
+        for l in lines:
+            s = l.strip()
+            # JSON 줄 제거
+            if s.startswith("{") or s.startswith("[{"):
+                continue
+            # 내부 제어 토큰 제거
+            if "<ctrl_" in s:
+                continue
+            cleaned.append(l)
+        text = "\n".join(cleaned).strip()
 
         # HTML 태그 제거
         text = re.sub(r"<[^>]+>", "", text).strip()
+
+        # 빈 줄 정리
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
         return text
 
