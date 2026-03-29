@@ -633,7 +633,9 @@ class AILibrarianBot(discord.Client):
                                         system_instruction=clean_prompt,
                                         tools=google_search_tool,
                                         max_output_tokens=500, temperature=0.9)
-                                    wr = _retry_call(web_h)
+                                    ri, rc = _next_client()
+                                    wr = rc.models.generate_content(
+                                        model=MODEL, contents=web_h, config=web_cfg) if rc else None
                                     if wr and wr.candidates and wr.candidates[0].content.parts:
                                         for p in wr.candidates[0].content.parts:
                                             if p.text:
