@@ -238,8 +238,7 @@ class AILibrarianBot(discord.Client):
                 text = f"(→{ref_name}의 '{ref_content}'에 대한 답글) {text}"
 
         # 웹 검색 플래그
-        web_keywords = ["검색해줘", "검색해", "구글", "웹검색", "인터넷",
-                        "시세", "가격", "현재", "지금", "오늘", "최신", "실시간", "뉴스", "속보"]
+        web_keywords = ["검색해줘", "검색해봐", "구글링", "웹검색"]
         use_web = any(kw in text for kw in web_keywords)
 
         # 채널별 락으로 동시 요청 방지
