@@ -76,5 +76,6 @@ db.commit()
 db.close()
 print(f"  {LIBRARIAN_DB} 생성 완료 (knowledge_base, learned)")
 
-print("마이그레이션 완료!")
-print(f"  기존 {OLD_DB}는 백업으로 보존됩니다.")
+os.makedirs("backups", exist_ok=True)
+shutil.move(OLD_DB, os.path.join("backups", OLD_DB))
+print(f"마이그레이션 완료! 기존 {OLD_DB} → backups/{OLD_DB}")
