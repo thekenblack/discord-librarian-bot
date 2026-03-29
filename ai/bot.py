@@ -237,6 +237,10 @@ class AILibrarianBot(discord.Client):
                 ref_content = ref_msg.content[:100]
                 text = f"(→{ref_name}의 '{ref_content}'에 대한 답글) {text}"
 
+        # 웹 검색 플래그
+        web_keywords = ["검색해줘", "검색해", "구글", "웹검색", "인터넷"]
+        use_web = any(kw in text for kw in web_keywords)
+
         # 채널별 락으로 동시 요청 방지
         ch_id = message.channel.id
         if ch_id not in self._channel_locks:
@@ -250,6 +254,7 @@ class AILibrarianBot(discord.Client):
                     user_name=message.author.display_name,
                     user_text=text,
                     guild=message.guild,
+                    use_web=use_web,
                 )
 
         # 기억 트리거 감지 (AI가 이미 저장했으면 건너뜀)
@@ -294,7 +299,7 @@ class AILibrarianBot(discord.Client):
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
-                          guild=None) -> tuple[str, discord.File | None, bool]:
+                          guild=None, use_web=False) -> tuple[str, discord.File | None, bool]:
         """Gemini에게 질문하고 응답 + 파일(있으면) + AI저장여부 반환"""
         if channel_id not in self.chat_histories:
             self.chat_histories[channel_id] = []
@@ -403,6 +408,34 @@ class AILibrarianBot(discord.Client):
             raise ClientError("모든 API 키 소진")
 
         try:
+            # 웹 검색 모드
+            if use_web:
+                logger.info("웹 검색 모드")
+                web_config = types.GenerateContentConfig(
+                    system_instruction=dynamic_prompt,
+                    tools=google_search_tool,
+                    max_output_tokens=500,
+                    temperature=0.8,
+                )
+                idx, client = _next_client()
+                if client:
+                    response = client.models.generate_content(
+                        model=MODEL, contents=history, config=web_config)
+                    if response.candidates and response.candidates[0].content.parts:
+                        for part in response.candidates[0].content.parts:
+                            if part.text:
+                                reply = self._clean_reply(part.text)
+                                if reply:
+                                    break
+                    if reply:
+                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                        if len(history) > 6:
+                            self.chat_histories[channel_id] = history[-6:]
+                        if len(reply) > 2000:
+                            reply = reply[:1997] + "..."
+                        return reply, file_to_send, ai_saved
+                return self.persona.error_message, None, False
+
             response = _call_gemini(history)
 
             # function call 루프 (최대 5회 - 기억 조회+저장+도서관 조합)
