@@ -173,7 +173,9 @@ class AILibrarianBot(discord.Client):
         cleaned = []
         for l in lines:
             s = l.strip()
-            if s.startswith("{") or s.startswith("[") or s.startswith("<"):
+            if s.startswith("{") or s.startswith("<"):
+                continue
+            if s.startswith("[") and not s.startswith("[원본:"):
                 continue
             # 코드/함수 호출 패턴 제거
             if "(" in s and ")" in s and any(kw in s for kw in ["print(", "search(", "import ", "def ", "await ", "return "]):
@@ -185,6 +187,11 @@ class AILibrarianBot(discord.Client):
 
     async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
         """Google Search로 웹 검색 후 정리된 답변 반환"""
+        # 답글 맥락 제거
+        if "[원본:" in query:
+            idx = query.find("]")
+            if idx != -1:
+                query = query[idx + 1:].strip()
         from ai.tools import google_search_tool
         web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
         web_config = types.GenerateContentConfig(
