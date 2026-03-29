@@ -42,6 +42,28 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
+            name="save_memory",
+            description="기억할 만한 정보를 저장한다. 유저의 선호, 중요한 사실, 약속 등을 기억해둘 때 사용. user_id를 넣으면 유저별 기억, 안 넣으면 공통 기억으로 저장.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "content": types.Schema(type="STRING", description="기억할 내용"),
+                    "user_id": types.Schema(type="STRING", description="유저 ID (유저별 기억 시)"),
+                },
+                required=["content"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="recall_memories",
+            description="저장된 기억을 조회한다. user_id를 넣으면 해당 유저 기억 + 공통 기억을 함께 반환. 안 넣으면 공통 기억만 반환.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "user_id": types.Schema(type="STRING", description="유저 ID (유저별 기억 조회 시)"),
+                },
+            ),
+        ),
+        types.FunctionDeclaration(
             name="send_file",
             description="파일을 유저에게 전송한다. 유저가 파일을 달라고 하거나 다운로드를 요청할 때 사용. file_id를 모르면 먼저 search_entries나 get_entry_detail로 찾아야 한다. 막연하게 요청하면 해당 엔트리의 가장 최신 파일을 보내줘.",
             parameters=types.Schema(
@@ -112,6 +134,25 @@ async def execute_tool(db: Database, name: str, args: dict) -> str:
             "description": detail.get("description") or "",
             "files": files,
         }, ensure_ascii=False)
+
+    elif name == "save_memory":
+        content = args.get("content", "")
+        user_id = args.get("user_id")
+        if user_id:
+            mem_id = await db.save_user_memory(user_id, content)
+            return json.dumps({"result": f"유저 기억 저장 완료 (ID: {mem_id})"}, ensure_ascii=False)
+        else:
+            mem_id = await db.save_memory(content)
+            return json.dumps({"result": f"공통 기억 저장 완료 (ID: {mem_id})"}, ensure_ascii=False)
+
+    elif name == "recall_memories":
+        user_id = args.get("user_id")
+        common = await db.recall_memories(10)
+        result = {"common_memories": [m["content"] for m in common]}
+        if user_id:
+            user_mems = await db.recall_user_memories(user_id, 10)
+            result["user_memories"] = [m["content"] for m in user_mems]
+        return json.dumps(result, ensure_ascii=False)
 
     elif name == "send_file":
         file_id = args.get("file_id")

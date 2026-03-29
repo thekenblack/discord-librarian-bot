@@ -53,6 +53,25 @@ class Database:
                     FOREIGN KEY(book_id) REFERENCES books(id)
                 )
             """)
+            # ── 공통 기억 ─────────────────────────────────────
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS memories (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content    TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            # ── 유저별 기억 ───────────────────────────────────
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_memories (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             await db.commit()
             logger.info("데이터베이스 초기화 완료")
 
@@ -243,3 +262,40 @@ class Database:
         files = await self.list_book_files(book_id)
         book["files"] = files
         return book
+
+    # ── 기억 ──────────────────────────────────────────────
+
+    async def save_memory(self, content: str) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "INSERT INTO memories (content, created_at) VALUES (?, ?)",
+                (content, now))
+            await db.commit()
+            return cursor.lastrowid
+
+    async def save_user_memory(self, user_id: str, content: str) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "INSERT INTO user_memories (user_id, content, created_at) VALUES (?, ?, ?)",
+                (user_id, content, now))
+            await db.commit()
+            return cursor.lastrowid
+
+    async def recall_memories(self, limit: int = 10) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM memories ORDER BY created_at DESC LIMIT ?", (limit,))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def recall_user_memories(self, user_id: str, limit: int = 10) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM user_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]

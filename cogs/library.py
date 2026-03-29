@@ -506,6 +506,23 @@ class LibraryCog(commands.Cog):
         self.bot = bot
         os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+    @app_commands.command(name="help", description="명령어 도움말")
+    async def help(self, interaction: discord.Interaction):
+        embed = info_embed(
+            "📕 라이브러리 봇 도움말",
+            "**자료 조회**\n"
+            "`/library list` - 전체 엔트리 목록\n"
+            "`/library info` - 엔트리 상세 조회 및 다운로드\n"
+            "`/library share` - 엔트리 정보를 채널에 공유\n"
+            "\n**자료 등록**\n"
+            "`/library new` - 새 엔트리 생성\n"
+            "`/library file` - 파일 업로드\n"
+            "\n**편집**\n"
+            "`/library entries` - 내가 만든 엔트리 편집\n"
+            "`/library files` - 내가 올린 파일 편집\n"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @library.command(name="new", description="새 엔트리 생성")
     async def create_entry(self, interaction: discord.Interaction):
         modal = EntryModal()
