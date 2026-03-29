@@ -149,10 +149,10 @@ class LibrarianDB:
             logger.info(f"지식 베이스 로드 완료: 총 {total}건, 별칭 {alias_count}쌍")
 
     async def cleanup_learned(self):
-        """질문형 학습 데이터 정리"""
+        """쓰레기 학습 데이터 정리"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
-                "DELETE FROM learned WHERE content LIKE '%?' OR content LIKE '%뭐%야' OR content LIKE '%누구%야'")
+                "DELETE FROM learned WHERE content LIKE '%?' OR content LIKE '%뭐%야' OR content LIKE '%누구%야' OR content LIKE '[웹검색]%'")
             await db.commit()
             if cursor.rowcount > 0:
                 logger.info(f"쓰레기 학습 정리: {cursor.rowcount}건 삭제")
