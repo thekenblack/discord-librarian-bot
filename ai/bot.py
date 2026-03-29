@@ -388,7 +388,12 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"학습 저장: {clean_text}")
 
             # 설명식 패턴 (트리거 없어도 저장)
-            elif "?" not in clean_text and "뭐" not in clean_text and "누구" not in clean_text and "알아" not in clean_text and re.search(r'.+[은는이가]\s+.+(?:이야|이다|야|다|임)$', clean_text):
+            # 조건: 10자 이상, 질문 아님, "~은/는/이/가 ~이야/다/임" 패턴
+            elif (len(clean_text) >= 10
+                  and "?" not in clean_text
+                  and "[원본:" not in clean_text
+                  and not any(q in clean_text for q in ["뭐", "누구", "알아", "몇", "어디", "언제", "왜"])
+                  and re.search(r'.+[은는이가]\s+.+(?:이야|이다|야|다|임)$', clean_text)):
                 await self.librarian_db.save(clean_text)
                 logger.info(f"설명식 학습 저장: {clean_text}")
 
