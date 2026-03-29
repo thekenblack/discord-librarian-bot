@@ -728,6 +728,13 @@ class AILibrarianBot(discord.Client):
                     logger.error(f"재시도 실패: {e}")
                     reply = ""
 
+            # 3차: 웹 검색 폴백 (temperature 1.0)
+            if not reply and user_text:
+                logger.info("3차 웹 검색 폴백")
+                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
+                web_prompt = "\n\n".join(p for p in clean_parts if p)
+                reply = await self._web_search(user_text, web_prompt, past_replies)
+
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
             else:
