@@ -184,10 +184,6 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r"\n{3,}", "\n\n", text)
         # 잔여 멘션 태그 제거
         text = re.sub(r"<@!?\d+>", "", text).strip()
-        # 중간 응답만으로 끝나는 경우 빈 응답 처리
-        empty_patterns = ["검색해볼게", "찾아볼게", "기다려", "잠깐만", "보여줄게", "알려줄게"]
-        if text and any(text.rstrip("!.⚡️⚡ ").endswith(p) for p in empty_patterns):
-            return ""
         # 내부 도구 이름 노출 방지
         tool_names = ["list_entries", "search_entries", "get_entry_detail", "send_file",
                       "save_memory", "add_knowledge", "add_entry_alias", "add_alias",
