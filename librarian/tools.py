@@ -26,14 +26,6 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="list_entries",
-            description="도서관의 모든 엔트리(자료) 목록을 조회한다.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={},
-            ),
-        ),
-        types.FunctionDeclaration(
             name="deliver",
             description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
             parameters=types.Schema(
@@ -158,15 +150,6 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         if not result:
             return json.dumps({"result": f"'{keyword}' 관련 정보 없음."}, ensure_ascii=False)
         return json.dumps(result, ensure_ascii=False)
-
-    elif name == "list_entries":
-        books = await library_db.list_all_books()
-        if not books:
-            return json.dumps({"result": "등록된 엔트리가 없습니다."}, ensure_ascii=False)
-        entries = [{"id": b["id"], "title": b["title"],
-                   "author": b.get("author") or "", "file_count": b["file_count"]}
-                  for b in books]
-        return json.dumps({"entries": entries}, ensure_ascii=False)
 
     elif name == "deliver":
         file_id = args.get("file_id")
