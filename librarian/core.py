@@ -374,7 +374,7 @@ class AILibrarianBot(discord.Client):
                                 data = await att.read()
                                 media_parts = [
                                     types.Part.from_bytes(data=data, mime_type=ct),
-                                    types.Part.from_text(text="한 줄로 짧게 설명해."),
+                                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
                                 ]
                                 media_config = types.GenerateContentConfig(
                                     max_output_tokens=AI_MAX_OUTPUT_TOKENS,
