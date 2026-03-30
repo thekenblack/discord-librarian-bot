@@ -81,6 +81,25 @@ class AILibrarianBot(discord.Client):
                 extras.append(f"[첨부: {att.filename} | {desc}]")
             else:
                 extras.append(f"[첨부: {att.filename}]")
+        # 메시지 텍스트에서 URL 감지 → web_results 캐시 조회
+        import re as _re
+        import aiosqlite as _aiosqlite
+        from config import LIBRARIAN_DB_PATH as _DB_PATH
+        urls = _re.findall(r'https?://[^\s<>\"]+', msg.content or "")
+        for url in urls:
+            normalized = url.rstrip("/")
+            try:
+                async with _aiosqlite.connect(_DB_PATH) as db:
+                    db.row_factory = _aiosqlite.Row
+                    cursor = await db.execute(
+                        "SELECT result FROM web_results WHERE RTRIM(query, '/') = ? ORDER BY id DESC LIMIT 1",
+                        (normalized,))
+                    row = await cursor.fetchone()
+                    if row:
+                        extras.append(f"[링크: {url} | {row['result'][:100]}]")
+            except Exception as e:
+                logger.warning(f"링크 캐시 조회 실패: {url}: {e}")
+
         if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
             for snap in msg.message_snapshots:
                 snap_content = getattr(snap, 'content', '') or ''
@@ -465,7 +484,7 @@ class AILibrarianBot(discord.Client):
                                         )
                                         link_result = self._extract_reply(link_response)
                                         if link_result:
-                                            await self.librarian_db.save_web_result(url, link_result, user_name=user_name)
+                                            await self.librarian_db.save_web_result(url.rstrip("/"), link_result, user_name=user_name)
                                     else:
                                         link_result = "페이지에서 텍스트를 추출할 수 없었어."
                                 else:
