@@ -600,8 +600,7 @@ class AILibrarianBot(discord.Client):
             if not files:
                 continue  # 파일 없는 엔트리는 프롬프트에 안 넣음
             for f in files:
-                size_mb = f["file_size"] / (1024 * 1024)
-                line += f"\n  file:{f['id']} {f['filename']} ({size_mb:.1f}MB)"
+                line += f"\n  file:{f['id']} {f['filename']}"
             lines.append(line)
         return "\n".join(lines)
 
