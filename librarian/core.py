@@ -711,14 +711,14 @@ class AILibrarianBot(discord.Client):
             detail = await self.library_db.get_book_detail(b["id"])
             alias = f" (별칭: {b['alias']})" if b.get("alias") else ""
             author = f" - {b['author']}" if b.get("author") else ""
-            line = f"책장 #{b['id']}: {b['title']}{author}{alias}"
+            line = f"책장 entry_id:{b['id']} {b['title']}{author}{alias}"
             if b.get("description"):
                 line += f"\n  {b['description']}"
             files = detail.get("files", [])
             if not files:
                 continue  # 파일 없는 엔트리는 프롬프트에 안 넣음
             for f in files:
-                line += f"\n  file:{f['id']} {f['filename']}"
+                line += f"\n  file_id:{f['id']} {f['filename']}"
             lines.append(line)
         return "\n".join(lines)
 

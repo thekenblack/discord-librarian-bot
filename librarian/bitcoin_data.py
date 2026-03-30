@@ -1,5 +1,5 @@
 """
-비트코인 실시간 데이터 캐시 (mempool.space API)
+비트코인 실시간 데이터 + 환율 + 날씨 캐시
 5분마다 갱신. 프롬프트에 삽입.
 """
 
@@ -11,6 +11,8 @@ logger = logging.getLogger("BitcoinData")
 
 _cache = {
     "price_usd": None,
+    "price_krw": None,
+    "usd_krw": None,
     "block_height": None,
     "fee_fast": None,
     "fee_half": None,
@@ -18,6 +20,33 @@ _cache = {
     "hashrate": None,
     "difficulty": None,
     "updated": None,
+}
+
+# 날씨 캐시
+_weather_cache = {}
+
+# 도시 좌표
+CITIES = {
+    "서울": (37.5665, 126.9780),
+    "인천": (37.4563, 126.7052),
+    "대전": (36.3504, 127.3845),
+    "대구": (35.8714, 128.6014),
+    "부산": (35.1796, 129.0756),
+    "광주": (35.1595, 126.8526),
+    "제주": (33.4996, 126.5312),
+    "춘천": (37.8813, 127.7298),
+}
+
+# WMO 날씨 코드 → 한글
+WMO_CODES = {
+    0: "맑음", 1: "대체로 맑음", 2: "구름 조금", 3: "흐림",
+    45: "안개", 48: "안개",
+    51: "이슬비", 53: "이슬비", 55: "이슬비",
+    61: "비", 63: "비", 65: "강한 비",
+    71: "눈", 73: "눈", 75: "강한 눈",
+    77: "싸락눈", 80: "소나기", 81: "소나기", 82: "강한 소나기",
+    85: "눈보라", 86: "눈보라",
+    95: "뇌우", 96: "뇌우+우박", 99: "뇌우+우박",
 }
 
 # 반감기 스케줄 (블록 보상)
@@ -73,6 +102,21 @@ async def _fetch():
                     prices = await resp.json()
                     _cache["price_usd"] = prices.get("USD")
 
+            # 한국 시세 (업비트)
+            async with session.get("https://api.upbit.com/v1/ticker?markets=KRW-BTC", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and len(data) > 0:
+                        _cache["price_krw"] = data[0].get("trade_price")
+
+            # 환율 (USD → KRW)
+            async with session.get("https://open.er-api.com/v6/latest/USD", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    krw = data.get("rates", {}).get("KRW")
+                    if krw:
+                        _cache["usd_krw"] = krw
+
             # 해시레이트 + 난이도
             async with session.get("https://mempool.space/api/v1/mining/hashrate/1d", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
@@ -83,10 +127,43 @@ async def _fetch():
                         _cache["difficulty"] = data["difficulty"][-1].get("difficulty")
 
             _cache["updated"] = datetime.now()
-            logger.info(f"비트코인 데이터 갱신: ${_cache['price_usd']} | 블록 {_cache['block_height']}")
+            logger.info(f"데이터 갱신: ${_cache['price_usd']} / ₩{_cache.get('price_krw', '?')} | $1=₩{_cache.get('usd_krw', '?')} | 블록 {_cache['block_height']}")
 
     except Exception as e:
         logger.warning(f"비트코인 데이터 갱신 실패: {e}")
+
+    # 날씨 (별도 try — 비트코인 실패해도 날씨는 갱신)
+    try:
+        async with aiohttp.ClientSession() as session:
+            lats = ",".join(str(c[0]) for c in CITIES.values())
+            lons = ",".join(str(c[1]) for c in CITIES.values())
+            url = (
+                f"https://api.open-meteo.com/v1/forecast?"
+                f"latitude={lats}&longitude={lons}"
+                f"&current=temperature_2m,weather_code"
+                f"&timezone=Asia/Seoul"
+            )
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    cities = list(CITIES.keys())
+                    # 복수 좌표 → 리스트, 단일 → dict
+                    if isinstance(data, list):
+                        items = data
+                    else:
+                        items = [data]
+                    for i, city in enumerate(cities):
+                        if i < len(items):
+                            current = items[i].get("current", {})
+                            temp = current.get("temperature_2m")
+                            code = current.get("weather_code", 0)
+                            _weather_cache[city] = {
+                                "temp": temp,
+                                "desc": WMO_CODES.get(code, "알 수 없음"),
+                            }
+                    logger.info(f"날씨 데이터 갱신: {len(_weather_cache)}개 도시")
+    except Exception as e:
+        logger.warning(f"날씨 데이터 갱신 실패: {e}")
 
 
 async def start_background_update(interval: int = 300):
@@ -107,7 +184,16 @@ def get_prompt_block() -> str:
 
     # 가격
     if _cache["price_usd"]:
-        lines.append(f"가격: ${_cache['price_usd']:,.0f}")
+        price_line = f"가격: ${_cache['price_usd']:,.0f}"
+        if _cache.get("price_krw"):
+            price_line += f" (₩{_cache['price_krw']:,.0f})"
+        lines.append(price_line)
+    if _cache.get("usd_krw"):
+        lines.append(f"환율: $1 = ₩{_cache['usd_krw']:,.0f}")
+    if _cache.get("price_krw") and _cache.get("price_usd") and _cache.get("usd_krw"):
+        fair_krw = _cache["price_usd"] * _cache["usd_krw"]
+        kimchi = (_cache["price_krw"] / fair_krw - 1) * 100
+        lines.append(f"김치 프리미엄: {kimchi:+.1f}%")
 
     # 블록
     if height:
@@ -144,4 +230,13 @@ def get_prompt_block() -> str:
 
     if not lines:
         return ""
-    return "## 비트코인 현황\n" + "\n".join(lines)
+
+    block = "## 비트코인 현황\n" + "\n".join(lines)
+
+    # 날씨
+    if _weather_cache:
+        weather_parts = [f"{city} {w['temp']:.0f}°C {w['desc']}" for city, w in _weather_cache.items() if w.get("temp") is not None]
+        if weather_parts:
+            block += "\n\n## 날씨\n" + " | ".join(weather_parts)
+
+    return block
