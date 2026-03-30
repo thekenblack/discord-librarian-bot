@@ -285,7 +285,7 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
 
-                # web_search 도구: Google Search grounding으로 전환
+                # web_search 도구: Google Search grounding으로 검색 → 결과를 저장 + AI에 돌려줌
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                     logger.info(f"AI 판단 웹 검색: {query}")
@@ -296,29 +296,37 @@ class AILibrarianBot(discord.Client):
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=1.0,
                     )
-                    web_history = list(history) + [
-                        response.candidates[0].content,
-                        types.Content(role="user", parts=[types.Part.from_function_response(
-                            name="web_search",
-                            response={"instruction": f"Google에서 '{query}'를 검색해서 구체적인 정보를 답변에 포함해."},
-                        )]),
-                    ]
+                    web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                    web_result = ""
                     try:
-                        web_response = self._call_gemini(web_history, web_config)
-                        if web_response.candidates and web_response.candidates[0].content.parts:
-                            for p in web_response.candidates[0].content.parts:
-                                if p.text:
-                                    reply = p.text.strip()
-                                    if reply:
-                                        logger.info(f"웹 검색 결과: {reply[:100]}")
-                                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                                        self._trim_history(channel_id)
-                                        if len(reply) > 2000:
-                                            reply = reply[:1997] + "..."
-                                        return reply, file_to_send, _meta
+                        web_response = self._call_gemini(web_query, web_config)
+                        web_result = self._extract_reply(web_response)
                     except Exception as e:
                         logger.warning(f"웹 검색 실패: {e}")
-                    break
+
+                    if web_result:
+                        logger.info(f"웹 검색 결과: {web_result[:100]}")
+                        # 자체 학습: 웹 검색 결과를 learned에 저장
+                        await self.librarian_db.save(web_result[:300], author="web_search")
+                        tool_data = {"result": web_result[:500]}
+                    else:
+                        tool_data = {"result": f"'{query}' 검색 결과 없음"}
+
+                    _meta["tool_results"].append(f"web:{web_result[:200]}")
+                    history.append(response.candidates[0].content)
+                    history.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="web_search",
+                            response=tool_data,
+                        )],
+                    ))
+                    try:
+                        response = self._call_gemini(history, config)
+                    except Exception:
+                        self.chat_histories[channel_id] = []
+                        raise
+                    continue
 
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
