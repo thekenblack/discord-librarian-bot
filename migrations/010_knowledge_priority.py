@@ -60,6 +60,8 @@ customs_priority = {
     "person": 70,
     "regulation": 60,
     "security": 80,
+    "meme": 20,
+    "trivia": 15,
 }
 
 for cat, pri in customs_priority.items():
