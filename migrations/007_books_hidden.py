@@ -1,5 +1,5 @@
 """
-books 테이블에 hidden 컬럼 추가
+books, files 테이블에 hidden 컬럼 추가
 """
 
 import os
@@ -18,11 +18,12 @@ if not os.path.exists(db_path):
     exit(0)
 
 conn = sqlite3.connect(db_path)
-try:
-    conn.execute("ALTER TABLE books ADD COLUMN hidden INTEGER DEFAULT 0")
-    print("  컬럼 추가: hidden")
-except sqlite3.OperationalError:
-    pass
+for table in ["books", "files"]:
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN hidden INTEGER DEFAULT 0")
+        print(f"  컬럼 추가: {table}.hidden")
+    except sqlite3.OperationalError:
+        pass
 
 conn.commit()
 conn.close()

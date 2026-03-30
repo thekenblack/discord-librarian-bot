@@ -64,6 +64,7 @@ class LibraryDB:
             await _add_column("books", "page_id", "INTEGER DEFAULT 0")
             await _add_column("books", "sort_order", "INTEGER DEFAULT 0")
             await _add_column("books", "hidden", "INTEGER DEFAULT 0")
+            await _add_column("files", "hidden", "INTEGER DEFAULT 0")
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS pages (
@@ -280,6 +281,11 @@ class LibraryDB:
     async def set_hidden(self, book_id: int, hidden: bool):
         async with aiosqlite.connect(self.path) as db:
             await db.execute("UPDATE books SET hidden = ? WHERE id = ?", (1 if hidden else 0, book_id))
+            await db.commit()
+
+    async def set_file_hidden(self, file_id: int, hidden: bool):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("UPDATE files SET hidden = ? WHERE id = ?", (1 if hidden else 0, file_id))
             await db.commit()
 
     async def list_pages(self) -> list[dict]:

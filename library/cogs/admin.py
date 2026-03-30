@@ -232,7 +232,7 @@ class AdminCog(commands.Cog):
         view._message_ref = await interaction.original_response()
 
     # ── /admin add ───────────────────────────────────────
-    @admin.command(name="add", description="페이지 추가")
+    @admin.command(name="add_page", description="페이지 추가")
     async def admin_add(self, interaction: discord.Interaction):
         if not is_admin(interaction):
             return await interaction.response.send_message(
@@ -570,26 +570,20 @@ class AdminEntryActionView(BotView):
         )
         self.stop()
 
-    @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
-    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        files = await self.bot.db.list_book_files(self.book["id"])
-        for f in files:
-            path = os.path.join(FILES_DIR, f["stored_name"])
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-        await self.bot.db.delete_book(self.book["id"])
+    @discord.ui.button(label="숨기기", style=discord.ButtonStyle.danger, row=0)
+    async def hide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_hidden = self.book.get("hidden", 0)
+        await self.bot.db.set_hidden(self.book["id"], not is_hidden)
+        status = "숨김" if not is_hidden else "공개"
         await interaction.response.edit_message(
-            embed=success_embed("삭제 완료", f"**{self.book['title']}** 엔트리와 파일이 삭제되었습니다."),
+            embed=success_embed("변경 완료", f"**{self.book['title']}** → {status}"),
             view=None,
         )
         self.stop()
 
     @discord.ui.button(label="← 돌아가기", style=discord.ButtonStyle.secondary, row=0)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        books = await self.bot.db.list_all_books()
+        books = await self.bot.db.list_all_books(include_hidden=True)
         view = AdminEntriesView(self.bot, books)
         view._message_ref = getattr(self, "_message_ref", None)
         await interaction.response.edit_message(
@@ -695,17 +689,13 @@ class AdminFileActionView(BotView):
         )
         self.stop()
 
-    @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
-    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        path = os.path.join(FILES_DIR, self.file_info["stored_name"])
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-        await self.bot.db.delete_file(self.file_info["id"])
+    @discord.ui.button(label="숨기기", style=discord.ButtonStyle.danger, row=0)
+    async def hide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_hidden = self.file_info.get("hidden", 0)
+        await self.bot.db.set_file_hidden(self.file_info["id"], not is_hidden)
+        status = "숨김" if not is_hidden else "공개"
         await interaction.response.edit_message(
-            embed=success_embed("삭제 완료", f"**{self.file_info['title']}** 파일이 삭제되었습니다."),
+            embed=success_embed("변경 완료", f"**{self.file_info['title']}** → {status}"),
             view=None,
         )
         self.stop()
