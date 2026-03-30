@@ -87,8 +87,8 @@ class MoodSystem:
             return BASELINE, _emotion_name(BASELINE)
 
         if len(active) < 2:
-            # 혼자면 비교 불가
-            return BASELINE, _emotion_name(BASELINE)
+            # 혼자면 원점수 그대로
+            return active[user_name], _emotion_name(active[user_name])
 
         scores = list(active.values())
         mean = sum(scores) / len(scores)
