@@ -140,6 +140,17 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
+            name="recognize_link",
+            description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 '이거 뭐야', '요약해줘' 같은 요청을 하면 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "url": types.Schema(type="STRING", description="확인할 URL"),
+                },
+                required=["url"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="attach",
             description="이전에 인식한 미디어를 첨부한다. media_id는 반드시 recognize_media 결과 또는 search 결과에서 확인한 값만 사용. 추측 금지.",
             parameters=types.Schema(

@@ -435,6 +435,62 @@ class AILibrarianBot(discord.Client):
                         break
                     continue
 
+                # recognize_link 도구: 웹페이지 인식
+                if fc.name == "recognize_link":
+                    url = (dict(fc.args) if fc.args else {}).get("url", "")
+                    link_result = ""
+                    try:
+                        import aiohttp
+                        from bs4 import BeautifulSoup
+                        logger.info(f"링크 인식: {url}")
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                                if resp.status == 200:
+                                    html = await resp.text(errors="replace")
+                                    soup = BeautifulSoup(html, "html.parser")
+                                    for tag in soup(["script", "style", "nav", "footer", "header"]):
+                                        tag.decompose()
+                                    text = soup.get_text(separator="\n", strip=True)[:3000]
+                                    if text:
+                                        link_parts = [
+                                            types.Part.from_text(text=f"다음 웹페이지 내용을 3-4줄로 핵심만 요약해:\n\n{text}"),
+                                        ]
+                                        link_config = types.GenerateContentConfig(
+                                            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                                            temperature=0.5,
+                                        )
+                                        link_response = self._call_gemini(
+                                            [types.Content(role="user", parts=link_parts)],
+                                            link_config,
+                                        )
+                                        link_result = self._extract_reply(link_response)
+                                        if link_result:
+                                            await self.librarian_db.save_web_result(url, link_result, user_name=user_name)
+                                    else:
+                                        link_result = "페이지에서 텍스트를 추출할 수 없었어."
+                                else:
+                                    link_result = f"페이지를 열 수 없었어. (HTTP {resp.status})"
+                    except Exception as e:
+                        logger.warning(f"링크 인식 실패: {e}")
+                        link_result = f"페이지를 열 수 없었어."
+
+                    tool_data = {"result": link_result[:500] if link_result else "인식 실패"}
+                    _meta["tool_results"].append(f"link:{link_result[:200]}")
+                    history.append(response.candidates[0].content)
+                    history.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="recognize_link",
+                            response=tool_data,
+                        )],
+                    ))
+                    try:
+                        response = self._call_gemini(history, config)
+                    except Exception as e:
+                        logger.warning(f"[1차] 링크 인식 후 API 에러: {e}")
+                        break
+                    continue
+
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
                 if fc.name in ("search", "save_memory", "modify_memory"):
