@@ -152,7 +152,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         # 지식 + 기억 검색 (도서는 프롬프트에 이미 있으므로 제외)
         seen_content = set()
         for kw in keywords:
-            kw_result = await librarian_db.search_all(kw, exclude_ids=exclude_ids)
+            kw_result = await librarian_db.search_all(kw, exclude_ids=exclude_ids, user_name=args.get("_user_name"))
             for key, items in kw_result.items():
                 for item in items:
                     if item not in seen_content:
