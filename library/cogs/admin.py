@@ -212,6 +212,25 @@ class AdminCog(commands.Cog):
         )
         view._message_ref = await interaction.original_response()
 
+    # ── /admin hide ──────────────────────────────────────
+    @admin.command(name="hide", description="엔트리 숨기기/보이기")
+    async def admin_hide(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        books = await self.bot.db.list_all_books(include_hidden=True)
+        if not books:
+            return await interaction.response.send_message(
+                embed=info_embed("숨기기", "등록된 엔트리가 없습니다."), ephemeral=True
+            )
+        view = AdminHideView(self.bot, books)
+        await interaction.response.send_message(
+            embed=info_embed("숨기기", "숨기거나 다시 보이게 할 엔트리를 선택하세요."),
+            view=view, ephemeral=True,
+        )
+        view._message_ref = await interaction.original_response()
+
     # ── /admin add ───────────────────────────────────────
     @admin.command(name="add", description="페이지 추가")
     async def admin_add(self, interaction: discord.Interaction):
@@ -318,6 +337,40 @@ class PageAssignModal(discord.ui.Modal, title="페이지 배정"):
 
 
 # ── 페이지 관리 뷰 ──────────────────────────────────
+
+class AdminHideView(BotView):
+    def __init__(self, bot, books: list[dict]):
+        super().__init__(timeout=120)
+        self.bot = bot
+
+        options = []
+        for b in books[:25]:
+            hidden = b.get("hidden", 0)
+            status = "🔒 숨김" if hidden else "📕 공개"
+            options.append(discord.SelectOption(
+                label=f"{status} {b['title']}"[:100],
+                description=f"{b['file_count']}개 파일",
+                value=str(b["id"]),
+            ))
+        select = discord.ui.Select(placeholder="엔트리 선택", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        book_id = int(interaction.data["values"][0])
+        book = await self.bot.db.get_book(book_id)
+        if not book:
+            return await interaction.response.send_message(
+                embed=error_embed("없음", "해당 엔트리를 찾을 수 없습니다."), ephemeral=True)
+        is_hidden = book.get("hidden", 0)
+        new_hidden = not is_hidden
+        await self.bot.db.set_hidden(book_id, new_hidden)
+        status = "숨김" if new_hidden else "공개"
+        await interaction.response.edit_message(
+            embed=success_embed("변경 완료", f"**{book['title']}** → {status}"),
+            view=None)
+        self.stop()
+
 
 class AdminPagesView(BotView):
     def __init__(self, bot, pages: list[dict]):

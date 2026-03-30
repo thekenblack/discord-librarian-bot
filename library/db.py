@@ -63,6 +63,7 @@ class LibraryDB:
             await _add_column("books", "author_alias", "TEXT")
             await _add_column("books", "page_id", "INTEGER DEFAULT 0")
             await _add_column("books", "sort_order", "INTEGER DEFAULT 0")
+            await _add_column("books", "hidden", "INTEGER DEFAULT 0")
 
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS pages (
@@ -117,13 +118,15 @@ class LibraryDB:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows], total
 
-    async def list_all_books(self) -> list[dict]:
+    async def list_all_books(self, include_hidden=False) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("""
+            where = "" if include_hidden else "WHERE (b.hidden IS NULL OR b.hidden = 0)"
+            cursor = await db.execute(f"""
                 SELECT b.*, COUNT(f.id) as file_count
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
+                {where}
                 GROUP BY b.id
                 ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
             """)
@@ -137,7 +140,7 @@ class LibraryDB:
                 SELECT b.*, COUNT(f.id) as file_count
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
-                WHERE b.creator_id = ?
+                WHERE b.creator_id = ? AND (b.hidden IS NULL OR b.hidden = 0)
                 GROUP BY b.id
                 ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT 25
@@ -273,6 +276,11 @@ class LibraryDB:
                 (title, sort_order))
             await db.commit()
             return cursor.lastrowid
+
+    async def set_hidden(self, book_id: int, hidden: bool):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("UPDATE books SET hidden = ? WHERE id = ?", (1 if hidden else 0, book_id))
+            await db.commit()
 
     async def list_pages(self) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
