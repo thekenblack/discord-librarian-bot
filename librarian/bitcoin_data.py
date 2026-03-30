@@ -13,7 +13,9 @@ logger = logging.getLogger("BitcoinData")
 _cache = {
     "price_usd": None,
     "block_height": None,
-    "fee_rate": None,
+    "fee_fast": None,
+    "fee_half": None,
+    "fee_hour": None,
     "updated": None,
 }
 
@@ -32,7 +34,9 @@ async def _fetch():
             async with session.get("https://mempool.space/api/v1/fees/recommended", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
                     fees = await resp.json()
-                    _cache["fee_rate"] = fees.get("halfHourFee")
+                    _cache["fee_fast"] = fees.get("fastestFee")
+                    _cache["fee_half"] = fees.get("halfHourFee")
+                    _cache["fee_hour"] = fees.get("hourFee")
 
             # 가격 (USD)
             async with session.get("https://mempool.space/api/v1/prices", timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -41,7 +45,7 @@ async def _fetch():
                     _cache["price_usd"] = prices.get("USD")
 
             _cache["updated"] = datetime.now()
-            logger.info(f"비트코인 데이터 갱신: ${_cache['price_usd']} | 블록 {_cache['block_height']} | {_cache['fee_rate']} sat/vB")
+            logger.info(f"비트코인 데이터 갱신: ${_cache['price_usd']} | 블록 {_cache['block_height']} | 수수료 {_cache['fee_fast']}/{_cache['fee_half']}/{_cache['fee_hour']} sat/vB")
 
     except Exception as e:
         logger.warning(f"비트코인 데이터 갱신 실패: {e}")
@@ -68,8 +72,8 @@ def get_prompt_block() -> str:
         next_halving = (((_cache["block_height"] // 210000) + 1) * 210000)
         remaining = next_halving - _cache["block_height"]
         parts.append(f"다음 반감기까지 {remaining:,}블록")
-    if _cache["fee_rate"]:
-        parts.append(f"수수료: {_cache['fee_rate']} sat/vB")
+    if _cache.get("fee_fast"):
+        parts.append(f"수수료: 빠름 {_cache['fee_fast']} / 보통 {_cache['fee_half']} / 느림 {_cache['fee_hour']} sat/vB")
     if not parts:
         return ""
     return "## 비트코인 현황\n" + " | ".join(parts)
