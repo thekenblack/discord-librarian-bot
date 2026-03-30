@@ -35,7 +35,7 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="send_file",
-            description="파일을 유저에게 전송한다. file_id를 모르면 먼저 search로 찾아.",
+            description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
