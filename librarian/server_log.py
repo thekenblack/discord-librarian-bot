@@ -6,6 +6,7 @@
 
 import os
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from config import LOG_DIR
 
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -14,10 +15,13 @@ _logger = logging.getLogger("ServerLog")
 _logger.setLevel(logging.INFO)
 _logger.propagate = False
 
-_handler = logging.FileHandler(
+_handler = TimedRotatingFileHandler(
     os.path.join(LOG_DIR, "server.log"),
+    when="midnight",
+    backupCount=30,
     encoding="utf-8",
 )
+_handler.suffix = "%Y-%m-%d"
 _handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 _logger.addHandler(_handler)
 

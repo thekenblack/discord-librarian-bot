@@ -267,11 +267,14 @@ class AILibrarianBot(discord.Client):
         )
 
         try:
+            logger.info(f"[1차] API 호출 (temperature=0.8, 히스토리={len(history)}턴)")
             response = self._call_gemini(history, config)
+            logger.info("[1차] API 응답 수신")
 
             # function call 루프 (최대 5회)
-            for _ in range(5):
+            for loop_i in range(5):
                 if not response.candidates or not response.candidates[0].content.parts:
+                    logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
                     break
 
                 fc = None
@@ -280,9 +283,10 @@ class AILibrarianBot(discord.Client):
                         fc = part.function_call
                         break
                 if not fc:
+                    logger.info(f"[1차] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
                     break
 
-                logger.info(f"도구 호출: {fc.name}({fc.args})")
+                logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
 
                 # web_search 도구: Google Search grounding으로 검색 → 결과를 저장 + AI에 돌려줌
@@ -362,16 +366,22 @@ class AILibrarianBot(discord.Client):
 
             # 최종 응답 추출
             reply = self._extract_reply(response)
+            logger.info(f"[1차] 응답: {'빈 응답' if not reply else reply[:80]}")
 
             # ── 반복/빈 응답 견제 (최대 3회 재시도) ──────────
             def _needs_retry(r):
-                return not r or self._is_repeat(history, r)
+                if not r:
+                    return True
+                is_rep = self._is_repeat(history, r)
+                if is_rep:
+                    logger.info(f"반복 감지: {r[:50]}")
+                return is_rep
 
             clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
             # 2차: 클린 프롬프트 + 히스토리 없이 + temperature 0.9
             if _needs_retry(reply):
-                logger.warning(f"1차 {'반복' if reply else '빈 응답'}, 2차 시도 (클린, 0.9)")
+                logger.warning(f"[2차] 시도 (클린, 0.9)")
                 try:
                     retry_config = types.GenerateContentConfig(
                         system_instruction=clean_prompt,
@@ -379,15 +389,17 @@ class AILibrarianBot(discord.Client):
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=0.9,
                     )
+                    logger.info("[2차] API 호출")
                     r = self._extract_reply(self._call_gemini(clean_message, retry_config))
+                    logger.info(f"[2차] 응답: {'빈 응답' if not r else r[:80]}")
                     if r:
                         reply = r
                 except Exception as e:
-                    logger.warning(f"2차 실패: {e}")
+                    logger.warning(f"[2차] 실패: {e}")
 
             # 3차: 기억도 빼고 + 히스토리 없이 + 웹 검색 + temperature 1.0
             if _needs_retry(reply):
-                logger.warning(f"2차 {'반복' if reply else '빈 응답'}, 3차 시도 (bare+웹, 1.0)")
+                logger.warning(f"[3차] 시도 (bare+웹, 1.0)")
                 try:
                     from librarian.tools import google_search_tool
                     web_config = types.GenerateContentConfig(
@@ -396,15 +408,17 @@ class AILibrarianBot(discord.Client):
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=1.0,
                     )
+                    logger.info("[3차] API 호출")
                     r = self._extract_reply(self._call_gemini(clean_message, web_config))
+                    logger.info(f"[3차] 응답: {'빈 응답' if not r else r[:80]}")
                     if r:
                         reply = r
                 except Exception as e:
-                    logger.warning(f"3차 실패: {e}")
+                    logger.warning(f"[3차] 실패: {e}")
 
             # 4차: 포기
             if _needs_retry(reply):
-                logger.warning("3차까지 실패, 포기")
+                logger.warning("[4차] 포기")
                 reply = ""
 
             if reply:

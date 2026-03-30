@@ -5,16 +5,26 @@ AI 사서봇 엔트리포인트
 import os
 import sys
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from config import AI_BOT_TOKEN, GEMINI_API_KEYS, AI_NAME, AI_STATUS_TEXT, LOG_DIR
 
 os.makedirs(LOG_DIR, exist_ok=True)
+
+# 날짜별 로그 파일 (bot.log → bot.log.2026-03-30 으로 롤링)
+file_handler = TimedRotatingFileHandler(
+    os.path.join(LOG_DIR, "bot.log"),
+    when="midnight",
+    backupCount=30,
+    encoding="utf-8",
+)
+file_handler.suffix = "%Y-%m-%d"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(LOG_DIR, "bot.log"), encoding="utf-8"),
+        file_handler,
     ],
 )
 logging.getLogger("discord.client").setLevel(logging.ERROR)
