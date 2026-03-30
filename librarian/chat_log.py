@@ -67,7 +67,12 @@ def log_chat(
 
 def _write(data: dict):
     """JSON Lines 한 줄 추가"""
-    data["ts"] = datetime.now(timezone.utc).isoformat()
+    import os, zoneinfo
+    try:
+        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "Asia/Seoul"))
+    except Exception:
+        tz = timezone.utc
+    data["ts"] = datetime.now(tz).isoformat()
     os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
     with open(_LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(data, ensure_ascii=False) + "\n")
