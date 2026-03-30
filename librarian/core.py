@@ -69,7 +69,7 @@ class AILibrarianBot(discord.Client):
                         (att.filename,))
                     row = await cursor.fetchone()
                     if row:
-                        desc = row["result"]
+                        desc = row["result"][:100]
             except Exception as e:
                 logger.warning(f"미디어 캐시 조회 실패: {att.filename}: {e}")
             if desc:
@@ -264,17 +264,17 @@ class AILibrarianBot(discord.Client):
         cache_sections = []
         user_lines = []
         for w in user_web:
-            user_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
+            user_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:100]}")
         for m in user_media:
-            user_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
+            user_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:100]}")
         if user_lines:
             cache_sections.append(f"[{user_name}의 조회]\n" + "\n".join(user_lines))
 
         other_lines = []
         for w in other_web:
-            other_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
+            other_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:100]}")
         for m in other_media:
-            other_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
+            other_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:100]}")
         if other_lines:
             cache_sections.append("[최근 조회]\n" + "\n".join(other_lines))
 
