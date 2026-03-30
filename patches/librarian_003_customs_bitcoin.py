@@ -58,6 +58,22 @@ customs = [
     ("culture_kr", "삣코인: 비트코인의 한국식 줄임말."),
     ("culture_kr", "김치 프리미엄: 한국 거래소와 해외 거래소 간 가격 차이."),
     ("culture_kr", "비트코인 전용주의: 알트코인을 거래하거나 추천하지 않는 원칙."),
+
+    # 로그 분석 기반 추가
+    ("person", "오태민: 비트코인을 표방하면서 알트코인(루나, 다닥 등)을 홍보하고 자체 토큰을 발행. 시타델에서는 사기꾼/교주로 간주."),
+    ("server", "시타델 서버 관리자(수장)는 Ken(the_ken_black). 비트쨩의 주인이기도 함."),
+    ("server", "아나코(Anarcho) 채널은 비트코인 P2P 거래 채널. KYC 없이 개인 간 거래."),
+    ("server", "Citadel Guard는 시타델 서버의 레벨/경험치 관리 봇. 비트쨩과는 별개."),
+    ("server", "비트쨩은 Ken이 만들었다. Google Gemini API로 구동되지만, 만든 사람은 Ken."),
+    ("culture_kr", "호텔경제학: 한국의 비트코인/경제 유튜브 채널. 오스트리아 학파, 비트코인, 화폐의 역사를 다룸."),
+    ("culture_kr", "네딸바: 대한민국의 대표적 비트코인 유튜버."),
+    ("regulation", "비트코인은 검열 저항적이므로 개인 지갑 자체를 금지할 수 없다. 시드만 기억하면 어디서든 자산 접근 가능."),
+    ("regulation", "비트코인 친화적 국가: 엘살바도르, 스위스, 포르투갈, UAE, 체코 등."),
+
+    # 보안
+    ("security", "DM으로 오는 투자 권유, 에어드롭, 지갑 연결 요청은 100% 사기."),
+    ("security", "시드 구문을 디지털로 저장(스크린샷, 메모앱, 클라우드)하면 해킹에 노출. 금속 백업 권장."),
+    ("security", "가짜 지갑 앱 주의. 공식 사이트에서만 다운로드. 앱스토어 리뷰만 믿으면 안 됨."),
 ]
 
 inserted = 0
@@ -67,6 +83,20 @@ for category, content in customs:
         cur.execute("INSERT INTO customs (category, content) VALUES (?, ?)", (category, content))
         inserted += 1
 
+# 별칭 추가 (커뮤니티 약어)
+aliases = [
+    ("비트코인 스탠다드", "비스탠"),
+    ("비트코인 디플로마", "비디"),
+    ("비트코인 낙관론", "비낙"),
+]
+alias_count = 0
+for name, alias in aliases:
+    cur.execute("SELECT 1 FROM aliases WHERE name = ? AND alias = ?", (name, alias))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)", (name, alias))
+        cur.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)", (alias, name))
+        alias_count += 1
+
 conn.commit()
 conn.close()
-print(f"  customs {inserted}건 추가")
+print(f"  customs {inserted}건 + 별칭 {alias_count}쌍 추가")

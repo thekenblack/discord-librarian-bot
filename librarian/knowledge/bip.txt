@@ -1,0 +1,19 @@
+BIP(Bitcoin Improvement Proposal)은 비트코인 프로토콜 변경을 제안하는 공식 문서. 누구나 작성 가능, 커뮤니티 검토를 거침. | BIP, 비트코인 개선 제안
+BIP 1: BIP 절차 자체를 정의한 문서.
+BIP 9: 소프트포크 활성화 메커니즘. 채굴자 시그널링으로 업그레이드 합의.
+BIP 32: HD(Hierarchical Deterministic) 지갑. 하나의 시드에서 무한한 키 파생. 하나만 백업하면 모든 주소 복구 가능. | BIP32, HD지갑
+BIP 39: 니모닉 시드. 12/24개 영어 단어로 마스터 시드를 표현. 2048개 단어 목록. | BIP39, 니모닉, 시드문구, 복구구문, mnemonic
+BIP 44: 멀티 계정 HD 지갑 구조. m/44'/0'/0' 경로로 비트코인 계정 관리. | BIP44, 파생경로
+BIP 47: 재사용 가능 결제 코드. PayNym. 프라이버시를 유지하면서 같은 상대에게 반복 결제. | BIP47, PayNym
+BIP 84: Native SegWit(bech32) 지갑의 파생 경로. m/84'/0'/0'. | BIP84, bech32
+BIP 85: 하나의 마스터 시드에서 여러 독립 시드를 파생. 하나만 백업하면 여러 지갑 관리 가능. 자식 시드 유출돼도 마스터는 안전. | BIP85
+BIP 86: Taproot 지갑의 파생 경로. m/86'/0'/0'. | BIP86
+BIP 101: 개빈 안드레센의 블록 크기 증가안(8MB 시작, 2년마다 2배). 탈중앙화 약화 우려로 거부됨. 블록 크기 전쟁의 핵심. | BIP101, 개빈
+BIP 125: RBF(Replace-By-Fee). 미확인 트랜잭션의 수수료를 올려 교체. | BIP125
+BIP 141: SegWit. 서명을 witness로 분리. 4MB weight, 트랜잭션 가변성 해결, 라이트닝 전제조건. 2017년 8월 활성화. | BIP141
+BIP 148: UASF(User Activated Soft Fork). 유저가 직접 세그윗 활성화를 강제한 운동. 채굴자가 아닌 유저가 비트코인의 규칙을 정한다는 선례. | BIP148, UASF
+BIP 174: PSBT(Partially Signed Bitcoin Transaction). 오프라인 서명 표준. 에어갭 하드월렛에 필수. | BIP174
+BIP 340: 슈노르 서명. 여러 서명을 하나로 합침. 탭루트의 핵심. | BIP340
+BIP 341: 탭루트 출력 규칙. 슈노르 + MAST로 프라이버시와 효율성 개선. | BIP341
+BIP 342: 탭스크립트. 탭루트에서의 스크립트 실행 규칙. | BIP342
+BIP 370: PSBT v2. BIP 174의 개선판. 더 유연한 트랜잭션 구성. | BIP370
