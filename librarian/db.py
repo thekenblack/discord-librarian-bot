@@ -38,6 +38,26 @@ class LibrarianDB:
                 )
             """)
 
+            # 커스텀 지식 (주관적, 커뮤니티별)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS customs (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT,
+                    content  TEXT NOT NULL,
+                    alias    TEXT
+                )
+            """)
+
+            # 도서 학습 지식 (파일 내용 기반)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS book_knowledge (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id  INTEGER,
+                    content  TEXT NOT NULL,
+                    source   TEXT
+                )
+            """)
+
             # 별칭 (검색 확장용, 쌍 기반)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS aliases (
@@ -193,16 +213,23 @@ class LibrarianDB:
             mixed_items = []
 
             if remaining > 0:
-                # 지식
-                cursor = await db.execute("""
-                    SELECT content FROM knowledge_base
-                    WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                       OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
-                """, (like, like_nospace, like, like_nospace))
-                for r in await cursor.fetchall():
-                    if r["content"] not in seen and len(mixed_items) < remaining:
-                        mixed_items.append(r["content"])
-                        seen.add(r["content"])
+                # 지식 (knowledge_base + customs + book_knowledge)
+                for table, has_alias in [("knowledge_base", True), ("customs", True), ("book_knowledge", False)]:
+                    if has_alias:
+                        cursor = await db.execute(f"""
+                            SELECT content FROM {table}
+                            WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                               OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                        """, (like, like_nospace, like, like_nospace))
+                    else:
+                        cursor = await db.execute(f"""
+                            SELECT content FROM {table}
+                            WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                        """, (like, like_nospace))
+                    for r in await cursor.fetchall():
+                        if r["content"] not in seen and len(mixed_items) < remaining:
+                            mixed_items.append(r["content"])
+                            seen.add(r["content"])
 
                 # 나머지 기억 (발화자 제외)
                 user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
