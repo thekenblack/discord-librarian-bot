@@ -141,7 +141,7 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="attach",
-            description="이전에 인식한 미디어를 다시 보낸다. search 결과의 media_id를 써.",
+            description="이전에 인식한 미디어를 첨부한다. media_id는 반드시 recognize_media 결과 또는 search 결과에서 확인한 값만 사용. 추측 금지.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
