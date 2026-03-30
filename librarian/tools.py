@@ -94,6 +94,17 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
+            name="forget_alias",
+            description="잘못된 별칭을 삭제한다. search 결과의 aliases에 있는 id를 써.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "alias_id": types.Schema(type="INTEGER", description="삭제할 별칭 ID (search 결과에서 확인)"),
+                },
+                required=["alias_id"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="forget_memory",
             description="잘못된 기억이나 더 이상 필요 없는 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
             parameters=types.Schema(
@@ -143,7 +154,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         user_name = args.get("_user_name")
 
         # 키워드 확장: 별칭 + 공백 분리
-        keywords = await librarian_db.expand_keyword(keyword)
+        keywords, aliases_used = await librarian_db.expand_keyword(keyword)
         if " " in keyword:
             for part in keyword.split():
                 if part not in keywords:
@@ -158,9 +169,14 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                     seen.add(item)
                     items.append(item)
 
-        if not items:
-            return json.dumps({"info": f"'{keyword}'에 대해 아는 게 없음."}, ensure_ascii=False)
-        return json.dumps({"info": items[:20]}, ensure_ascii=False)
+        result = {}
+        if items:
+            result["info"] = items[:20]
+        else:
+            result["info"] = f"'{keyword}'에 대해 아는 게 없음."
+        if aliases_used:
+            result["aliases"] = aliases_used
+        return json.dumps(result, ensure_ascii=False)
 
     elif name == "deliver":
         file_id = args.get("file_id")
@@ -211,5 +227,12 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         alias = args.get("alias", "")
         await librarian_db.add_alias(aname, alias)
         return json.dumps({"result": f"별칭 등록: {aname} = {alias}"}, ensure_ascii=False)
+
+    elif name == "forget_alias":
+        alias_id = args.get("alias_id")
+        deleted = await librarian_db.delete_alias(alias_id)
+        if deleted:
+            return json.dumps({"result": f"별칭 ID {alias_id} 삭제 완료"}, ensure_ascii=False)
+        return json.dumps({"result": f"별칭 ID {alias_id}을 찾을 수 없음"}, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)

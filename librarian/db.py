@@ -236,18 +236,32 @@ class LibrarianDB:
                 await db.execute("INSERT INTO aliases (name, alias) VALUES (?, ?)", (alias, name))
                 await db.commit()
 
-    async def expand_keyword(self, keyword: str) -> list[str]:
-        """키워드의 모든 별칭을 찾아서 검색어 확장"""
+    async def expand_keyword(self, keyword: str) -> tuple[list[str], list[dict]]:
+        """키워드의 모든 별칭을 찾아서 검색어 확장. 사용된 별칭 정보도 반환."""
         like = f"%{keyword}%"
         keywords = [keyword]
+        aliases_used = []
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT alias FROM aliases WHERE name LIKE ?", (like,))
+                "SELECT id, name, alias FROM aliases WHERE name LIKE ?", (like,))
             for row in await cursor.fetchall():
                 if row["alias"] not in keywords:
                     keywords.append(row["alias"])
-        return keywords
+                aliases_used.append({"id": row["id"], "name": row["name"], "alias": row["alias"]})
+        return keywords, aliases_used
+
+    async def delete_alias(self, alias_id: int):
+        """별칭 삭제 (양방향)"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute("SELECT name, alias FROM aliases WHERE id = ?", (alias_id,))
+            row = await cursor.fetchone()
+            if row:
+                await db.execute("DELETE FROM aliases WHERE id = ?", (alias_id,))
+                await db.execute("DELETE FROM aliases WHERE name = ? AND alias = ?", (row["alias"], row["name"]))
+                await db.commit()
+                return True
+        return False
 
     # ── 저장 ──────────────────────────────────────────────
 
