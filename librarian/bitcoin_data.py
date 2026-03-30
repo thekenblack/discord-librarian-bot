@@ -5,6 +5,8 @@
 
 import asyncio
 import logging
+import random
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
 logger = logging.getLogger("BitcoinData")
@@ -24,6 +26,9 @@ _cache = {
 
 # 날씨 캐시
 _weather_cache = {}
+
+# 뉴스 캐시
+_news_cache = {"domestic": [], "international": []}
 
 # 도시 좌표
 CITIES = {
@@ -165,6 +170,23 @@ async def _fetch():
     except Exception as e:
         logger.warning(f"날씨 데이터 갱신 실패: {e}")
 
+    # 뉴스
+    try:
+        async with aiohttp.ClientSession() as session:
+            for key, url in [
+                ("domestic", "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"),
+                ("international", "https://news.google.com/rss?hl=en&gl=US&ceid=US:en"),
+            ]:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        root = ET.fromstring(text)
+                        titles = [item.find("title").text for item in root.findall(".//item") if item.find("title") is not None]
+                        _news_cache[key] = random.sample(titles, min(5, len(titles))) if titles else []
+            logger.info(f"뉴스 갱신: 국내 {len(_news_cache['domestic'])}건, 국제 {len(_news_cache['international'])}건")
+    except Exception as e:
+        logger.warning(f"뉴스 데이터 갱신 실패: {e}")
+
 
 async def start_background_update(interval: int = 300):
     """5분마다 갱신하는 백그라운드 태스크"""
@@ -238,5 +260,13 @@ def get_prompt_block() -> str:
         weather_parts = [f"{city} {w['temp']:.0f}°C {w['desc']}" for city, w in _weather_cache.items() if w.get("temp") is not None]
         if weather_parts:
             block += "\n\n## 날씨\n" + " | ".join(weather_parts)
+
+    # 뉴스
+    if _news_cache["domestic"] or _news_cache["international"]:
+        block += "\n\n## 뉴스"
+        if _news_cache["domestic"]:
+            block += "\n[국내] " + " | ".join(_news_cache["domestic"])
+        if _news_cache["international"]:
+            block += "\n[국제] " + " | ".join(_news_cache["international"])
 
     return block
