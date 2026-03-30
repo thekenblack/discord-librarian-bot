@@ -175,7 +175,7 @@ class AdminCog(commands.Cog):
             )
 
     # ── /admin entries ──────────────────────────────────────
-    @admin.command(name="edit", description="전체 엔트리 편집/삭제")
+    @admin.command(name="edit_entry", description="전체 엔트리 편집")
     async def admin_edit(self, interaction: discord.Interaction):
         if not is_admin(interaction):
             return await interaction.response.send_message(
@@ -194,7 +194,7 @@ class AdminCog(commands.Cog):
         view._message_ref = await interaction.original_response()
 
     # ── /admin files ─────────────────────────────────────
-    @admin.command(name="files", description="전체 파일 편집/삭제")
+    @admin.command(name="edit_files", description="전체 파일 편집")
     async def admin_files(self, interaction: discord.Interaction):
         if not is_admin(interaction):
             return await interaction.response.send_message(
@@ -213,7 +213,7 @@ class AdminCog(commands.Cog):
         view._message_ref = await interaction.original_response()
 
     # ── /admin hide ──────────────────────────────────────
-    @admin.command(name="hide", description="엔트리 숨기기/보이기")
+    @admin.command(name="hide_entry", description="엔트리 숨기기/보이기")
     async def admin_hide(self, interaction: discord.Interaction):
         if not is_admin(interaction):
             return await interaction.response.send_message(
