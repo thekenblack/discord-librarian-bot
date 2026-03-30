@@ -1,5 +1,14 @@
+# Discord
 discord.py>=2.3.2
+
+# DB
 aiosqlite>=0.19.0
+
+# 환경 변수
 python-dotenv>=1.0.0
+
+# Gemini API
 google-genai>=1.0.0
+
+# HTTP (비트코인 데이터, 환율, 날씨, 뉴스)
 aiohttp>=3.9.0
