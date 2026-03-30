@@ -60,6 +60,11 @@ class AILibrarianBot(discord.Client):
                 extras.append(f"[임베드: {' - '.join(parts)}]")
         for att in msg.attachments:
             extras.append(f"[첨부: {att.filename}]")
+        if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
+            for snap in msg.message_snapshots:
+                snap_content = getattr(snap, 'content', '') or ''
+                if snap_content:
+                    extras.append(f"[포워드: {snap_content[:100]}]")
         return " ".join(extras)
 
     async def on_ready(self):
@@ -271,8 +276,8 @@ class AILibrarianBot(discord.Client):
             response = self._call_gemini(history, config)
             logger.info("[1차] API 응답 수신")
 
-            # function call 루프 (최대 5회)
-            for loop_i in range(5):
+            # function call 루프 (최대 10회)
+            for loop_i in range(10):
                 if not response.candidates or not response.candidates[0].content.parts:
                     logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
                     break
@@ -327,9 +332,9 @@ class AILibrarianBot(discord.Client):
                     ))
                     try:
                         response = self._call_gemini(history, config)
-                    except Exception:
-                        self.chat_histories[channel_id] = []
-                        raise
+                    except Exception as e:
+                        logger.warning(f"[1차] 웹 검색 후 API 에러: {e}")
+                        break
                     continue
 
                 # 일반 도구 실행
@@ -360,9 +365,9 @@ class AILibrarianBot(discord.Client):
 
                 try:
                     response = self._call_gemini(history, config)
-                except Exception:
-                    self.chat_histories[channel_id] = []
-                    raise
+                except Exception as e:
+                    logger.warning(f"[1차] 도구 후 API 에러: {e}")
+                    break
 
             # 최종 응답 추출
             reply = self._extract_reply(response)
