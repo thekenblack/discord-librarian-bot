@@ -124,25 +124,9 @@ class AILibrarianBot(discord.Client):
         if not text:
             text = ""
 
-        # 답글 맥락
-        if message.reference:
-            ref_msg = message.reference.resolved
-            if not ref_msg and message.reference.message_id:
-                try:
-                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                except Exception:
-                    pass
-            if ref_msg:
-                ref_content = ref_msg.content[:100]
-                for u in ref_msg.mentions:
-                    ref_content = ref_content.replace(f"<@{u.id}>", f"@{u.display_name}")
-                    ref_content = ref_content.replace(f"<@!{u.id}>", f"@{u.display_name}")
-                ref_extras = self._extract_extras(ref_msg)
-                if ref_extras:
-                    ref_content = f"{ref_content} {ref_extras}" if ref_content else ref_extras
-                if ref_msg.content not in self._error_messages:
-                    ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
-                    text = f"[원본: {ref_name}이 쓴 \"{ref_content}\"] {text}"
+        # 답글 체인 수집 + 체인 시작점 직전 맥락
+        reply_chain = await self._build_reply_chain(message)
+        pre_context = await self._build_pre_context(message)
 
         # 채널 락
         ch_id = message.channel.id
@@ -157,6 +141,8 @@ class AILibrarianBot(discord.Client):
                     user_name=message.author.display_name,
                     user_text=text,
                     guild=message.guild,
+                    reply_chain=reply_chain,
+                    pre_context=pre_context,
                 )
 
         if not reply_text and not file_to_send:
@@ -188,7 +174,8 @@ class AILibrarianBot(discord.Client):
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
-                          guild=None) -> tuple[str, discord.File | None, dict]:
+                          guild=None, reply_chain: list[str] = None,
+                          pre_context: list[str] = None) -> tuple[str, discord.File | None, dict]:
         """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
@@ -236,6 +223,14 @@ class AILibrarianBot(discord.Client):
         if LIGHTNING_ADDRESS:
             info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
         parts.append(info_block)
+
+        # 채널 맥락 (답글 체인 시작점 직전 또는 멘션 직전)
+        if pre_context:
+            parts.append("## 직전 대화\n" + "\n".join(pre_context))
+
+        # 답글 체인
+        if reply_chain:
+            parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.persona_text)
@@ -440,6 +435,64 @@ class AILibrarianBot(discord.Client):
         if last_err:
             raise last_err
         raise ClientError("모든 API 키 소진")
+
+    async def _build_reply_chain(self, message, max_depth=5) -> list[str]:
+        """답글 체인을 거슬러 올라가서 맥락 수집"""
+        chain = []
+        current = message
+        for _ in range(max_depth):
+            if not current.reference:
+                break
+            ref = current.reference.resolved
+            if not ref and current.reference.message_id:
+                try:
+                    ref = await current.channel.fetch_message(current.reference.message_id)
+                except Exception:
+                    break
+            if not ref:
+                break
+            name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
+            content = ref.content[:150]
+            # 멘션 태그를 이름으로 치환
+            for u in ref.mentions:
+                content = content.replace(f"<@{u.id}>", f"@{u.display_name}")
+                content = content.replace(f"<@!{u.id}>", f"@{u.display_name}")
+            extras = self._extract_extras(ref)
+            if extras:
+                content = f"{content} {extras}" if content else extras
+            chain.append(f"{name}: {content}")
+            current = ref
+        chain.reverse()
+        return chain
+
+    async def _build_pre_context(self, message, limit=5) -> list[str]:
+        """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
+        # 답글 체인이 있으면 체인 시작점을 찾음
+        anchor = message
+        for _ in range(5):
+            if not anchor.reference:
+                break
+            ref = anchor.reference.resolved
+            if not ref and anchor.reference.message_id:
+                try:
+                    ref = await anchor.channel.fetch_message(anchor.reference.message_id)
+                except Exception:
+                    break
+            if not ref:
+                break
+            anchor = ref
+
+        # anchor 직전 메시지들 가져오기
+        lines = []
+        async for msg in anchor.channel.history(limit=limit, before=anchor):
+            name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
+            content = msg.content[:150]
+            for u in msg.mentions:
+                content = content.replace(f"<@{u.id}>", f"@{u.display_name}")
+                content = content.replace(f"<@!{u.id}>", f"@{u.display_name}")
+            lines.append(f"{name}: {content}")
+        lines.reverse()
+        return lines
 
     @staticmethod
     def _extract_reply(response) -> str:
