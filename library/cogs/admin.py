@@ -257,7 +257,7 @@ class AdminCog(commands.Cog):
             return await interaction.response.send_message(
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
             )
-        pages = await self.bot.db.list_pages()
+        pages = await self.bot.db.list_pages(include_hidden=True)
         if not pages:
             return await interaction.response.send_message(
                 embed=info_embed("페이지 관리", "등록된 페이지가 없습니다.\n`/admin add`로 페이지를 추가하세요."),
@@ -282,7 +282,7 @@ class AdminCog(commands.Cog):
             return await interaction.response.send_message(
                 embed=info_embed("페이지 배정", "등록된 엔트리가 없습니다."), ephemeral=True
             )
-        pages = await self.bot.db.list_pages()
+        pages = await self.bot.db.list_pages(include_hidden=True)
         if not pages:
             return await interaction.response.send_message(
                 embed=info_embed("페이지 배정", "페이지가 없습니다.\n`/admin add`로 페이지를 먼저 추가하세요."),
@@ -421,17 +421,19 @@ class AdminPageActionView(BotView):
             embed=success_embed("편집 완료", f"**{title}** (순서: {sort_order})"), view=None)
         self.stop()
 
-    @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
-    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.bot.db.delete_page(self.page["id"])
+    @discord.ui.button(label="숨기기", style=discord.ButtonStyle.danger, row=0)
+    async def hide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_hidden = self.page.get("hidden", 0)
+        await self.bot.db.set_page_hidden(self.page["id"], not is_hidden)
+        status = "숨김" if not is_hidden else "공개"
         await interaction.response.edit_message(
-            embed=success_embed("삭제 완료", f"**{self.page['title']}** 페이지 삭제됨\n(엔트리들은 미배정으로 이동)"),
+            embed=success_embed("변경 완료", f"**{self.page['title']}** → {status}"),
             view=None)
         self.stop()
 
     @discord.ui.button(label="← 돌아가기", style=discord.ButtonStyle.secondary, row=0)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pages = await self.bot.db.list_pages()
+        pages = await self.bot.db.list_pages(include_hidden=True)
         view = AdminPagesView(self.bot, pages)
         view._message_ref = getattr(self, "_message_ref", None)
         await interaction.response.edit_message(

@@ -18,7 +18,7 @@ if not os.path.exists(db_path):
     exit(0)
 
 conn = sqlite3.connect(db_path)
-for table in ["books", "files"]:
+for table in ["books", "files", "pages"]:
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN hidden INTEGER DEFAULT 0")
         print(f"  컬럼 추가: {table}.hidden")

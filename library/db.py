@@ -288,11 +288,19 @@ class LibraryDB:
             await db.execute("UPDATE files SET hidden = ? WHERE id = ?", (1 if hidden else 0, file_id))
             await db.commit()
 
-    async def list_pages(self) -> list[dict]:
+    async def set_page_hidden(self, page_id: int, hidden: bool):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("UPDATE pages SET hidden = ? WHERE id = ?", (1 if hidden else 0, page_id))
+            await db.commit()
+
+    async def list_pages(self, include_hidden=False) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM pages ORDER BY CASE WHEN sort_order = 0 THEN 9999 ELSE sort_order END ASC, id ASC")
+            where = "" if include_hidden else "WHERE (hidden IS NULL OR hidden = 0)"
+            cursor = await db.execute(f"""
+                SELECT * FROM pages {where}
+                ORDER BY CASE WHEN sort_order = 0 THEN 9999 ELSE sort_order END ASC, id ASC
+            """)
             return [dict(r) for r in await cursor.fetchall()]
 
     async def get_page(self, page_id: int) -> dict | None:
