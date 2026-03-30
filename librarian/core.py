@@ -454,12 +454,13 @@ class AILibrarianBot(discord.Client):
 
     @staticmethod
     def _is_repeat(history: list, reply: str) -> bool:
-        """직전 봇 답변과 동일한지 확인"""
-        for h in reversed(history):
+        """히스토리 내 봇 답변 중 동일한 게 있는지 확인"""
+        curr = reply.replace("\ufe0f", "").strip()
+        for h in history:
             if h.role == "model" and h.parts and h.parts[0].text:
                 prev = h.parts[0].text.replace("\ufe0f", "").strip()
-                curr = reply.replace("\ufe0f", "").strip()
-                return prev == curr
+                if prev == curr:
+                    return True
         return False
 
     async def _build_catalog(self) -> str:
