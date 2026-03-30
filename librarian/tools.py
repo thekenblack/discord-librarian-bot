@@ -139,6 +139,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
 
     if name == "search":
         keyword = args.get("keyword", "")
+        exclude_ids = args.get("_exclude_memory_ids", [])
         result = {}
 
         # 키워드 확장: 별칭 + 공백 분리
@@ -151,7 +152,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         # 지식 + 기억 검색 (도서는 프롬프트에 이미 있으므로 제외)
         seen_content = set()
         for kw in keywords:
-            kw_result = await librarian_db.search_all(kw)
+            kw_result = await librarian_db.search_all(kw, exclude_ids=exclude_ids)
             for key, items in kw_result.items():
                 for item in items:
                     if item not in seen_content:

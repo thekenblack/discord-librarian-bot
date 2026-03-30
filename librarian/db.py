@@ -159,7 +159,7 @@ class LibrarianDB:
 
     # ── 통합 검색 ─────────────────────────────────────────
 
-    async def search_all(self, keyword: str, limit: int = 10) -> dict:
+    async def search_all(self, keyword: str, limit: int = 10, exclude_ids: list[int] = None) -> dict:
         """기초지식 + 학습을 통합 검색"""
         like = f"%{keyword}%"
         like_nospace = f"%{keyword.replace(' ', '')}%"
@@ -179,12 +179,17 @@ class LibrarianDB:
             if rows:
                 result["지식"] = [r["content"] for r in rows]
 
-            # 학습 (기억 포함, forgotten 제외)
-            cursor = await db.execute("""
+            # 학습 (기억 포함, forgotten 제외, 프롬프트 중복 제외)
+            exclude_clause = ""
+            if exclude_ids:
+                placeholders = ",".join(str(i) for i in exclude_ids)
+                exclude_clause = f"AND id NOT IN ({placeholders})"
+            cursor = await db.execute(f"""
                 SELECT author, content FROM learned
                 WHERE (forgotten IS NULL OR forgotten = 0)
                   AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
                        OR author LIKE ?)
+                  {exclude_clause}
                 LIMIT ?
             """, (like, like_nospace, like, limit))
             rows = await cursor.fetchall()

@@ -177,8 +177,8 @@ class AILibrarianBot(discord.Client):
 
         # 도서관 목록 + 기억을 prompt에 삽입
         catalog = await self._build_catalog()
-        memories = await self._build_memories(user_name)
-        prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories)
+        memories_text, memory_ids = await self._build_memories(user_name)
+        prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
         prompt_no_memories = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", "(기억 없음)")
         parts.append(prompt)
 
@@ -375,6 +375,8 @@ class AILibrarianBot(discord.Client):
                 if fc.name in ("search", "save_memory", "modify_memory"):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
+                if fc.name == "search":
+                    tool_args["_exclude_memory_ids"] = memory_ids
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
@@ -655,8 +657,8 @@ class AILibrarianBot(discord.Client):
             lines.append(line)
         return "\n".join(lines)
 
-    async def _build_memories(self, user_name: str) -> str:
-        """기억(learned)을 프롬프트용 텍스트로: 발화자 기억 + 나머지 최근"""
+    async def _build_memories(self, user_name: str) -> tuple[str, list[int]]:
+        """기억(learned)을 프롬프트용 텍스트로 + 포함된 ID 반환"""
         import aiosqlite
         from config import LIBRARIAN_DB_PATH
 
@@ -668,15 +670,17 @@ class AILibrarianBot(discord.Client):
 
             # 현재 대화 상대가 가르쳐준 것 (최근 10건, forgotten 제외)
             cursor = await db.execute(
-                "SELECT author, content FROM learned WHERE author LIKE ? AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
+                "SELECT id, author, content FROM learned WHERE author LIKE ? AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
             user_rows = await cursor.fetchall()
 
             # 나머지 최근 10건 (발화자 제외, forgotten 제외)
             cursor = await db.execute(
-                "SELECT author, content FROM learned WHERE (author IS NULL OR author NOT LIKE ?) AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
+                "SELECT id, author, content FROM learned WHERE (author IS NULL OR author NOT LIKE ?) AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
             other_rows = await cursor.fetchall()
+
+        memory_ids = [r["id"] for r in user_rows] + [r["id"] for r in other_rows]
 
         sections = []
 
@@ -688,7 +692,8 @@ class AILibrarianBot(discord.Client):
             lines = [_fmt(r) for r in reversed(other_rows)]
             sections.append("[최근 기억]\n" + "\n".join(lines))
 
-        return "\n\n".join(sections) if sections else "(기억 없음)"
+        text = "\n\n".join(sections) if sections else "(기억 없음)"
+        return text, memory_ids
 
     def _trim_history(self, channel_id: int):
         """히스토리를 MAX_HISTORY 턴으로 제한"""
