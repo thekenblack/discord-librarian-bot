@@ -365,6 +365,8 @@ class AILibrarianBot(discord.Client):
                 if fc.name == "recognize_media":
                     att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
                     media_result = ""
+                    stored_name = None
+                    saved_media_id = None
                     if att_idx < len(self._current_attachments):
                         att = self._current_attachments[att_idx]
                         ct = att.content_type or ""
@@ -399,7 +401,7 @@ class AILibrarianBot(discord.Client):
                                     except Exception as e:
                                         logger.warning(f"미디어 파일 저장 실패: {e}")
                                         stored_name = None
-                                    await self.librarian_db.save_media_result(
+                                    saved_media_id = await self.librarian_db.save_media_result(
                                         att.filename, media_result, user_name=user_name,
                                         uploader=user_name, stored_name=stored_name)
                             except Exception as e:
@@ -410,6 +412,8 @@ class AILibrarianBot(discord.Client):
                         media_result = "첨부파일이 없어."
 
                     tool_data = {"result": media_result[:500] if media_result else "인식 실패"}
+                    if media_result and stored_name:
+                        tool_data["media_id"] = saved_media_id
                     _meta["tool_results"].append(f"media:{media_result[:200]}")
                     history.append(response.candidates[0].content)
                     history.append(types.Content(

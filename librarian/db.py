@@ -413,12 +413,13 @@ class LibrarianDB:
             all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
             return user_results, other_results, all_ids
 
-    async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None, stored_name: str = None):
+    async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None, stored_name: str = None) -> int:
         async with aiosqlite.connect(self.path) as db:
-            await db.execute(
+            cursor = await db.execute(
                 "INSERT INTO media_results (filename, result, user_name, uploader, stored_name) VALUES (?, ?, ?, ?, ?)",
                 (filename, result, user_name, uploader, stored_name))
             await db.commit()
+            return cursor.lastrowid
 
     async def get_media_by_id(self, media_id: int) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
