@@ -123,6 +123,18 @@ library_tools = [
                 required=["keyword"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="modify_memory",
+            description="기존 기억을 수정한다. 기존 것을 잊고 새 내용으로 대체. '아니야 ~야', '그거 틀려 ~가 맞아' 같은 요청에 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "keyword": types.Schema(type="STRING", description="잊을 기존 기억의 키워드"),
+                    "new_content": types.Schema(type="STRING", description="새로 기억할 내용"),
+                },
+                required=["keyword", "new_content"],
+            ),
+        ),
     ]),
 ]
 
@@ -201,6 +213,14 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         if count > 0:
             return json.dumps({"result": f"'{keyword}' 관련 기억 {count}건 잊음"}, ensure_ascii=False)
         return json.dumps({"result": f"'{keyword}' 관련 기억 없음"}, ensure_ascii=False)
+
+    elif name == "modify_memory":
+        keyword = args.get("keyword", "")
+        new_content = args.get("new_content", "")
+        author = args.get("_user_name")
+        forgotten = await librarian_db.forget(keyword)
+        saved_id = await librarian_db.save(new_content, author=author)
+        return json.dumps({"result": f"기억 수정: {forgotten}건 잊고 새로 저장 (ID: {saved_id})"}, ensure_ascii=False)
 
     elif name == "add_entry_alias":
         entry_id = args.get("entry_id")

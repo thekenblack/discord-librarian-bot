@@ -311,7 +311,7 @@ class AILibrarianBot(discord.Client):
 
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
-                if fc.name in ("search", "save_memory"):
+                if fc.name in ("search", "save_memory", "modify_memory"):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
