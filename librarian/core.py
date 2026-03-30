@@ -13,7 +13,7 @@ from google.genai.errors import ClientError
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
-from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS
+from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
 from librarian import server_log
@@ -386,10 +386,22 @@ class AILibrarianBot(discord.Client):
                                 )
                                 media_result = self._extract_reply(media_response)
                                 if media_result:
-                                    # user_name = 멘션한 사람, uploader = 파일 올린 사람
-                                    uploader = att.filename  # 첨부파일은 현재 메시지에서 오므로 message.author
+                                    # 미디어 파일 로컬 저장
+                                    stored_name = None
+                                    try:
+                                        os.makedirs(MEDIA_DIR, exist_ok=True)
+                                        import uuid
+                                        ext = os.path.splitext(att.filename)[1] or ""
+                                        stored_name = f"{uuid.uuid4().hex}{ext}"
+                                        with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                            mf.write(data)
+                                        logger.info(f"미디어 저장: {att.filename} → {stored_name}")
+                                    except Exception as e:
+                                        logger.warning(f"미디어 파일 저장 실패: {e}")
+                                        stored_name = None
                                     await self.librarian_db.save_media_result(
-                                        att.filename, media_result, user_name=user_name, uploader=user_name)
+                                        att.filename, media_result, user_name=user_name,
+                                        uploader=user_name, stored_name=stored_name)
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:
@@ -428,12 +440,18 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"도구 결과: {tool_result[:200]}")
                 _meta["tool_results"].append(tool_result[:200])
 
-                # give 액션
+                # deliver 액션
                 if tool_data.get("_action") == "deliver":
                     save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
                         await self.library_db.increment_download(tool_data["file_id"])
+
+                # attach 액션
+                if tool_data.get("_action") == "attach":
+                    save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
+                    if os.path.exists(save_path):
+                        file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
                 history.append(response.candidates[0].content)
                 history.append(types.Content(

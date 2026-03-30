@@ -139,6 +139,17 @@ library_tools = [
                 required=["attachment_index"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="attach",
+            description="이전에 인식한 미디어를 다시 보낸다. search 결과의 media_id를 써.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "media_id": types.Schema(type="INTEGER", description="미디어 ID (search 결과에서 확인)"),
+                },
+                required=["media_id"],
+            ),
+        ),
     ]),
 ]
 
@@ -259,5 +270,20 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         if deleted:
             return json.dumps({"result": f"별칭 ID {alias_id} 삭제 완료"}, ensure_ascii=False)
         return json.dumps({"result": f"별칭 ID {alias_id}을 찾을 수 없음"}, ensure_ascii=False)
+
+    elif name == "attach":
+        media_id = args.get("media_id")
+        media = await librarian_db.get_media_by_id(media_id)
+        if not media:
+            return json.dumps({"result": f"미디어 ID {media_id}을 찾을 수 없습니다."}, ensure_ascii=False)
+        if not media.get("stored_name"):
+            return json.dumps({"result": f"미디어 ID {media_id}의 파일이 저장되어 있지 않습니다."}, ensure_ascii=False)
+        return json.dumps({
+            "_action": "attach",
+            "media_id": media["id"],
+            "filename": media["filename"],
+            "stored_name": media["stored_name"],
+            "description": media["result"][:200],
+        }, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)

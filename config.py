@@ -34,6 +34,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 _paths = _conf.get("paths", {})
 DATA_DIR    = os.path.join(BASE_DIR, _paths.get("data_dir", "data"))
 FILES_DIR   = os.path.join(BASE_DIR, _paths.get("files_dir", "files"))
+MEDIA_DIR   = os.path.join(BASE_DIR, "librarian", "media")
 LOG_DIR     = os.path.join(BASE_DIR, _paths.get("logs_dir", "logs"))
 BACKUP_DIR  = os.path.join(BASE_DIR, _paths.get("backups_dir", "data/backups"))
 

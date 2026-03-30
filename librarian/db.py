@@ -302,12 +302,17 @@ class LibrarianDB:
 
             # 5. 미디어 캐시
             cursor = await db.execute(f"""
-                SELECT filename, result FROM media_results
+                SELECT id, filename, result, stored_name FROM media_results
                 WHERE (filename LIKE ? OR result LIKE ?)
                   {media_exclude}
                 ORDER BY id DESC LIMIT ?
             """, (like, like, limit))
-            rows = [f"[{r['filename']}] {r['result']}" for r in await cursor.fetchall()]
+            rows = []
+            for r in await cursor.fetchall():
+                line = f"[media_id:{r['id']}] [{r['filename']}] {r['result']}"
+                if r["stored_name"]:
+                    line += " (첨부 가능)"
+                rows.append(line)
             if rows:
                 result["미디어"] = rows
 
@@ -408,12 +413,21 @@ class LibrarianDB:
             all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
             return user_results, other_results, all_ids
 
-    async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None):
+    async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None, stored_name: str = None):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO media_results (filename, result, user_name, uploader) VALUES (?, ?, ?, ?)",
-                (filename, result, user_name, uploader))
+                "INSERT INTO media_results (filename, result, user_name, uploader, stored_name) VALUES (?, ?, ?, ?, ?)",
+                (filename, result, user_name, uploader, stored_name))
             await db.commit()
+
+    async def get_media_by_id(self, media_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, filename, result, stored_name FROM media_results WHERE id = ?",
+                (media_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
     async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
         """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
