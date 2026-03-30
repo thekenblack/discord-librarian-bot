@@ -679,31 +679,32 @@ class LibraryCog(commands.Cog):
                 embed=info_embed("라이브러리", "등록된 엔트리가 없습니다."),
             )
 
+        # DB에서 페이지 정보 가져오기
+        db_pages = await self.bot.db.list_pages()
+        page_titles = {p["id"]: p["title"] for p in db_pages}
+
         # 페이지별 그룹핑
-        pages: dict[int, list] = {}
+        page_groups: dict[int, list] = {}
         for b in books:
-            p = b.get("page") or 0
-            pages.setdefault(p, []).append(b)
+            p = b.get("page_id") or 0
+            page_groups.setdefault(p, []).append(b)
 
         # 페이지 번호 정렬 (0은 맨 뒤)
-        sorted_pages = sorted(pages.keys(), key=lambda x: (x == 0, x))
+        sorted_pages = sorted(page_groups.keys(), key=lambda x: (x == 0, x))
 
-        # 페이지가 미지정(0)뿐이면 그냥 1페이지처럼
+        # 페이지가 미지정(0)뿐이면 그냥 단일 페이지
         if sorted_pages == [0]:
-            sorted_pages = [0]
-            page_labels = {0: None}  # 페이지 표시 안 함
+            page_labels = {0: None}
         else:
             page_labels = {}
-            display_num = 1
             for p in sorted_pages:
                 if p == 0:
                     page_labels[p] = "기타"
                 else:
-                    page_labels[p] = f"{display_num}페이지"
-                    display_num += 1
+                    page_labels[p] = page_titles.get(p, f"페이지 {p}")
 
         def build_page_embed(page_key):
-            page_books = pages[page_key]
+            page_books = page_groups[page_key]
             lines = []
             for b in page_books:
                 line = f"📕 **{b['title']}** ({b['file_count']}개 파일)"
@@ -726,7 +727,7 @@ class LibraryCog(commands.Cog):
         if len(sorted_pages) <= 1:
             await interaction.response.send_message(embed=build_page_embed(sorted_pages[0]))
         else:
-            view = LibraryListView(sorted_pages, pages, page_labels, build_page_embed, len(books))
+            view = LibraryListView(sorted_pages, page_groups, page_labels, build_page_embed, len(books))
             await interaction.response.send_message(
                 embed=build_page_embed(sorted_pages[0]),
                 view=view,

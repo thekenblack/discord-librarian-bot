@@ -61,8 +61,17 @@ class LibraryDB:
             await _add_column("books", "alias", "TEXT")
             await _add_column("books", "author", "TEXT")
             await _add_column("books", "author_alias", "TEXT")
-            await _add_column("books", "page", "INTEGER DEFAULT 0")
+            await _add_column("books", "page_id", "INTEGER DEFAULT 0")
             await _add_column("books", "sort_order", "INTEGER DEFAULT 0")
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pages (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title      TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
 
             await db.commit()
             logger.info("도서관 DB 초기화 완료")
@@ -102,7 +111,7 @@ class LibraryDB:
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT ? OFFSET ?
             """, (per_page, offset))
             rows = await cursor.fetchall()
@@ -116,7 +125,7 @@ class LibraryDB:
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
             """)
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -130,7 +139,7 @@ class LibraryDB:
                 LEFT JOIN files f ON f.book_id = b.id
                 WHERE b.creator_id = ?
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT 25
             """, (creator_id,))
             rows = await cursor.fetchall()
@@ -241,7 +250,7 @@ class LibraryDB:
                    OR b.author_alias LIKE ?
                    OR b.description LIKE ?
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT 10
             """, (like, like, like, like, like))
             rows = await cursor.fetchall()
@@ -254,3 +263,48 @@ class LibraryDB:
         files = await self.list_book_files(book_id)
         book["files"] = files
         return book
+
+    # ── 페이지 ────────────────────────────────────────────
+
+    async def create_page(self, title: str, sort_order: int = 0) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "INSERT INTO pages (title, sort_order) VALUES (?, ?)",
+                (title, sort_order))
+            await db.commit()
+            return cursor.lastrowid
+
+    async def list_pages(self) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM pages ORDER BY CASE WHEN sort_order = 0 THEN 9999 ELSE sort_order END ASC, id ASC")
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_page(self, page_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM pages WHERE id = ?", (page_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_page(self, page_id: int, title: str, sort_order: int):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE pages SET title = ?, sort_order = ? WHERE id = ?",
+                (title, sort_order, page_id))
+            await db.commit()
+
+    async def delete_page(self, page_id: int):
+        async with aiosqlite.connect(self.path) as db:
+            # 해당 페이지의 엔트리들은 미배정(0)으로
+            await db.execute("UPDATE books SET page_id = 0 WHERE page_id = ?", (page_id,))
+            await db.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+            await db.commit()
+
+    async def assign_book_page(self, book_id: int, page_id: int, sort_order: int = 0):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE books SET page_id = ?, sort_order = ? WHERE id = ?",
+                (page_id, sort_order, book_id))
+            await db.commit()

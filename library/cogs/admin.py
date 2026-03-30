@@ -212,6 +212,244 @@ class AdminCog(commands.Cog):
         )
         view._message_ref = await interaction.original_response()
 
+    # ── /admin add ───────────────────────────────────────
+    @admin.command(name="add", description="페이지 추가")
+    async def admin_add(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        modal = PageModal()
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+        if not modal.submitted:
+            return
+        title = modal.page_title.value.strip()
+        sort_order = int(modal.page_order.value.strip() or "0")
+        page_id = await self.bot.db.create_page(title, sort_order)
+        await modal.interaction.followup.send(
+            embed=success_embed("페이지 추가", f"**{title}** (ID: {page_id})"), ephemeral=True
+        )
+
+    # ── /admin pages ─────────────────────────────────────
+    @admin.command(name="pages", description="페이지 관리 (편집/삭제)")
+    async def admin_pages(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        pages = await self.bot.db.list_pages()
+        if not pages:
+            return await interaction.response.send_message(
+                embed=info_embed("페이지 관리", "등록된 페이지가 없습니다.\n`/admin add`로 페이지를 추가하세요."),
+                ephemeral=True
+            )
+        view = AdminPagesView(self.bot, pages)
+        await interaction.response.send_message(
+            embed=info_embed("페이지 관리", "편집 또는 삭제할 페이지를 선택하세요."),
+            view=view, ephemeral=True,
+        )
+        view._message_ref = await interaction.original_response()
+
+    # ── /admin page ──────────────────────────────────────
+    @admin.command(name="page", description="엔트리 페이지 배정")
+    async def admin_page(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        books = await self.bot.db.list_all_books()
+        if not books:
+            return await interaction.response.send_message(
+                embed=info_embed("페이지 배정", "등록된 엔트리가 없습니다."), ephemeral=True
+            )
+        pages = await self.bot.db.list_pages()
+        if not pages:
+            return await interaction.response.send_message(
+                embed=info_embed("페이지 배정", "페이지가 없습니다.\n`/admin add`로 페이지를 먼저 추가하세요."),
+                ephemeral=True
+            )
+        view = AdminPageAssignView(self.bot, books, pages)
+        await interaction.response.send_message(
+            embed=info_embed("페이지 배정", "엔트리를 선택하세요."),
+            view=view, ephemeral=True,
+        )
+        view._message_ref = await interaction.original_response()
+
+
+# ── 페이지 모달 ─────────────────────────────────────
+
+class PageModal(discord.ui.Modal, title="페이지 추가"):
+    page_title = discord.ui.TextInput(
+        label="페이지 제목", placeholder="예: 비트코인 필독서", max_length=100)
+    page_order = discord.ui.TextInput(
+        label="표시 순서 (숫자, 비우면 맨 뒤)", placeholder="1", required=False, max_length=5)
+
+    def __init__(self, default_title: str = "", default_order: str = ""):
+        super().__init__(timeout=120)
+        self.submitted = False
+        self.interaction = None
+        if default_title:
+            self.page_title.default = default_title
+        if default_order:
+            self.page_order.default = default_order
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        self.submitted = True
+        self.interaction = interaction
+        self.stop()
+
+
+class PageAssignModal(discord.ui.Modal, title="페이지 배정"):
+    sort_order = discord.ui.TextInput(
+        label="페이지 내 순서 (숫자, 비우면 맨 뒤)", placeholder="1", required=False, max_length=5)
+
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.submitted = False
+        self.interaction = None
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        self.submitted = True
+        self.interaction = interaction
+        self.stop()
+
+
+# ── 페이지 관리 뷰 ──────────────────────────────────
+
+class AdminPagesView(BotView):
+    def __init__(self, bot, pages: list[dict]):
+        super().__init__(timeout=120)
+        self.bot = bot
+
+        options = []
+        for p in pages[:25]:
+            desc = f"순서: {p['sort_order']}" if p['sort_order'] else "순서 미지정"
+            options.append(discord.SelectOption(
+                label=p["title"][:100], description=desc, value=str(p["id"]), emoji="📄",
+            ))
+        select = discord.ui.Select(placeholder="페이지 선택", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        page_id = int(interaction.data["values"][0])
+        page = await self.bot.db.get_page(page_id)
+        if not page:
+            return await interaction.response.send_message(
+                embed=error_embed("없음", "해당 페이지를 찾을 수 없습니다."), ephemeral=True)
+        view = AdminPageActionView(self.bot, page)
+        view._message_ref = getattr(self, "_message_ref", None)
+        await interaction.response.edit_message(
+            embed=info_embed("페이지 관리", f"**{page['title']}** (순서: {page['sort_order']})"),
+            view=view,
+        )
+
+
+class AdminPageActionView(BotView):
+    def __init__(self, bot, page: dict):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.page = page
+
+    @discord.ui.button(label="편집", style=discord.ButtonStyle.primary, row=0)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = PageModal(self.page["title"], str(self.page["sort_order"]))
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+        if not modal.submitted:
+            return
+        title = modal.page_title.value.strip()
+        sort_order = int(modal.page_order.value.strip() or "0")
+        await self.bot.db.update_page(self.page["id"], title, sort_order)
+        await modal.interaction.edit_original_response(
+            embed=success_embed("편집 완료", f"**{title}** (순서: {sort_order})"), view=None)
+        self.stop()
+
+    @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
+    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.bot.db.delete_page(self.page["id"])
+        await interaction.response.edit_message(
+            embed=success_embed("삭제 완료", f"**{self.page['title']}** 페이지 삭제됨\n(엔트리들은 미배정으로 이동)"),
+            view=None)
+        self.stop()
+
+    @discord.ui.button(label="← 돌아가기", style=discord.ButtonStyle.secondary, row=0)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pages = await self.bot.db.list_pages()
+        view = AdminPagesView(self.bot, pages)
+        view._message_ref = getattr(self, "_message_ref", None)
+        await interaction.response.edit_message(
+            embed=info_embed("페이지 관리", "편집 또는 삭제할 페이지를 선택하세요."), view=view)
+
+
+# ── 페이지 배정 뷰 ──────────────────────────────────
+
+class AdminPageAssignView(BotView):
+    """1단계: 엔트리 선택"""
+    def __init__(self, bot, books: list[dict], pages: list[dict]):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.pages = pages
+
+        options = []
+        for b in books[:25]:
+            page_info = f"페이지 {b.get('page_id', 0)}" if b.get('page_id') else "미배정"
+            options.append(discord.SelectOption(
+                label=b["title"][:100], description=page_info, value=str(b["id"]), emoji="📕",
+            ))
+        select = discord.ui.Select(placeholder="엔트리 선택", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        book_id = int(interaction.data["values"][0])
+        view = AdminPageSelectView(self.bot, book_id, self.pages)
+        view._message_ref = getattr(self, "_message_ref", None)
+        await interaction.response.edit_message(
+            embed=info_embed("페이지 배정", "배정할 페이지를 선택하세요."), view=view)
+
+
+class AdminPageSelectView(BotView):
+    """2단계: 페이지 선택 → 순서 입력"""
+    def __init__(self, bot, book_id: int, pages: list[dict]):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.book_id = book_id
+
+        options = [discord.SelectOption(label="미배정", value="0", emoji="❌")]
+        for p in pages[:24]:
+            options.append(discord.SelectOption(
+                label=p["title"][:100], value=str(p["id"]), emoji="📄",
+            ))
+        select = discord.ui.Select(placeholder="페이지 선택", options=options)
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        page_id = int(interaction.data["values"][0])
+        if page_id == 0:
+            await self.bot.db.assign_book_page(self.book_id, 0, 0)
+            await interaction.response.edit_message(
+                embed=success_embed("배정 해제", "미배정으로 변경됨"), view=None)
+            self.stop()
+            return
+        modal = PageAssignModal()
+        await interaction.response.send_modal(modal)
+        await modal.wait()
+        if not modal.submitted:
+            return
+        sort_order = int(modal.sort_order.value.strip() or "0")
+        await self.bot.db.assign_book_page(self.book_id, page_id, sort_order)
+        page = await self.bot.db.get_page(page_id)
+        page_title = page["title"] if page else f"ID {page_id}"
+        await modal.interaction.edit_original_response(
+            embed=success_embed("배정 완료", f"**{page_title}** 페이지, 순서 {sort_order}"),
+            view=None)
+        self.stop()
+
 
 # ── 어드민 뷰 ───────────────────────────────────────
 
