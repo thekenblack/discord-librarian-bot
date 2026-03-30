@@ -16,7 +16,7 @@ library_tools = [
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="search",
-            description="지식과 기억을 검색한다. 프롬프트에 없는 정보가 필요할 때 사용.",
+            description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
