@@ -70,8 +70,8 @@ class AILibrarianBot(discord.Client):
                     row = await cursor.fetchone()
                     if row:
                         desc = row["result"][:100]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"미디어 캐시 조회 실패: {att.filename}: {e}")
             if desc:
                 extras.append(f"[첨부: {att.filename} | {desc}]")
             else:
