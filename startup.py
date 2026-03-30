@@ -101,39 +101,6 @@ _migrate_file(
     os.path.join(LOG_DIR, "bot.log"),
 )
 
-# 기존 bot.log를 날짜별로 분리 (TimedRotatingFileHandler 호환)
-_old_log = os.path.join(LOG_DIR, "bot.log")
-if os.path.exists(_old_log) and os.path.getsize(_old_log) > 100000:  # 100KB 이상
-    print("[로그] 기존 bot.log를 날짜별로 분리 중...")
-    _dates_seen = set()
-    with open(_old_log, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if len(line) >= 10 and line[4] == '-' and line[7] == '-':
-                _date = line[:10]
-                _dates_seen.add(_date)
-    _today_str = datetime.now().strftime("%Y-%m-%d")
-    for _date in sorted(_dates_seen):
-        if _date == _today_str:
-            continue
-        _date_log = _old_log + "." + _date
-        if os.path.exists(_date_log):
-            continue
-        with open(_old_log, encoding="utf-8", errors="replace") as f_in, \
-             open(_date_log, "w", encoding="utf-8") as f_out:
-            for line in f_in:
-                if line.startswith(_date):
-                    f_out.write(line)
-        print(f"  → {os.path.basename(_date_log)}")
-    # 오늘 날짜 로그만 남기기
-    _today_lines = []
-    with open(_old_log, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if line.startswith(_today_str):
-                _today_lines.append(line)
-    with open(_old_log, "w", encoding="utf-8") as f:
-        f.writelines(_today_lines)
-    print(f"  bot.log에 오늘({_today_str}) 로그만 유지")
-
 # 구 단일 DB 마이그레이션
 OLD_DB = os.path.join(BASE_DIR, "librarian_bot.db")
 if os.path.exists(OLD_DB) and not os.path.exists(os.path.join(DATA_DIR, "library.db")):
