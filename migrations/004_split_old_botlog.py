@@ -34,7 +34,7 @@ today_str = datetime.now().strftime("%Y-%m-%d")
 for date in sorted(dates_seen):
     if date == today_str:
         continue
-    date_log = old_log + "." + date
+    date_log = os.path.join(log_dir, f"bot.{date}.log")
     if os.path.exists(date_log):
         continue
     with open(old_log, encoding="utf-8", errors="replace") as f_in, \
