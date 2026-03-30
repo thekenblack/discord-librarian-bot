@@ -429,17 +429,6 @@ class AILibrarianBot(discord.Client):
                         break
                     continue
 
-                # set_mood 도구: 메모리에서 직접 처리 (API 재호출 불필요)
-                if fc.name == "set_mood":
-                    target = (dict(fc.args) if fc.args else {}).get("score", 50)
-                    self._mood.update(user_name, float(target))
-                    _meta["tool_results"].append(f"mood:{target}")
-                    # 텍스트 응답도 같이 있으면 그걸 쓰고, 아니면 루프 계속
-                    text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
-                    if text_parts:
-                        break  # 텍스트 응답 있으면 루프 종료 → 그 텍스트가 reply
-                    continue
-
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
                 if fc.name in ("search", "save_memory", "modify_memory"):
@@ -478,6 +467,16 @@ class AILibrarianBot(discord.Client):
 
             # 최종 응답 추출 (루프 실패 시 히스토리 롤백)
             reply = self._extract_reply(response)
+
+            # [mood:XX] 태그 파싱 + 제거
+            import re
+            mood_match = re.search(r'\[mood:(\d+)\]', reply) if reply else None
+            if mood_match:
+                mood_score = int(mood_match.group(1))
+                self._mood.update(user_name, mood_score)
+                reply = reply.replace(mood_match.group(0), '').strip()
+                logger.info(f"감정 파싱: {user_name} → {mood_score}")
+
             if not reply:
                 self.chat_histories[channel_id] = history[:history_snapshot]
                 history = self.chat_histories[channel_id]
