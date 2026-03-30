@@ -597,12 +597,11 @@ class AILibrarianBot(discord.Client):
             if b.get("description"):
                 line += f"\n  {b['description']}"
             files = detail.get("files", [])
-            if files:
-                for f in files:
-                    size_mb = f["file_size"] / (1024 * 1024)
-                    line += f"\n  file:{f['id']} {f['filename']} ({size_mb:.1f}MB)"
-            else:
-                line += "\n  (파일 없음)"
+            if not files:
+                continue  # 파일 없는 엔트리는 프롬프트에 안 넣음
+            for f in files:
+                size_mb = f["file_size"] / (1024 * 1024)
+                line += f"\n  file:{f['id']} {f['filename']} ({size_mb:.1f}MB)"
             lines.append(line)
         return "\n".join(lines)
 
