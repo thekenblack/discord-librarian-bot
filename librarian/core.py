@@ -349,24 +349,49 @@ class AILibrarianBot(discord.Client):
 
             reply = self._extract_reply(response)
 
-            # 반복 체크: 히스토리/맥락이 비슷한 답변을 유도했을 수 있음
-            # → 클린 상태(히스토리 없이 유저 메시지만)로 1회 재시도
-            if reply and self._is_repeat(history, reply):
-                logger.warning(f"반복 감지, 클린 재시도: {reply[:50]}...")
-                retry_config = types.GenerateContentConfig(
-                    system_instruction=config.system_instruction,
-                    tools=library_tools,
-                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                    temperature=1.0,
-                )
+            # ── 반복/빈 응답 견제 (최대 3회 재시도) ──────────
+            def _needs_retry(r):
+                return not r or self._is_repeat(history, r)
+
+            clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
+
+            # 2차: 클린 + temperature 0.9
+            if _needs_retry(reply):
+                logger.warning(f"1차 {'반복' if reply else '빈 응답'}, 2차 시도 (클린, 0.9)")
                 try:
-                    clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
-                    retry_response = self._call_gemini(clean_message, retry_config)
-                    retry_reply = self._extract_reply(retry_response)
-                    if retry_reply:
-                        reply = retry_reply
+                    retry_config = types.GenerateContentConfig(
+                        system_instruction=config.system_instruction,
+                        tools=library_tools,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=0.9,
+                    )
+                    r = self._extract_reply(self._call_gemini(clean_message, retry_config))
+                    if r:
+                        reply = r
                 except Exception as e:
-                    logger.warning(f"재시도 실패: {e}")
+                    logger.warning(f"2차 실패: {e}")
+
+            # 3차: 클린 + 웹 검색 + temperature 1.0
+            if _needs_retry(reply):
+                logger.warning(f"2차 {'반복' if reply else '빈 응답'}, 3차 시도 (클린+웹, 1.0)")
+                try:
+                    from librarian.tools import google_search_tool
+                    web_config = types.GenerateContentConfig(
+                        system_instruction=config.system_instruction,
+                        tools=google_search_tool,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=1.0,
+                    )
+                    r = self._extract_reply(self._call_gemini(clean_message, web_config))
+                    if r:
+                        reply = r
+                except Exception as e:
+                    logger.warning(f"3차 실패: {e}")
+
+            # 4차: 포기
+            if _needs_retry(reply):
+                logger.warning("3차까지 실패, 포기")
+                reply = ""
 
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
@@ -509,12 +534,27 @@ class AILibrarianBot(discord.Client):
         return "\n".join(parts) if parts else ""
 
     @staticmethod
-    def _is_repeat(history: list, reply: str) -> bool:
+    def _normalize_for_compare(text: str) -> str:
+        """비교용 정규화: 이모지, 공백, 줄바꿈 정리"""
+        import re
+        # 이모지 variation selector 제거
+        text = text.replace("\ufe0f", "")
+        # 모든 이모지 제거 (유니코드 이모지 범위)
+        text = re.sub(r'[\U0001f300-\U0001f9ff\u2600-\u27bf\u200d\ufe0f]', '', text)
+        # 커스텀 디스코드 이모지 제거 <:name:id>
+        text = re.sub(r'<:\w+:\d+>', '', text)
+        # 연속 공백/줄바꿈 정리
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
+    def _is_repeat(self, history: list, reply: str) -> bool:
         """히스토리 내 봇 답변 중 동일한 게 있는지 확인"""
-        curr = reply.replace("\ufe0f", "").strip()
+        curr = self._normalize_for_compare(reply)
+        if not curr:
+            return False
         for h in history:
             if h.role == "model" and h.parts and h.parts[0].text:
-                prev = h.parts[0].text.replace("\ufe0f", "").strip()
+                prev = self._normalize_for_compare(h.parts[0].text)
                 if prev == curr:
                     return True
         return False
