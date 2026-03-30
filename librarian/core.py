@@ -543,6 +543,8 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r'[\U0001f300-\U0001f9ff\u2600-\u27bf\u200d\ufe0f]', '', text)
         # 커스텀 디스코드 이모지 제거 <:name:id>
         text = re.sub(r'<:\w+:\d+>', '', text)
+        # 구두점 제거
+        text = re.sub(r'[!?.,~…·\-–—:;\'\"(){}[\]<>]', '', text)
         # 연속 공백/줄바꿈 정리
         text = re.sub(r'\s+', ' ', text).strip()
         return text
