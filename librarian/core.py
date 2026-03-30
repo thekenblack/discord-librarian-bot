@@ -261,6 +261,7 @@ class AILibrarianBot(discord.Client):
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+        history_snapshot = len(history)  # 롤백 지점
 
         file_to_send = None
 
@@ -369,9 +370,14 @@ class AILibrarianBot(discord.Client):
                     logger.warning(f"[1차] 도구 후 API 에러: {e}")
                     break
 
-            # 최종 응답 추출
+            # 최종 응답 추출 (루프 실패 시 히스토리 롤백)
             reply = self._extract_reply(response)
-            logger.info(f"[1차] 응답: {'빈 응답' if not reply else reply[:80]}")
+            if not reply:
+                self.chat_histories[channel_id] = history[:history_snapshot]
+                history = self.chat_histories[channel_id]
+                logger.info(f"[1차] 빈 응답 → 히스토리 롤백 ({history_snapshot}턴)")
+            else:
+                logger.info(f"[1차] 응답: {reply[:80]}")
 
             # ── 반복/빈 응답 견제 (최대 3회 재시도) ──────────
             def _needs_retry(r):
