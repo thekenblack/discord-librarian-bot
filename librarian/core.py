@@ -342,11 +342,6 @@ class AILibrarianBot(discord.Client):
                     raise
 
             # 최종 응답 추출
-            if not response.candidates or not response.candidates[0].content.parts:
-                logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
-                _meta["error"] = "safety_filter"
-                return "", None, _meta
-
             reply = self._extract_reply(response)
 
             # ── 반복/빈 응답 견제 (최대 3회 재시도) ──────────
