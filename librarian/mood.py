@@ -68,7 +68,7 @@ class MoodSystem:
 
         new_raw = current * (1 - ALPHA) + target * ALPHA
         self._users[user_name] = {"raw": new_raw, "updated": now}
-        logger.info(f"무드 업데이트: {user_name} {current:.1f} → {new_raw:.1f} (target={target})")
+        logger.info(f"무드: {user_name}에 대한 감정 {current:.0f} → {new_raw:.0f} (AI 요청={target:.0f}, EMA α={ALPHA})")
 
     def get_global(self) -> tuple[float, str]:
         """공통 무드 (활성 유저 원점수 평균)"""

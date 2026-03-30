@@ -278,6 +278,7 @@ class AILibrarianBot(discord.Client):
 
         if cache_sections:
             parts.append("## 최근 조회\n\n" + "\n\n".join(cache_sections))
+            logger.info(f"프롬프트 캐시: 웹 {len(user_web)+len(other_web)}건, 미디어 {len(user_media)+len(other_media)}건")
 
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.character_text)
@@ -478,7 +479,11 @@ class AILibrarianBot(discord.Client):
                 mood_score = int(mood_match.group(1))
                 self._mood.update(user_name, mood_score)
                 reply = reply.replace(mood_match.group(0), '').strip()
-                logger.info(f"감정 파싱: {user_name} → {mood_score}")
+
+                # 감정 상태 로그
+                global_score, global_emotion = self._mood.get_global()
+                user_score, user_emotion = self._mood.get_user(user_name)
+                logger.info(f"감정: AI 요청=[mood:{mood_score}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
 
             if not reply:
                 self.chat_histories[channel_id] = history[:history_snapshot]
