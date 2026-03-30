@@ -47,14 +47,30 @@ class AILibrarianBot(discord.Client):
 
     @staticmethod
     def _normalize_url(url: str) -> str:
-        """URL 정규화: 프로토콜/www/끝슬래시/index.html 차이 통일"""
-        import re
+        """URL 정규화"""
+        from urllib.parse import urlparse, parse_qs, urlencode
         url = url.strip()
-        url = re.sub(r'^https?://', '', url)  # 프로토콜 제거
-        url = re.sub(r'^www\.', '', url)       # www. 제거
-        url = url.rstrip('/')                  # 끝 슬래시 제거
-        url = re.sub(r'/index\.html?$', '', url)  # index.html 제거
-        return url.lower()
+        # 프로토콜 통일
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        parsed = urlparse(url)
+        # 호스트: www. m. 제거, 소문자
+        host = parsed.hostname or ""
+        host = host.removeprefix("www.").removeprefix("m.")
+        # 경로: 끝슬래시, index.html 제거
+        path = parsed.path.rstrip("/")
+        if path.endswith(("/index.html", "/index.htm")):
+            path = path.rsplit("/", 1)[0]
+        # 쿼리: 추적 파라미터 제거
+        _tracking = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                      "fbclid", "gclid", "si", "ref", "source", "feature"}
+        params = {k: v for k, v in parse_qs(parsed.query).items() if k not in _tracking}
+        query = urlencode(params, doseq=True) if params else ""
+        # 프래그먼트 제거
+        result = host + path
+        if query:
+            result += "?" + query
+        return result.lower()
 
     async def _extract_extras(self, msg) -> str:
         """메시지에서 임베드/첨부 정보 추출 (미디어 캐시 포함)"""
