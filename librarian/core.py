@@ -39,7 +39,7 @@ class AILibrarianBot(discord.Client):
         self._ready = False
 
         self._error_messages = set(
-            persona._error_messages + persona._rate_limit_messages + persona._daily_limit_messages
+            persona._messages
         )
 
     async def _extract_extras(self, msg) -> str:
@@ -521,11 +521,11 @@ class AILibrarianBot(discord.Client):
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
                     _meta["error"] = "daily_limit"
-                    return self.persona.daily_limit_message, None, _meta
+                    return self.persona.error_message, None, _meta
                 else:
                     logger.warning("분당 한도 초과")
                     _meta["error"] = "rate_limit"
-                    return self.persona.rate_limit_message, None, _meta
+                    return self.persona.error_message, None, _meta
             _meta["error"] = f"client_error:{e.status}"
             return self.persona.error_message, None, _meta
 
