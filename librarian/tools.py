@@ -182,7 +182,8 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
 
     elif name == "save_memory" or name == "add_knowledge":
         content = args.get("content", "")
-        saved_id = await librarian_db.save(content)
+        author = args.get("_user_name")
+        saved_id = await librarian_db.save(content, author=author)
         return json.dumps({"result": f"저장 완료 (ID: {saved_id})"}, ensure_ascii=False)
 
     elif name == "add_entry_alias":
