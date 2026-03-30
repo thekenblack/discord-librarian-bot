@@ -200,74 +200,106 @@ class LibrarianDB:
     # ── 통합 검색 ─────────────────────────────────────────
 
     async def search_all(self, keyword: str, limit: int = 10,
-                         exclude_ids: list[int] = None, user_name: str = None) -> list[str]:
-        """지식 + 기억 통합 검색 (발화자 우선). 하나의 리스트로 반환."""
+                         exclude_memory_ids: list[int] = None,
+                         exclude_web_ids: list[int] = None,
+                         exclude_media_ids: list[int] = None,
+                         user_name: str = None) -> dict:
+        """5개 카테고리 검색. 각 카테고리별 limit건."""
         like = f"%{keyword}%"
         like_nospace = f"%{keyword.replace(' ', '')}%"
 
-        exclude_clause = ""
-        if exclude_ids:
-            placeholders = ",".join(str(i) for i in exclude_ids)
-            exclude_clause = f"AND id NOT IN ({placeholders})"
+        mem_exclude = ""
+        if exclude_memory_ids:
+            mem_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_memory_ids)})"
+        web_exclude = ""
+        if exclude_web_ids:
+            web_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_web_ids)})"
+        media_exclude = ""
+        if exclude_media_ids:
+            media_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_media_ids)})"
+
+        result = {}
 
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
 
-            # 1. 발화자 기억 우선 (최대 10건)
-            user_items = []
+            # 1. 기억 (유저 우선 + 나머지)
+            memory_items = []
             if user_name:
                 cursor = await db.execute(f"""
                     SELECT author, content FROM learned
                     WHERE (forgotten IS NULL OR forgotten = 0)
                       AND author LIKE ?
                       AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?)
-                      {exclude_clause}
+                      {mem_exclude}
                     LIMIT ?
                 """, (f"{user_name}%", like, like_nospace, limit))
                 for r in await cursor.fetchall():
-                    user_items.append(f"{r['author']}: {r['content']}" if r["author"] else r["content"])
+                    memory_items.append(f"{r['author']}: {r['content']}" if r["author"] else r["content"])
 
-            # 2. 통합 (지식 + 나머지 기억, 발화자 중복 제외)
-            remaining = limit - len(user_items)
-            seen = set(user_items)
-            mixed_items = []
-
+            user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
+            remaining = limit - len(memory_items)
             if remaining > 0:
-                # 지식 (knowledge_base + customs + book_knowledge)
-                for table, has_alias in [("knowledge_base", True), ("customs", True), ("book_knowledge", False)]:
-                    if has_alias:
-                        cursor = await db.execute(f"""
-                            SELECT content FROM {table}
-                            WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                               OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
-                        """, (like, like_nospace, like, like_nospace))
-                    else:
-                        cursor = await db.execute(f"""
-                            SELECT content FROM {table}
-                            WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                        """, (like, like_nospace))
-                    for r in await cursor.fetchall():
-                        if r["content"] not in seen and len(mixed_items) < remaining:
-                            mixed_items.append(r["content"])
-                            seen.add(r["content"])
-
-                # 나머지 기억 (발화자 제외)
-                user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
                 cursor = await db.execute(f"""
                     SELECT author, content FROM learned
                     WHERE (forgotten IS NULL OR forgotten = 0)
-                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                           OR author LIKE ?)
-                      {exclude_clause}
-                      {user_exclude}
-                """, (like, like_nospace, like))
+                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
+                      {mem_exclude} {user_exclude}
+                    LIMIT ?
+                """, (like, like_nospace, like, remaining))
+                seen = set(memory_items)
                 for r in await cursor.fetchall():
                     item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
-                    if item not in seen and len(mixed_items) < remaining:
-                        mixed_items.append(item)
-                        seen.add(item)
+                    if item not in seen:
+                        memory_items.append(item)
+            if memory_items:
+                result["기억"] = memory_items
 
-            return user_items + mixed_items
+            # 2. 지식
+            cursor = await db.execute("""
+                SELECT content FROM knowledge_base
+                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                   OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                LIMIT ?
+            """, (like, like_nospace, like, like_nospace, limit))
+            rows = [r["content"] for r in await cursor.fetchall()]
+            if rows:
+                result["지식"] = rows
+
+            # 3. 커스텀
+            cursor = await db.execute("""
+                SELECT content FROM customs
+                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                   OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                LIMIT ?
+            """, (like, like_nospace, like, like_nospace, limit))
+            rows = [r["content"] for r in await cursor.fetchall()]
+            if rows:
+                result["커스텀"] = rows
+
+            # 4. 웹 캐시
+            cursor = await db.execute(f"""
+                SELECT query, result FROM web_results
+                WHERE (query LIKE ? OR result LIKE ?)
+                  {web_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (like, like, limit))
+            rows = [f"[{r['query']}] {r['result']}" for r in await cursor.fetchall()]
+            if rows:
+                result["웹"] = rows
+
+            # 5. 미디어 캐시
+            cursor = await db.execute(f"""
+                SELECT filename, result FROM media_results
+                WHERE (filename LIKE ? OR result LIKE ?)
+                  {media_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (like, like, limit))
+            rows = [f"[{r['filename']}] {r['result']}" for r in await cursor.fetchall()]
+            if rows:
+                result["미디어"] = rows
+
+        return result
 
         return result
 
@@ -345,23 +377,24 @@ class LibrarianDB:
                 (query, result[:500], user_name))
             await db.commit()
 
-    async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> tuple[list[dict], list[dict]]:
-        """유저 것 limit건 + 나머지 limit건 분리 반환"""
+    async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
+        """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             user_results = []
             if user_name:
                 cursor = await db.execute(
-                    "SELECT query, result FROM web_results WHERE user_name = ? ORDER BY id DESC LIMIT ?",
+                    "SELECT id, query, result FROM web_results WHERE user_name = ? ORDER BY id DESC LIMIT ?",
                     (user_name, limit))
                 user_results = [dict(r) for r in await cursor.fetchall()]
             user_queries = {r["query"] for r in user_results}
             exclude = f"AND user_name != '{user_name}'" if user_name else ""
             cursor = await db.execute(f"""
-                SELECT query, result FROM web_results WHERE 1=1 {exclude} ORDER BY id DESC LIMIT ?
+                SELECT id, query, result FROM web_results WHERE 1=1 {exclude} ORDER BY id DESC LIMIT ?
             """, (limit,))
             other_results = [dict(r) for r in await cursor.fetchall() if r["query"] not in user_queries]
-            return user_results, other_results
+            all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
+            return user_results, other_results, all_ids
 
     async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None):
         async with aiosqlite.connect(self.path) as db:
@@ -370,8 +403,8 @@ class LibrarianDB:
                 (filename, result[:500], user_name, uploader))
             await db.commit()
 
-    async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> tuple[list[dict], list[dict]]:
-        """유저 것 limit건 + 나머지 limit건 분리 반환"""
+    async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
+        """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             exclude_clause = ""
@@ -383,7 +416,7 @@ class LibrarianDB:
             user_results = []
             if user_name:
                 cursor = await db.execute(f"""
-                    SELECT filename, result FROM media_results
+                    SELECT id, filename, result FROM media_results
                     WHERE user_name = ? {exclude_clause}
                     ORDER BY id DESC LIMIT ?
                 """, (user_name, *exclude_params, limit))
@@ -391,9 +424,10 @@ class LibrarianDB:
             user_files = {r["filename"] for r in user_results}
             user_exclude = f"AND user_name != '{user_name}'" if user_name else ""
             cursor = await db.execute(f"""
-                SELECT filename, result FROM media_results
+                SELECT id, filename, result FROM media_results
                 WHERE 1=1 {exclude_clause} {user_exclude}
                 ORDER BY id DESC LIMIT ?
             """, (*exclude_params, limit))
             other_results = [dict(r) for r in await cursor.fetchall() if r["filename"] not in user_files]
-            return user_results, other_results
+            all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
+            return user_results, other_results, all_ids

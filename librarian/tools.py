@@ -150,8 +150,10 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
 
     if name == "search":
         keyword = args.get("keyword", "")
-        exclude_ids = args.get("_exclude_memory_ids", [])
         user_name = args.get("_user_name")
+        exclude_memory_ids = args.get("_exclude_memory_ids", [])
+        exclude_web_ids = args.get("_exclude_web_ids", [])
+        exclude_media_ids = args.get("_exclude_media_ids", [])
 
         # 키워드 확장: 별칭 + 공백 분리
         keywords, aliases_used = await librarian_db.expand_keyword(keyword)
@@ -160,19 +162,23 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 if part not in keywords:
                     keywords.append(part)
 
-        # 통합 검색 (지식+기억, 발화자 우선, 중복 제외)
-        seen = set()
-        items = []
+        # 5개 카테고리 검색
+        merged = {}
         for kw in keywords:
-            for item in await librarian_db.search_all(kw, exclude_ids=exclude_ids, user_name=user_name):
-                if item not in seen:
-                    seen.add(item)
-                    items.append(item)
+            kw_result = await librarian_db.search_all(
+                kw, exclude_memory_ids=exclude_memory_ids,
+                exclude_web_ids=exclude_web_ids,
+                exclude_media_ids=exclude_media_ids,
+                user_name=user_name)
+            for cat, items in kw_result.items():
+                for item in items:
+                    if item not in merged.setdefault(cat, set()):
+                        merged.setdefault(cat, set()).add(item)
 
         result = {}
-        if items:
-            result["info"] = items[:20]
-        else:
+        for cat, items in merged.items():
+            result[cat] = list(items)[:10]
+        if not result:
             result["info"] = f"'{keyword}'에 대해 아는 게 없음."
         if aliases_used:
             result["aliases"] = aliases_used

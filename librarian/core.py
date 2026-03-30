@@ -248,8 +248,8 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
         # 최근 웹 검색 / 미디어 인식 결과
-        user_web, other_web = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
-        user_media, other_media = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
+        user_web, other_web, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
+        user_media, other_media, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
 
         cache_sections = []
         user_lines = []
@@ -431,6 +431,8 @@ class AILibrarianBot(discord.Client):
                     tool_args["_user_name"] = user_name
                 if fc.name == "search":
                     tool_args["_exclude_memory_ids"] = memory_ids
+                    tool_args["_exclude_web_ids"] = web_ids
+                    tool_args["_exclude_media_ids"] = media_ids
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
