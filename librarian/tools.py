@@ -38,7 +38,7 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="save_memory",
-            description="기억할 만한 정보를 저장한다.",
+            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모 등.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -83,7 +83,7 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="add_alias",
-            description="별칭을 등록한다. '~를 ~라고도 불러', '~의 별칭은 ~' 같은 말을 할 때 사용.",
+            description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
