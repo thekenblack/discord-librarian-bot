@@ -308,9 +308,18 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
             logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # 웹/미디어 ID 수집 (search 중복 제거용, 프롬프트에는 안 넣음)
-        _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
-        _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
+        # 웹/미디어 캐시 (프롬프트 + search 중복 제거용)
+        web_user, web_other, web_ids = await self.librarian_db.get_recent_web_results(5, user_name=user_name)
+        media_user, media_other, media_ids = await self.librarian_db.get_recent_media_results(5, exclude_filenames=seen_filenames or [], user_name=user_name)
+        cache_lines = []
+        web_all = web_user + web_other
+        if web_all:
+            cache_lines.append("[웹] " + " | ".join(f"{w['query']}: {w['result'][:80]}" for w in web_all[:5]))
+        media_all = media_user + media_other
+        if media_all:
+            cache_lines.append("[미디어] " + " | ".join(f"media_id:{m['id']} {m['filename']}: {m['result'][:80]}" for m in media_all[:5]))
+        if cache_lines:
+            parts.append("## 최근 인식\n" + "\n".join(cache_lines))
 
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.character_text)
