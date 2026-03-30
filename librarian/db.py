@@ -386,7 +386,7 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 "INSERT INTO web_results (query, result, user_name) VALUES (?, ?, ?)",
-                (query, result[:500], user_name))
+                (query, result, user_name))
             await db.commit()
 
     async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
@@ -412,7 +412,7 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 "INSERT INTO media_results (filename, result, user_name, uploader) VALUES (?, ?, ?, ?)",
-                (filename, result[:500], user_name, uploader))
+                (filename, result, user_name, uploader))
             await db.commit()
 
     async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
