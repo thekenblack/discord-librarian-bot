@@ -490,13 +490,11 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("모든 API 키 소진")
 
-    async def _build_reply_chain(self, message, max_depth=10) -> list[str]:
-        """답글 체인을 거슬러 올라가서 맥락 수집"""
+    async def _build_reply_chain(self, message) -> list[str]:
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""
         chain = []
         current = message
-        for _ in range(max_depth):
-            if not current.reference:
-                break
+        while current.reference:
             ref = current.reference.resolved
             if not ref and current.reference.message_id:
                 try:
@@ -507,7 +505,6 @@ class AILibrarianBot(discord.Client):
                 break
             name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
             content = ref.content[:150]
-            # 멘션 태그를 이름으로 치환
             for u in ref.mentions:
                 content = content.replace(f"<@{u.id}>", f"@{u.display_name}")
                 content = content.replace(f"<@!{u.id}>", f"@{u.display_name}")
@@ -517,15 +514,20 @@ class AILibrarianBot(discord.Client):
             chain.append(f"{name}: {content}")
             current = ref
         chain.reverse()
+
+        # 10건 초과 시 앞5 + 뒤5
+        if len(chain) > 10:
+            head = chain[:5]
+            tail = chain[-5:]
+            chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
+
         return chain
 
     async def _build_pre_context(self, message, limit=10) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
-        # 답글 체인이 있으면 체인 시작점을 찾음
+        # 답글 체인이 있으면 체인 시작점(맨 처음)을 찾음
         anchor = message
-        for _ in range(5):
-            if not anchor.reference:
-                break
+        while anchor.reference:
             ref = anchor.reference.resolved
             if not ref and anchor.reference.message_id:
                 try:
