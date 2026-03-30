@@ -159,7 +159,7 @@ class LibrarianDB:
 
     # ── 통합 검색 ─────────────────────────────────────────
 
-    async def search_all(self, keyword: str, limit: int = 5) -> dict:
+    async def search_all(self, keyword: str, limit: int = 10) -> dict:
         """기초지식 + 학습을 통합 검색"""
         like = f"%{keyword}%"
         like_nospace = f"%{keyword.replace(' ', '')}%"

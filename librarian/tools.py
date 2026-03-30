@@ -142,8 +142,6 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                     if item not in seen_content:
                         seen_content.add(item)
                         result.setdefault(key, []).append(item)
-        for key in result:
-            result[key] = result[key][:5]
 
         if not result:
             return json.dumps({"result": f"'{keyword}' 관련 정보 없음."}, ensure_ascii=False)
