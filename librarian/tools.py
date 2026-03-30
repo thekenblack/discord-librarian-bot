@@ -140,7 +140,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
     if name == "search":
         keyword = args.get("keyword", "")
         exclude_ids = args.get("_exclude_memory_ids", [])
-        result = {}
+        user_name = args.get("_user_name")
 
         # 키워드 확장: 별칭 + 공백 분리
         keywords = await librarian_db.expand_keyword(keyword)
@@ -149,19 +149,18 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 if part not in keywords:
                     keywords.append(part)
 
-        # 지식 + 기억 검색 (도서는 프롬프트에 이미 있으므로 제외)
-        seen_content = set()
+        # 통합 검색 (지식+기억, 발화자 우선, 중복 제외)
+        seen = set()
+        items = []
         for kw in keywords:
-            kw_result = await librarian_db.search_all(kw, exclude_ids=exclude_ids, user_name=args.get("_user_name"))
-            for key, items in kw_result.items():
-                for item in items:
-                    if item not in seen_content:
-                        seen_content.add(item)
-                        result.setdefault(key, []).append(item)
+            for item in await librarian_db.search_all(kw, exclude_ids=exclude_ids, user_name=user_name):
+                if item not in seen:
+                    seen.add(item)
+                    items.append(item)
 
-        if not result:
-            return json.dumps({"result": f"'{keyword}' 관련 정보 없음."}, ensure_ascii=False)
-        return json.dumps(result, ensure_ascii=False)
+        if not items:
+            return json.dumps({"info": f"'{keyword}'에 대해 아는 게 없음."}, ensure_ascii=False)
+        return json.dumps({"info": items[:20]}, ensure_ascii=False)
 
     elif name == "deliver":
         file_id = args.get("file_id")

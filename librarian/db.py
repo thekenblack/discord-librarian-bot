@@ -160,11 +160,10 @@ class LibrarianDB:
     # ── 통합 검색 ─────────────────────────────────────────
 
     async def search_all(self, keyword: str, limit: int = 10,
-                         exclude_ids: list[int] = None, user_name: str = None) -> dict:
-        """기초지식 + 학습을 통합 검색 (발화자 우선)"""
+                         exclude_ids: list[int] = None, user_name: str = None) -> list[str]:
+        """지식 + 기억 통합 검색 (발화자 우선). 하나의 리스트로 반환."""
         like = f"%{keyword}%"
         like_nospace = f"%{keyword.replace(' ', '')}%"
-        result = {}
 
         exclude_clause = ""
         if exclude_ids:
@@ -174,20 +173,8 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
 
-            # 기초 지식
-            cursor = await db.execute("""
-                SELECT content FROM knowledge_base
-                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                   OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
-                LIMIT ?
-            """, (like, like_nospace, like, like_nospace, limit))
-            rows = await cursor.fetchall()
-            if rows:
-                result["지식"] = [r["content"] for r in rows]
-
-            # 발화자 기억 (우선)
-            half = limit // 2
-            user_rows = []
+            # 1. 발화자 기억 우선 (최대 10건)
+            user_items = []
             if user_name:
                 cursor = await db.execute(f"""
                     SELECT author, content FROM learned
@@ -196,29 +183,44 @@ class LibrarianDB:
                       AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?)
                       {exclude_clause}
                     LIMIT ?
-                """, (f"{user_name}%", like, like_nospace, half))
-                user_rows = await cursor.fetchall()
+                """, (f"{user_name}%", like, like_nospace, limit))
+                for r in await cursor.fetchall():
+                    user_items.append(f"{r['author']}: {r['content']}" if r["author"] else r["content"])
 
-            # 나머지 기억 (발화자 제외)
-            other_limit = limit - len(user_rows)
-            user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
-            cursor = await db.execute(f"""
-                SELECT author, content FROM learned
-                WHERE (forgotten IS NULL OR forgotten = 0)
-                  AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                       OR author LIKE ?)
-                  {exclude_clause}
-                  {user_exclude}
-                LIMIT ?
-            """, (like, like_nospace, like, other_limit))
-            other_rows = await cursor.fetchall()
+            # 2. 통합 (지식 + 나머지 기억, 발화자 중복 제외)
+            remaining = limit - len(user_items)
+            seen = set(user_items)
+            mixed_items = []
 
-            all_rows = list(user_rows) + list(other_rows)
-            if all_rows:
-                result["기억"] = [
-                    f"{r['author']}: {r['content']}" if r["author"] else r["content"]
-                    for r in all_rows
-                ]
+            if remaining > 0:
+                # 지식
+                cursor = await db.execute("""
+                    SELECT content FROM knowledge_base
+                    WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                       OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                """, (like, like_nospace, like, like_nospace))
+                for r in await cursor.fetchall():
+                    if r["content"] not in seen and len(mixed_items) < remaining:
+                        mixed_items.append(r["content"])
+                        seen.add(r["content"])
+
+                # 나머지 기억 (발화자 제외)
+                user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
+                cursor = await db.execute(f"""
+                    SELECT author, content FROM learned
+                    WHERE (forgotten IS NULL OR forgotten = 0)
+                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                           OR author LIKE ?)
+                      {exclude_clause}
+                      {user_exclude}
+                """, (like, like_nospace, like))
+                for r in await cursor.fetchall():
+                    item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
+                    if item not in seen and len(mixed_items) < remaining:
+                        mixed_items.append(item)
+                        seen.add(item)
+
+            return user_items + mixed_items
 
         return result
 
