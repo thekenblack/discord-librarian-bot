@@ -345,12 +345,30 @@ class LibrarianDB:
                 (query, result[:500], user_name))
             await db.commit()
 
-    async def get_recent_web_results(self, limit: int = 5) -> list[dict]:
+    async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT query, result FROM web_results ORDER BY id DESC LIMIT ?", (limit,))
-            return [dict(r) for r in await cursor.fetchall()]
+            results = []
+            half = limit // 2
+            # 유저 우선
+            if user_name:
+                cursor = await db.execute(
+                    "SELECT query, result FROM web_results WHERE user_name = ? ORDER BY id DESC LIMIT ?",
+                    (user_name, half))
+                results = [dict(r) for r in await cursor.fetchall()]
+            # 나머지
+            remaining = limit - len(results)
+            seen = {r["query"] for r in results}
+            exclude = f"AND user_name != '{user_name}'" if user_name else ""
+            cursor = await db.execute(f"""
+                SELECT query, result FROM web_results
+                WHERE 1=1 {exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (remaining,))
+            for r in await cursor.fetchall():
+                if r["query"] not in seen:
+                    results.append(dict(r))
+            return results
 
     async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None):
         async with aiosqlite.connect(self.path) as db:
@@ -359,15 +377,35 @@ class LibrarianDB:
                 (filename, result[:500], user_name, uploader))
             await db.commit()
 
-    async def get_recent_media_results(self, limit: int = 5, exclude_filenames: list[str] = None) -> list[dict]:
+    async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
+            exclude_clause = ""
             if exclude_filenames:
                 placeholders = ",".join("?" for _ in exclude_filenames)
-                cursor = await db.execute(
-                    f"SELECT filename, result FROM media_results WHERE filename NOT IN ({placeholders}) ORDER BY id DESC LIMIT ?",
-                    (*exclude_filenames, limit))
-            else:
-                cursor = await db.execute(
-                    "SELECT filename, result FROM media_results ORDER BY id DESC LIMIT ?", (limit,))
-            return [dict(r) for r in await cursor.fetchall()]
+                exclude_clause = f"AND filename NOT IN ({placeholders})"
+            exclude_params = list(exclude_filenames) if exclude_filenames else []
+
+            results = []
+            half = limit // 2
+            # 유저 우선
+            if user_name:
+                cursor = await db.execute(f"""
+                    SELECT filename, result FROM media_results
+                    WHERE user_name = ? {exclude_clause}
+                    ORDER BY id DESC LIMIT ?
+                """, (user_name, *exclude_params, half))
+                results = [dict(r) for r in await cursor.fetchall()]
+            # 나머지
+            remaining = limit - len(results)
+            seen = {r["filename"] for r in results}
+            user_exclude = f"AND user_name != '{user_name}'" if user_name else ""
+            cursor = await db.execute(f"""
+                SELECT filename, result FROM media_results
+                WHERE 1=1 {exclude_clause} {user_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (*exclude_params, remaining))
+            for r in await cursor.fetchall():
+                if r["filename"] not in seen:
+                    results.append(dict(r))
+            return results
