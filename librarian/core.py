@@ -547,15 +547,24 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
-    def _is_repeat(self, history: list, reply: str) -> bool:
-        """히스토리 내 봇 답변 중 동일한 게 있는지 확인"""
+    def _is_repeat(self, history: list, reply: str, threshold: float = 0.8) -> bool:
+        """히스토리 내 봇 답변과 유사한 게 있는지 확인 (단어 기반 유사도)"""
         curr = self._normalize_for_compare(reply)
         if not curr:
+            return False
+        curr_words = set(curr.split())
+        if not curr_words:
             return False
         for h in history:
             if h.role == "model" and h.parts and h.parts[0].text:
                 prev = self._normalize_for_compare(h.parts[0].text)
-                if prev == curr:
+                prev_words = set(prev.split())
+                if not prev_words:
+                    continue
+                # 교집합 / 합집합 (Jaccard 유사도)
+                overlap = len(curr_words & prev_words)
+                total = len(curr_words | prev_words)
+                if total > 0 and overlap / total >= threshold:
                     return True
         return False
 
