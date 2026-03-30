@@ -503,11 +503,11 @@ class AILibrarianBot(discord.Client):
                     break
             if not ref:
                 break
-            name = self.persona.name if (self.user and ref.author.id == self.user.id) else ref.author.display_name
+            if self.user and ref.author.id == self.user.id:
+                name = self.persona.name
+            else:
+                name = f"{ref.author.display_name}(<@{ref.author.id}>)"
             content = ref.content[:150]
-            for u in ref.mentions:
-                content = content.replace(f"<@{u.id}>", f"@{u.display_name}")
-                content = content.replace(f"<@!{u.id}>", f"@{u.display_name}")
             extras = self._extract_extras(ref)
             if extras:
                 content = f"{content} {extras}" if content else extras
@@ -541,11 +541,11 @@ class AILibrarianBot(discord.Client):
         # anchor 직전 메시지들 가져오기
         lines = []
         async for msg in anchor.channel.history(limit=limit, before=anchor):
-            name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
+            if self.user and msg.author.id == self.user.id:
+                name = self.persona.name
+            else:
+                name = f"{msg.author.display_name}(<@{msg.author.id}>)"
             content = msg.content[:150]
-            for u in msg.mentions:
-                content = content.replace(f"<@{u.id}>", f"@{u.display_name}")
-                content = content.replace(f"<@!{u.id}>", f"@{u.display_name}")
             lines.append(f"{name}: {content}")
         lines.reverse()
         return lines
