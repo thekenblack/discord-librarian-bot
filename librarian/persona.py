@@ -43,9 +43,17 @@ class Persona:
             with open(reminder_path, encoding="utf-8") as f:
                 reminder_text = f.read().replace("{name}", name)
 
+        # 외양
+        character_path = os.path.join(prompts_dir, "character.txt")
+        character_text = ""
+        if os.path.exists(character_path):
+            with open(character_path, encoding="utf-8") as f:
+                character_text = f.read().replace("{name}", name)
+
         self.persona_text: str = persona_text
         self.prompt_text: str = prompt_text
         self.reminder_text: str = reminder_text
+        self.character_text: str = character_text
 
         # 에러 메시지
         self._messages = [

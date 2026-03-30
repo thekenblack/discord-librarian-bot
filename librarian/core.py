@@ -252,6 +252,7 @@ class AILibrarianBot(discord.Client):
             parts.append("## 최근 조회\n" + "\n".join(cache_lines))
 
         parts.append(self.persona.reminder_text)
+        parts.append(self.persona.character_text)
 
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
