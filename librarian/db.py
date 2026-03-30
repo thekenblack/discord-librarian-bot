@@ -58,6 +58,26 @@ class LibrarianDB:
                 )
             """)
 
+            # 웹 검색 결과 캐시
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS web_results (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query      TEXT NOT NULL,
+                    result     TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            # 미디어 인식 결과 캐시
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS media_results (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename   TEXT NOT NULL,
+                    result     TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # 별칭 (검색 확장용, 쌍 기반)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS aliases (
@@ -315,3 +335,33 @@ class LibrarianDB:
                 (content, author, now))
             await db.commit()
             return cursor.lastrowid
+
+    # ── 웹 검색 / 미디어 인식 캐시 ────────────────────────
+
+    async def save_web_result(self, query: str, result: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO web_results (query, result) VALUES (?, ?)",
+                (query, result[:500]))
+            await db.commit()
+
+    async def get_recent_web_results(self, limit: int = 5) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT query, result FROM web_results ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def save_media_result(self, filename: str, result: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO media_results (filename, result) VALUES (?, ?)",
+                (filename, result[:500]))
+            await db.commit()
+
+    async def get_recent_media_results(self, limit: int = 5) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT filename, result FROM media_results ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]

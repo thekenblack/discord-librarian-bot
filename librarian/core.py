@@ -221,6 +221,17 @@ class AILibrarianBot(discord.Client):
         if reply_chain:
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
+        # 최근 웹 검색 / 미디어 인식 결과
+        recent_web = await self.librarian_db.get_recent_web_results(5)
+        recent_media = await self.librarian_db.get_recent_media_results(5)
+        cache_lines = []
+        for w in recent_web:
+            cache_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
+        for m in recent_media:
+            cache_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
+        if cache_lines:
+            parts.append("## 최근 조회\n" + "\n".join(cache_lines))
+
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.persona_text)
 
@@ -300,8 +311,7 @@ class AILibrarianBot(discord.Client):
 
                     if web_result:
                         logger.info(f"웹 검색 결과: {web_result[:100]}")
-                        # 자체 학습: 웹 검색 결과를 learned에 저장
-                        await self.librarian_db.save(web_result[:300], author="web_search")
+                        await self.librarian_db.save_web_result(query, web_result)
                         tool_data = {"result": web_result[:500]}
                     else:
                         tool_data = {"result": f"'{query}' 검색 결과 없음"}
@@ -347,8 +357,7 @@ class AILibrarianBot(discord.Client):
                                 )
                                 media_result = self._extract_reply(media_response)
                                 if media_result:
-                                    await self.librarian_db.save(
-                                        f"[{att.filename}] {media_result[:250]}", author="media")
+                                    await self.librarian_db.save_media_result(att.filename, media_result)
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:
