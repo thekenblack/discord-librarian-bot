@@ -490,7 +490,7 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("모든 API 키 소진")
 
-    async def _build_reply_chain(self, message, max_depth=5) -> list[str]:
+    async def _build_reply_chain(self, message, max_depth=10) -> list[str]:
         """답글 체인을 거슬러 올라가서 맥락 수집"""
         chain = []
         current = message
@@ -519,7 +519,7 @@ class AILibrarianBot(discord.Client):
         chain.reverse()
         return chain
 
-    async def _build_pre_context(self, message, limit=5) -> list[str]:
+    async def _build_pre_context(self, message, limit=10) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
         # 답글 체인이 있으면 체인 시작점을 찾음
         anchor = message
