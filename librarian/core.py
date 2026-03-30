@@ -17,7 +17,6 @@ from librarian.db import LibrarianDB
 from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_BUFFER_SIZE, AI_MAX_OUTPUT_TOKENS
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
-from librarian import chat_log
 from librarian import server_log
 
 logger = logging.getLogger("AILibrarian")
@@ -75,7 +74,6 @@ class AILibrarianBot(discord.Client):
         await self.librarian_db.cleanup_learned()
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
-        chat_log.log_startup(self.persona.name, self.persona.prompt_text, len(self._gemini_clients))
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
         ))
@@ -156,21 +154,6 @@ class AILibrarianBot(discord.Client):
 
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
-
-        chat_log.log_chat(
-            guild=guild_name,
-            channel=channel_name,
-            user_id=str(message.author.id),
-            user_name=message.author.display_name,
-            user_text=text,
-            reply_text=reply_text,
-            tools_called=_meta["tools_called"],
-            tool_results=_meta["tool_results"],
-            has_file=file_to_send is not None,
-            retries=0,
-            web_search=False,
-            error=_meta["error"],
-        )
 
         if file_to_send:
             await message.reply(reply_text, file=file_to_send)
