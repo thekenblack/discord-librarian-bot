@@ -14,16 +14,16 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
 
-from library_db import LibraryDB
-from librarian_db import LibrarianDB
-from config import UPLOAD_DIR, ADMIN_IDS, LIGHTNING_ADDRESS
-from ai.persona import Persona
-from ai.tools import library_tools, execute_tool
+from library.db import LibraryDB
+from librarian.db import LibrarianDB
+from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_BUFFER_SIZE, AI_MAX_OUTPUT_TOKENS
+from librarian.persona import Persona
+from librarian.tools import library_tools, execute_tool
 
 logger = logging.getLogger("AILibrarian")
 
-MODEL = "gemini-2.5-flash-lite"
-BUFFER_SIZE = 30
+MODEL = GEMINI_MODEL
+BUFFER_SIZE = AI_BUFFER_SIZE
 
 
 class AILibrarianBot(discord.Client):
@@ -45,8 +45,8 @@ class AILibrarianBot(discord.Client):
         self._ready = False
 
         # 기억 트리거 로드
-        ai_dir = os.path.join(os.path.dirname(__file__), "ai")
-        self._memory_triggers = self._load_patterns(os.path.join(ai_dir, "memory_triggers.txt"), ["기억해"])
+        librarian_dir = os.path.dirname(os.path.abspath(__file__))
+        self._memory_triggers = self._load_patterns(os.path.join(librarian_dir, "memory_triggers.txt"), ["기억해"])
 
         # 에러 메시지 목록 (히스토리 필터용)
         self._error_messages = set(
@@ -141,11 +141,9 @@ class AILibrarianBot(discord.Client):
 
     async def _build_context(self, channel_id: int, user_id: str, guild) -> dict:
         """현재 채널은 API로, 다른 채널은 버퍼로 (현재 채널은 버퍼에서 제외)"""
-        # 1. 현재 채널 - API에서 직접
         current_channel = self.get_channel(channel_id)
         ch_lines = await self._fetch_channel_history(current_channel, BUFFER_SIZE) if current_channel else []
 
-        # 2. 서버 전체 - 버퍼 (현재 채널 제외)
         current_ch_name = getattr(current_channel, "name", "") if current_channel else ""
         global_lines = []
         for msg in self.global_buffer:
@@ -155,7 +153,6 @@ class AILibrarianBot(discord.Client):
             global_lines.append(f"[#{msg['channel_name']}] {name}: {msg['text']}")
         global_lines = global_lines[-BUFFER_SIZE:]
 
-        # 3. 유저 최근 발언 - 현재 채널 히스토리에서 필터
         user = self.get_user(int(user_id))
         user_name = user.display_name if user else user_id
         user_lines = [l for l in ch_lines if l.startswith(f"{user_name}")][-5:]
@@ -194,20 +191,18 @@ class AILibrarianBot(discord.Client):
 
     async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
         """Google Search로 웹 검색 후 정리된 답변 반환"""
-        # 답글 맥락 제거
         if "[원본:" in query:
             idx = query.find("]")
             if idx != -1:
                 query = query[idx + 1:].strip()
-        from ai.tools import google_search_tool
+        from librarian.tools import google_search_tool
         web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
         web_config = types.GenerateContentConfig(
             system_instruction=prompt,
             tools=google_search_tool,
-            max_output_tokens=500,
+            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
             temperature=1.0,
         )
-        # 멀티 키 시도
         for _ in range(len(self._gemini_clients) * 2):
             today = date.today()
             self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
@@ -243,7 +238,7 @@ class AILibrarianBot(discord.Client):
     async def on_ready(self):
         await self.library_db.init()
         await self.librarian_db.init()
-        knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge")
+        knowledge_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
         await self.librarian_db.load_knowledge_from_files(knowledge_dir)
         await self.librarian_db.cleanup_learned()
         logger.info(f"{self.user} 온라인! ({self.persona.name})")
@@ -253,11 +248,9 @@ class AILibrarianBot(discord.Client):
         self._ready = True
 
     async def on_message(self, message: discord.Message):
-        # ready 전 메시지 무시 (밀린 메시지 방지)
         if not self._ready:
             return
 
-        # 다른 봇 메시지 무시 (자신은 버퍼에 저장)
         channel_name = getattr(message.channel, "name", "DM")
 
         if message.author.bot:
@@ -271,7 +264,6 @@ class AILibrarianBot(discord.Client):
                 )
             return
 
-        # 모든 유저 메시지를 버퍼에 저장 (멘션 태그를 이름으로 치환)
         text = message.content
         if message.mentions:
             for user in message.mentions:
@@ -284,7 +276,6 @@ class AILibrarianBot(discord.Client):
             text,
         )
 
-        # 멘션 체크 (유저 멘션 또는 역할 멘션)
         bot_mentioned = self.user and self.user in message.mentions
         role_mentioned = False
         if not bot_mentioned and self.user and message.guild:
@@ -295,24 +286,19 @@ class AILibrarianBot(discord.Client):
         if not bot_mentioned and not role_mentioned:
             return
 
-        # 멘션 제거해서 실제 메시지 추출
         for mention in [f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
             text = text.replace(mention, "")
-        # 역할 멘션 태그도 제거
         for role in message.role_mentions:
             text = text.replace(f"<@&{role.id}>", "")
         text = text.strip()
 
-        # 멘션 메시지의 첨부/임베드 정보 추가
         msg_extras = self._extract_extras(message)
         if msg_extras:
             text = f"{text} {msg_extras}" if text else msg_extras
 
-        # 빈 멘션이면 빈 문자열 그대로 전달 (프롬프트에서 처리)
         if not text:
             text = ""
 
-        # 답글이면 원본 메시지 맥락 추가
         if message.reference:
             ref_msg = message.reference.resolved
             if not ref_msg and message.reference.message_id:
@@ -322,26 +308,22 @@ class AILibrarianBot(discord.Client):
                     pass
             if ref_msg:
                 ref_content = ref_msg.content[:100]
-                # 멘션 태그를 이름으로 치환
                 for u in ref_msg.mentions:
                     ref_content = ref_content.replace(f"<@{u.id}>", f"@{u.display_name}")
                     ref_content = ref_content.replace(f"<@!{u.id}>", f"@{u.display_name}")
                 ref_extras = self._extract_extras(ref_msg)
                 if ref_extras:
                     ref_content = f"{ref_content} {ref_extras}" if ref_content else ref_extras
-                # 에러 메시지에 답글한 경우 맥락 제거
                 if ref_msg.content not in self._error_messages:
                     ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
                     text = f"[원본: {ref_name}이 쓴 \"{ref_content}\"] {text}"
 
-        # 웹 검색 플래그
         web_keywords = ["검색해", "구글링해", "웹검색", "구글 검색",
                         "조사해", "알아봐",
                         "뉴스 알려", "소식 알려", "시세 알려", "날씨 알려"]
-        text_normalized = " ".join(text.split())  # 공백 정규화
+        text_normalized = " ".join(text.split())
         use_web = any(kw in text_normalized for kw in web_keywords)
 
-        # 채널별 락으로 동시 요청 방지
         ch_id = message.channel.id
         if ch_id not in self._channel_locks:
             self._channel_locks[ch_id] = asyncio.Lock()
@@ -357,7 +339,6 @@ class AILibrarianBot(discord.Client):
                     use_web=use_web,
                 )
 
-        # 기억 트리거 감지 (AI가 이미 저장했으면 건너뜀)
         if text and not ai_saved:
             clean_text = text
             if self.user:
@@ -365,20 +346,15 @@ class AILibrarianBot(discord.Client):
                     clean_text = clean_text.replace(tag, "").strip()
             text_lower = text.lower()
             display = message.author.display_name
-            uid = str(message.author.id)
 
-            # 질문 판별
             has_question = "?" in text
             confirm_patterns = ["알았어", "알았지", "알겠어", "알겠지", "알겠니", "알겠냐"]
             is_question = has_question and not any(cp in text_lower for cp in confirm_patterns)
 
-            # 기억 트리거
             if not is_question and any(kw in text_lower for kw in self._memory_triggers):
                 await self.librarian_db.save(f"{display}: {clean_text}")
                 logger.info(f"학습 저장: {clean_text}")
 
-            # 설명식 패턴 (트리거 없어도 저장)
-            # 조건: 10자 이상, 질문 아님, "~은/는/이/가 ~이야/다/임" 패턴
             elif (len(clean_text) >= 10
                   and "?" not in clean_text
                   and "[원본:" not in clean_text
@@ -387,12 +363,10 @@ class AILibrarianBot(discord.Client):
                 await self.librarian_db.save(clean_text)
                 logger.info(f"설명식 학습 저장: {clean_text}")
 
-        # 빈 응답(안전 필터 차단 등)이면 무시
         if not reply_text and not file_to_send:
             logger.warning("모든 시도 실패 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
-        # 응답 로그
         guild_name = message.guild.name if message.guild else "DM"
         channel_name = getattr(message.channel, "name", "DM")
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
@@ -411,16 +385,10 @@ class AILibrarianBot(discord.Client):
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
 
-        # 프롬프트 조립: 페르소나 → 도구 → 맥락 → 도구 → 페르소나
         parts = []
-
-        # 1. 페르소나 (앞)
         parts.append(self.persona.persona_text)
-
-        # 2. 도구/규칙 (앞)
         parts.append(self.persona.prompt_text)
 
-        # 3. 맥락
         admin_names = []
         if guild:
             for aid in ADMIN_IDS:
@@ -436,8 +404,8 @@ class AILibrarianBot(discord.Client):
             tz_name = os.getenv("TZ", "Asia/Seoul")
             tz_info = zoneinfo.ZoneInfo(tz_name)
             now = dt.now(tz_info)
-            utc_offset = now.strftime("%z")  # "+0900"
-            utc_str = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"  # "UTC+09:00"
+            utc_offset = now.strftime("%z")
+            utc_str = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
         except Exception:
             now = dt.now()
             utc_str = ""
@@ -455,16 +423,12 @@ class AILibrarianBot(discord.Client):
         if ctx["channel"]:
             parts.append(f"## 현재 채널 대화\n{ctx['channel']}")
 
-        # 4. 도구 리마인드 (뒤)
         parts.append(self.persona.reminder_text)
-
-        # 5. 페르소나 (뒤)
         parts.append(self.persona.persona_text)
 
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
 
-        # 유저 메시지 구성
         if user_text:
             user_content = f"{user_name}: {user_text}"
         else:
@@ -474,20 +438,18 @@ class AILibrarianBot(discord.Client):
 
         file_to_send = None
         ai_saved = False
-        history_snapshot = len(history)  # 롤백 지점
+        history_snapshot = len(history)
 
         def _gen_config():
             return types.GenerateContentConfig(
                 system_instruction=dynamic_prompt,
                 tools=library_tools,
-                max_output_tokens=500,
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                 temperature=0.8,
             )
 
         def _next_client():
-            """일일 한도가 안 죽은 다음 클라이언트 반환. 전부 죽으면 None."""
             today = date.today()
-            # 만료일 지난 키 복구
             self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
             for _ in range(len(self._gemini_clients)):
                 idx = self._client_index
@@ -497,7 +459,6 @@ class AILibrarianBot(discord.Client):
             return None, None
 
         def _call_gemini(contents):
-            """살아있는 키로 호출, 실패 시 다음 키로 재시도 (최대 키 수 × 2)"""
             last_err = None
             max_attempts = len(self._gemini_clients) * 2
             for _ in range(max_attempts):
@@ -510,7 +471,6 @@ class AILibrarianBot(discord.Client):
                     )
                 except ClientError as e:
                     if e.status == "INVALID_ARGUMENT":
-                        # 400 에러는 요청 자체가 잘못됨 - 재시도 의미 없음
                         raise
                     if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
                         self._dead_until[idx] = date.today() + timedelta(days=1)
@@ -528,8 +488,6 @@ class AILibrarianBot(discord.Client):
             raise ClientError("모든 API 키 소진")
 
         try:
-            # 웹 검색 모드
-            # past_replies 구축 (모든 경로에서 사용)
             def _normalize(t):
                 return t.replace("\ufe0f", "").strip()
 
@@ -550,7 +508,6 @@ class AILibrarianBot(discord.Client):
                 logger.info("웹 검색 모드")
                 reply = await self._web_search(user_text, dynamic_prompt, past_replies)
                 if not reply:
-                    # 맥락 제거 후 재시도
                     logger.info("웹 검색 재시도 (맥락 제거)")
                     clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
                     clean_prompt = "\n\n".join(p for p in clean_parts if p)
@@ -566,7 +523,6 @@ class AILibrarianBot(discord.Client):
 
             response = _call_gemini(history)
 
-            # function call 루프 (최대 5회 - 기억 조회+저장+도서관 조합)
             for _ in range(5):
                 if not response.candidates or not response.candidates[0].content.parts:
                     break
@@ -582,7 +538,6 @@ class AILibrarianBot(discord.Client):
                 if fc.name in ("save_memory", "add_knowledge"):
                     ai_saved = True
 
-                # AI가 웹 검색이 필요하다고 판단
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                     logger.info(f"AI 판단 웹 검색: {query}")
@@ -603,11 +558,8 @@ class AILibrarianBot(discord.Client):
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
 
-                # search 결과 없으면 그대로 Gemini에게 돌려줌 (없다고 답하게)
-
-                # send_file 액션: 실제 파일 전송 준비
                 if tool_data.get("_action") == "send_file":
-                    save_path = os.path.join(UPLOAD_DIR, tool_data["stored_name"])
+                    save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
                         await self.library_db.increment_download(tool_data["file_id"])
@@ -624,16 +576,13 @@ class AILibrarianBot(discord.Client):
                 try:
                     response = _call_gemini(history)
                 except Exception:
-                    # API 실패 시 히스토리 전체 폐기
                     self.chat_histories[channel_id] = []
                     raise
 
-            # 안전 필터 차단 체크
             if not response.candidates or not response.candidates[0].content.parts:
                 logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
-                return "", None
+                return "", None, False
 
-            # 모든 텍스트 parts를 정리해서 합침
             reply_parts = []
             for part in response.candidates[0].content.parts:
                 if part.text:
@@ -643,25 +592,21 @@ class AILibrarianBot(discord.Client):
                         reply_parts.append(cleaned)
             reply = "\n".join(reply_parts) if reply_parts else ""
 
-            # 반복 방지
             norm_reply = _normalize(reply) if reply else ""
             logger.info(f"반복 비교: reply={norm_reply[:50] if norm_reply else '없음'}... past={len(past_replies)}개")
             if norm_reply and norm_reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
-                # 히스토리 롤백
                 self.chat_histories[channel_id] = []
-                # 채널 대화 없는 프롬프트로 재구성
                 clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
                 clean_prompt = "\n\n".join(p for p in clean_parts if p)
                 def _clean_config():
                     return types.GenerateContentConfig(
                         system_instruction=clean_prompt,
                         tools=library_tools,
-                        max_output_tokens=500,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=0.9,
                     )
                 try:
-                    # 히스토리 없이 유저 메시지만으로 재시도
                     clean_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
                     def _retry_call(contents):
@@ -681,7 +626,6 @@ class AILibrarianBot(discord.Client):
 
                     response = _retry_call(clean_history)
                     if response:
-                        # 도구 호출 루프
                         for _ in range(5):
                             if not response.candidates or not response.candidates[0].content.parts:
                                 break
@@ -693,7 +637,6 @@ class AILibrarianBot(discord.Client):
                                 break
                             logger.info(f"도구 호출 (재시도): {fc.name}({fc.args})")
 
-                            # 재시도에서도 web_search 처리
                             if fc.name == "web_search":
                                 query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                                 logger.info(f"재시도 웹 검색: {query}")
@@ -720,7 +663,6 @@ class AILibrarianBot(discord.Client):
                                 if cleaned:
                                     reply_parts.append(cleaned)
                         reply = "\n".join(reply_parts) if reply_parts else ""
-                        # 재시도에서도 같은 답이면 에러
                         if reply and _normalize(reply) in past_replies:
                             logger.warning(f"2차 재시도에서도 반복: {reply[:50]}...")
                             reply = ""
@@ -728,7 +670,7 @@ class AILibrarianBot(discord.Client):
                     logger.error(f"재시도 실패: {e}")
                     reply = ""
 
-            # 3차: 웹 검색 폴백 (temperature 1.0)
+            # 3차: 웹 검색 폴백
             if not reply and user_text:
                 logger.info("3차 웹 검색 폴백")
                 clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
@@ -751,7 +693,6 @@ class AILibrarianBot(discord.Client):
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
-            # 히스토리 롤백 (도구 호출 중 꼬인 것 복구)
             self.chat_histories[channel_id] = []
             if e.status == "RESOURCE_EXHAUSTED":
                 msg = str(e)

@@ -1,7 +1,12 @@
-__pycache__
-/.env
-*.db
-/uploads
+__pycache__/
+.env
+data/
+files/
+logs/
+venv/
+
+# 구 구조 잔여 (마이그레이션 후 삭제됨)
+uploads/
+backups/
 *.log
-/venv
-/backups
+*.db

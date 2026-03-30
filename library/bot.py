@@ -1,5 +1,5 @@
 """
-Discord Librarian Bot
+Discord Library Bot
 """
 
 import discord
@@ -8,7 +8,7 @@ from discord.ext import commands
 import logging
 import traceback
 import sys
-from library_db import LibraryDB
+from library.db import LibraryDB
 from config import BOT_TOKEN, GUILD_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -16,7 +16,7 @@ logging.getLogger("discord.client").setLevel(logging.ERROR)
 logging.getLogger("discord.gateway").setLevel(logging.WARNING)
 logging.getLogger("discord.http").setLevel(logging.ERROR)
 logging.getLogger("discord.state").setLevel(logging.WARNING)
-logger = logging.getLogger("LibrarianBot")
+logger = logging.getLogger("LibraryBot")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -35,7 +35,7 @@ class BotCommandTree(app_commands.CommandTree):
         return True
 
 
-class LibrarianBot(commands.Bot):
+class LibraryBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents, tree_cls=BotCommandTree)
         self.db = LibraryDB()
@@ -71,12 +71,12 @@ class LibrarianBot(commands.Bot):
         await self.db.init()
 
         logger.info("[2/4] BotView 설정 중...")
-        from utils import BotView
+        from library.utils import BotView
         BotView._bot_ref = self
 
         logger.info("[3/5] Cog 로딩 중...")
-        from cogs.library import LibraryCog
-        from cogs.admin import AdminCog
+        from library.cogs.commands import LibraryCog
+        from library.cogs.admin import AdminCog
         await self.add_cog(LibraryCog(self))
         await self.add_cog(AdminCog(self))
 
@@ -91,7 +91,7 @@ class LibrarianBot(commands.Bot):
             logger.info(f"[5/5] 동기화 완료 (전체) - {len(synced)}개: {[c.name for c in synced]}")
 
 
-bot = LibrarianBot()
+bot = LibraryBot()
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)

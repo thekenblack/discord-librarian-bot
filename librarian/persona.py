@@ -40,7 +40,6 @@ class Persona:
             with open(reminder_path, encoding="utf-8") as f:
                 reminder_text = f.read().replace("{name}", name)
 
-        # 페르소나 → 도구/규칙 → [맥락(동적)] → 도구리마인드 → 페르소나
         self.persona_text: str = persona_text
         self.prompt_text: str = prompt_text
         self.reminder_text: str = reminder_text

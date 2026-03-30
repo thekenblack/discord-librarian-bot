@@ -8,8 +8,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import UPLOAD_DIR, MAX_FILE_SIZE, LIGHTNING_ADDRESS
-from utils import success_embed, error_embed, info_embed, file_size_fmt, BotView
+from config import FILES_DIR, MAX_FILE_SIZE, LIGHTNING_ADDRESS
+from library.utils import success_embed, error_embed, info_embed, file_size_fmt, BotView
 
 
 # ── 모달 ──────────────────────────────────────────────
@@ -348,7 +348,7 @@ class InfoDetailView(BotView):
                 ephemeral=True,
             )
 
-        save_path = os.path.join(UPLOAD_DIR, file_info["stored_name"])
+        save_path = os.path.join(FILES_DIR, file_info["stored_name"])
         if not os.path.exists(save_path):
             return await interaction.response.send_message(
                 embed=error_embed("파일 없음", "로컬 파일이 존재하지 않습니다."),
@@ -380,7 +380,6 @@ class UploadView(BotView):
         self.file = file
         self.default_name = default_name
 
-        # 드롭다운 항상 표시
         if books:
             options = []
             for b in books[:25]:
@@ -430,7 +429,6 @@ class UploadView(BotView):
 
     @discord.ui.button(label="새 엔트리 생성", style=discord.ButtonStyle.primary, row=1)
     async def new_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 1단계: 엔트리 정보 모달
         entry_modal = EntryModal(self.default_name)
         await interaction.response.send_modal(entry_modal)
         await entry_modal.wait()
@@ -447,7 +445,6 @@ class UploadView(BotView):
             description=entry_modal.book_desc.value.strip() or None,
         )
 
-        # 2단계: 파일 정보 모달 (버튼으로 트리거)
         trigger_view = _FileModalTriggerView(self.cog, self.file, interaction.user, book_id,
                                               entry_modal.book_title.value.strip(),
                                               self.default_name)
@@ -504,7 +501,7 @@ class LibraryCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        os.makedirs(FILES_DIR, exist_ok=True)
 
     @app_commands.command(name="donate", description="⚡ 라이트닝 후원")
     async def donate(self, interaction: discord.Interaction):
@@ -570,10 +567,9 @@ class LibraryCog(commands.Cog):
         """파일을 로컬에 저장하고 DB에 기록. file_id 반환"""
         ext = os.path.splitext(file.filename)[1]
         stored_name = f"{uuid.uuid4().hex}{ext}"
-        save_path = os.path.join(UPLOAD_DIR, stored_name)
+        save_path = os.path.join(FILES_DIR, stored_name)
         await file.save(save_path)
 
-        # 다운로드 파일명: 파일 제목 + 원본 확장자
         download_name = title + ext
 
         file_id = await self.bot.db.add_file(

@@ -1,0 +1,23 @@
+{
+  "bots": [
+    {"name": "라이브러리 봇", "module": "library.bot"},
+    {"name": "AI 사서봇", "module": "librarian.bot"}
+  ],
+  "paths": {
+    "data_dir": "data",
+    "files_dir": "files",
+    "logs_dir": "logs",
+    "backups_dir": "data/backups",
+    "migrations_dir": "migrations"
+  },
+  "db": {
+    "library": "library.db",
+    "librarian": "librarian.db"
+  },
+  "ai": {
+    "model": "gemini-2.5-flash",
+    "buffer_size": 30,
+    "max_output_tokens": 500
+  },
+  "max_file_size": 10485760
+}

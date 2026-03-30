@@ -2,16 +2,19 @@
 AI 사서봇 엔트리포인트
 """
 
+import os
 import sys
 import logging
-from config import AI_BOT_TOKEN, GEMINI_API_KEYS, AI_NAME, AI_STATUS_TEXT, AI_PERSONA_DIR
+from config import AI_BOT_TOKEN, GEMINI_API_KEYS, AI_NAME, AI_STATUS_TEXT, LOG_DIR
+
+os.makedirs(LOG_DIR, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("ai_bot.log", encoding="utf-8"),
+        logging.FileHandler(os.path.join(LOG_DIR, "bot.log"), encoding="utf-8"),
     ],
 )
 logging.getLogger("discord.client").setLevel(logging.ERROR)
@@ -31,10 +34,12 @@ if not GEMINI_API_KEYS:
 
 logger.info(f"Gemini API 키 {len(GEMINI_API_KEYS)}개 로드됨")
 
-from ai.persona import Persona
-from ai.bot import AILibrarianBot
+PERSONA_DIR = os.path.dirname(os.path.abspath(__file__))
 
-persona = Persona(AI_PERSONA_DIR, AI_NAME, AI_STATUS_TEXT)
+from librarian.persona import Persona
+from librarian.core import AILibrarianBot
+
+persona = Persona(PERSONA_DIR, AI_NAME, AI_STATUS_TEXT)
 bot = AILibrarianBot(persona, GEMINI_API_KEYS)
 
 if __name__ == "__main__":

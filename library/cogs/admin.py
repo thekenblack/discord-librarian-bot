@@ -12,8 +12,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-from utils import success_embed, error_embed, info_embed, file_size_fmt, BotView
-from config import ADMIN_IDS, UPLOAD_DIR
+from library.utils import success_embed, error_embed, info_embed, file_size_fmt, BotView
+from config import ADMIN_IDS, FILES_DIR, LOG_DIR
 
 logger = logging.getLogger("AdminCog")
 
@@ -100,8 +100,8 @@ class AdminCog(commands.Cog):
 
         try:
             await interaction.user.send(
-                content=f"LibrarianBot DB 백업 `{ts} UTC`",
-                file=discord.File(backup_path, filename=f"librarian_{ts}.db")
+                content=f"LibraryBot DB 백업 `{ts} UTC`",
+                file=discord.File(backup_path, filename=f"library_{ts}.db")
             )
             await interaction.followup.send(
                 embed=success_embed("백업 완료", "DM으로 백업 파일을 전송했습니다."), ephemeral=True
@@ -128,7 +128,7 @@ class AdminCog(commands.Cog):
 
         import aiosqlite
         from config import LIBRARY_DB_PATH
-        from utils import file_size_fmt
+        from library.utils import file_size_fmt
         async with aiosqlite.connect(LIBRARY_DB_PATH) as db:
             async def q(sql):
                 async with db.execute(sql) as cur:
@@ -156,15 +156,15 @@ class AdminCog(commands.Cog):
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
-        log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai_bot.log")
+        log_path = os.path.join(LOG_DIR, "bot.log")
         if not os.path.exists(log_path):
             return await interaction.followup.send(
                 embed=error_embed("로그 없음", "로그 파일이 없습니다."), ephemeral=True
             )
         try:
             await interaction.user.send(
-                content="AI 봇 로그",
-                file=discord.File(log_path, filename="ai_bot.log")
+                content="봇 로그",
+                file=discord.File(log_path, filename="bot.log")
             )
             await interaction.followup.send(
                 embed=success_embed("로그 전송", "DM으로 로그 파일을 전송했습니다."), ephemeral=True
@@ -200,7 +200,6 @@ class AdminCog(commands.Cog):
             return await interaction.response.send_message(
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
             )
-        # 엔트리 선택 → 파일 선택
         books = await self.bot.db.list_all_books()
         if not books:
             return await interaction.response.send_message(
@@ -260,7 +259,7 @@ class AdminEntryActionView(BotView):
 
     @discord.ui.button(label="편집", style=discord.ButtonStyle.primary, row=0)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from cogs.library import EditEntryModal
+        from library.cogs.commands import EditEntryModal
         modal = EditEntryModal(self.book)
         await interaction.response.send_modal(modal)
         await modal.wait()
@@ -282,10 +281,9 @@ class AdminEntryActionView(BotView):
 
     @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
     async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 파일도 같이 삭제
         files = await self.bot.db.list_book_files(self.book["id"])
         for f in files:
-            path = os.path.join(UPLOAD_DIR, f["stored_name"])
+            path = os.path.join(FILES_DIR, f["stored_name"])
             try:
                 os.remove(path)
             except OSError:
@@ -385,7 +383,7 @@ class AdminFileActionView(BotView):
 
     @discord.ui.button(label="편집", style=discord.ButtonStyle.primary, row=0)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from cogs.library import EditFileModal
+        from library.cogs.commands import EditFileModal
         modal = EditFileModal(self.file_info)
         await interaction.response.send_modal(modal)
         await modal.wait()
@@ -408,7 +406,7 @@ class AdminFileActionView(BotView):
 
     @discord.ui.button(label="삭제", style=discord.ButtonStyle.danger, row=0)
     async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        path = os.path.join(UPLOAD_DIR, self.file_info["stored_name"])
+        path = os.path.join(FILES_DIR, self.file_info["stored_name"])
         try:
             os.remove(path)
         except OSError:

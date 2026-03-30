@@ -5,8 +5,8 @@ Gemini function calling 도구 정의 및 실행
 import json
 from google.genai import types
 
-from library_db import LibraryDB
-from librarian_db import LibrarianDB
+from library.db import LibraryDB
+from librarian.db import LibrarianDB
 
 # ── 도구 정의 ────────────────────────────────────────
 
