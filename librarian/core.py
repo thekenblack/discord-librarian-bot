@@ -255,7 +255,7 @@ class AILibrarianBot(discord.Client):
         # 답글 체인
         if reply_chain:
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
-            logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(r[:50] for r in reply_chain[:3])}")
+            logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
         # 최근 웹 검색 / 미디어 인식 결과
         user_web, other_web, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
