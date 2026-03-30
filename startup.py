@@ -135,8 +135,7 @@ if os.path.isdir(MIGRATIONS_DIR):
             print(f"[마이그레이션] {script} 실패 (코드: {result.returncode})")
 
 # ── DB 패치 (로컬 전용, gitignore) ─────────────────
-PATCHES_DIR = os.path.join(DATA_DIR, "patches")
-os.makedirs(PATCHES_DIR, exist_ok=True)
+PATCHES_DIR = os.path.join(BASE_DIR, "patches")
 
 patches_tracking = os.path.join(DATA_DIR, "patches_applied.json")
 patches_applied = set()

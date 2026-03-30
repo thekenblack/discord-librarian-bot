@@ -62,7 +62,7 @@ startup.py가 하는 일:
 **마이그레이션** (`migrations/`, 커밋됨) — 스키마 변경. 모든 서버에 적용.
 - `migrations/001_xxx.py` → startup.py가 `data/migrations_applied.json`으로 추적
 
-**패치** (`data/patches/`, gitignore) — 데이터 수정. 그 서버에서만 실행.
+**패치** (`patches/`, 커밋됨) — 데이터 수정. git pull로 전달됨.
 - `.sql` 파일: 파일명이 `library_`로 시작하면 library.db, 그 외는 librarian.db에 실행
 - `.py` 파일: Python 스크립트로 실행
 - startup.py가 `data/patches_applied.json`으로 추적
@@ -70,7 +70,7 @@ startup.py가 하는 일:
 
 패치 예시:
 ```sql
--- data/patches/librarian_001_cleanup.sql
+-- patches/librarian_001_cleanup.sql
 DELETE FROM learned WHERE content LIKE '%쓰레기%';
 DELETE FROM learned WHERE content LIKE '%[원본:%';
 ```
@@ -115,7 +115,7 @@ DELETE FROM learned WHERE content LIKE '%[원본:%';
 
 - `config.json`의 `version` 필드가 현재 버전
 - `CHANGELOG.md`에 버전별 주요 변경사항 기록 — **기능 추가/변경/삭제 시 반드시 업데이트**
-- 시작 시 `logs/chat.jsonl`에 version + git hash + model + prompt_hash 기록
+- 시작 시 `bot.log`에 version + git hash + model 기록
 - 대화마다 version, model, 도구 호출, 에러 등이 JSON으로 기록됨
 - 버전을 올릴 때: config.json version 변경 + CHANGELOG.md 항목 추가
 

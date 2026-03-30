@@ -7,14 +7,13 @@ import json
 import asyncio
 import discord
 import logging
-from datetime import date, timedelta
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
-from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_BUFFER_SIZE, AI_MAX_OUTPUT_TOKENS
+from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
 from librarian import server_log
@@ -26,7 +25,7 @@ MAX_HISTORY = 20
 
 
 class AILibrarianBot(discord.Client):
-    def __init__(self, persona: Persona, gemini_api_keys: list[str]):
+    def __init__(self, persona: Persona, gemini_api_key: str):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
@@ -34,9 +33,7 @@ class AILibrarianBot(discord.Client):
         self.persona = persona
         self.library_db = LibraryDB()
         self.librarian_db = LibrarianDB()
-        self._gemini_clients = [genai.Client(api_key=k) for k in gemini_api_keys]
-        self._client_index = 0
-        self._dead_until: dict[int, date] = {}
+        self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[int, list] = {}
         self._channel_locks: dict[int, asyncio.Lock] = {}
         self._ready = False
@@ -74,6 +71,7 @@ class AILibrarianBot(discord.Client):
         await self.librarian_db.cleanup_learned()
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
+
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
         ))
@@ -451,42 +449,29 @@ class AILibrarianBot(discord.Client):
             return self.persona.error_message, None, _meta
 
     def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
-        """API 호출. 실패 시 키 로테이션 + 재시도 (ServerError 등 대응)"""
+        """API 호출. 실패 시 재시도 (ServerError 등 대응)"""
         import time
         last_err = None
         for attempt in range(max_retries):
-            today = date.today()
-            self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
-            idx = self._client_index
-            self._client_index = (self._client_index + 1) % len(self._gemini_clients)
-            if idx in self._dead_until:
-                continue
-            client = self._gemini_clients[idx]
             try:
-                return client.models.generate_content(
+                return self._gemini_client.models.generate_content(
                     model=MODEL, contents=contents, config=config,
                 )
             except ClientError as e:
                 if e.status == "INVALID_ARGUMENT":
                     raise
-                if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
-                    self._dead_until[idx] = date.today() + timedelta(days=1)
-                    logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
-                else:
-                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
+                logger.warning(f"API 에러({e.status}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
                 last_err = e
-                continue
-            except Exception as e:
-                logger.warning(f"키 #{idx} 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
+            except Exception as e:
+                logger.warning(f"API 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
                 last_err = e
-                continue
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
         if last_err:
             raise last_err
-        raise ClientError("모든 API 키 소진")
+        raise ClientError("API 호출 실패")
 
     async def _build_reply_chain(self, message) -> list[str]:
         """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""

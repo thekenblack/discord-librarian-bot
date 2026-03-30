@@ -7,7 +7,7 @@ import sys
 import logging
 import zoneinfo
 from datetime import datetime, timezone
-from config import AI_BOT_TOKEN, GEMINI_API_KEYS, AI_NAME, AI_STATUS_TEXT, LOG_DIR
+from config import AI_BOT_TOKEN, GEMINI_API_KEY, AI_NAME, AI_STATUS_TEXT, LOG_DIR
 
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -76,11 +76,11 @@ if not AI_BOT_TOKEN:
     logger.warning("AI_BOT_TOKEN이 설정되지 않았습니다. AI 사서봇을 건너뜁니다.")
     sys.exit(0)
 
-if not GEMINI_API_KEYS:
-    logger.warning("GEMINI_API_KEYS가 설정되지 않았습니다. AI 사서봇을 건너뜁니다.")
+if not GEMINI_API_KEY:
+    logger.warning("GEMINI_API_KEY가 설정되지 않았습니다. AI 사서봇을 건너뜁니다.")
     sys.exit(0)
 
-logger.info(f"Gemini API 키 {len(GEMINI_API_KEYS)}개 로드됨")
+logger.info("Gemini API 키 로드됨")
 
 PERSONA_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -88,7 +88,7 @@ from librarian.persona import Persona
 from librarian.core import AILibrarianBot
 
 persona = Persona(PERSONA_DIR, AI_NAME, AI_STATUS_TEXT)
-bot = AILibrarianBot(persona, GEMINI_API_KEYS)
+bot = AILibrarianBot(persona, GEMINI_API_KEY)
 
 if __name__ == "__main__":
     bot.run(AI_BOT_TOKEN)

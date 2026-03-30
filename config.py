@@ -52,7 +52,7 @@ UPLOAD_DIR = FILES_DIR
 BOT_TOKEN     = os.getenv("DISCORD_BOT_TOKEN", "")
 GUILD_ID      = os.getenv("DISCORD_GUILD_ID", "")
 AI_BOT_TOKEN  = os.getenv("AI_BOT_TOKEN", "")
-GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(",") if k.strip()]
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GEMINI_API_KEYS", "").split(",")[0].strip())
 ADMIN_IDS = [uid.strip() for uid in os.getenv("ADMIN_USER_IDS", "").split(",") if uid.strip()]
 LIGHTNING_ADDRESS = os.getenv("LIGHTNING_ADDRESS", "")
 
