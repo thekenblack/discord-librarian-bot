@@ -34,17 +34,6 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="get_entry_detail",
-            description="특정 엔트리의 상세 정보와 파일 목록을 조회한다.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "entry_id": types.Schema(type="INTEGER", description="엔트리 ID"),
-                },
-                required=["entry_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
             name="send_file",
             description="파일을 유저에게 전송한다. file_id를 모르면 먼저 search로 찾아.",
             parameters=types.Schema(
@@ -178,16 +167,6 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                    "author": b.get("author") or "", "file_count": b["file_count"]}
                   for b in books]
         return json.dumps({"entries": entries}, ensure_ascii=False)
-
-    elif name == "get_entry_detail":
-        entry_id = args.get("entry_id")
-        detail = await library_db.get_book_detail(entry_id)
-        if not detail:
-            return json.dumps({"result": f"ID {entry_id} 엔트리를 찾을 수 없습니다."}, ensure_ascii=False)
-        files = [{"file_id": f["id"], "title": f["title"], "filename": f["filename"],
-                  "file_size": f["file_size"]} for f in detail.get("files", [])]
-        return json.dumps({"id": detail["id"], "title": detail["title"],
-                          "author": detail.get("author") or "", "files": files}, ensure_ascii=False)
 
     elif name == "send_file":
         file_id = args.get("file_id")
