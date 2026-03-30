@@ -72,6 +72,7 @@ class FileInfoModal(discord.ui.Modal, title="파일 정보 입력"):
         label="파일 설명",
         style=discord.TextStyle.paragraph,
         placeholder="해당 파일에 대한 간단한 설명",
+        required=False,
         max_length=500,
     )
 
