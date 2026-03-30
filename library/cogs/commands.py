@@ -496,6 +496,37 @@ class _FileModalTriggerView(BotView):
 
 # ── Cog ───────────────────────────────────────────────
 
+class LibraryListView(BotView):
+    """라이브러리 목록 페이지네이션"""
+    def __init__(self, sorted_pages, pages, page_labels, build_embed_fn, total_count):
+        super().__init__(timeout=120)
+        self.sorted_pages = sorted_pages
+        self.pages = pages
+        self.page_labels = page_labels
+        self.build_embed = build_embed_fn
+        self.total_count = total_count
+        self.current_idx = 0
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = self.current_idx <= 0
+        self.next_btn.disabled = self.current_idx >= len(self.sorted_pages) - 1
+
+    @discord.ui.button(label="← 이전", style=discord.ButtonStyle.secondary, row=0)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_idx = max(0, self.current_idx - 1)
+        self._update_buttons()
+        embed = self.build_embed(self.sorted_pages[self.current_idx])
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="다음 →", style=discord.ButtonStyle.secondary, row=0)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_idx = min(len(self.sorted_pages) - 1, self.current_idx + 1)
+        self._update_buttons()
+        embed = self.build_embed(self.sorted_pages[self.current_idx])
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
 class LibraryCog(commands.Cog):
     library = app_commands.Group(name="library", description="파일 라이브러리 관리")
 
@@ -648,20 +679,59 @@ class LibraryCog(commands.Cog):
                 embed=info_embed("라이브러리", "등록된 엔트리가 없습니다."),
             )
 
-        lines = []
+        # 페이지별 그룹핑
+        pages: dict[int, list] = {}
         for b in books:
-            line = f"📕 **{b['title']}** ({b['file_count']}개 파일)"
-            if b.get("description"):
-                first_line = b["description"].split("\n")[0]
-                line += f"\n> {first_line}"
-            lines.append(line)
+            p = b.get("page") or 0
+            pages.setdefault(p, []).append(b)
 
-        embed = info_embed(
-            f"라이브러리 ({len(books)}개)",
-            "\n\n".join(lines),
-        )
-        embed.set_footer(text="/library info로 상세 조회 및 다운로드")
-        await interaction.response.send_message(embed=embed)
+        # 페이지 번호 정렬 (0은 맨 뒤)
+        sorted_pages = sorted(pages.keys(), key=lambda x: (x == 0, x))
+
+        # 페이지가 미지정(0)뿐이면 그냥 1페이지처럼
+        if sorted_pages == [0]:
+            sorted_pages = [0]
+            page_labels = {0: None}  # 페이지 표시 안 함
+        else:
+            page_labels = {}
+            display_num = 1
+            for p in sorted_pages:
+                if p == 0:
+                    page_labels[p] = "기타"
+                else:
+                    page_labels[p] = f"{display_num}페이지"
+                    display_num += 1
+
+        def build_page_embed(page_key):
+            page_books = pages[page_key]
+            lines = []
+            for b in page_books:
+                line = f"📕 **{b['title']}** ({b['file_count']}개 파일)"
+                if b.get("description"):
+                    first_line = b["description"].split("\n")[0]
+                    line += f"\n> {first_line}"
+                lines.append(line)
+
+            label = page_labels[page_key]
+            if label:
+                title = f"라이브러리 - {label} ({len(books)}개)"
+            else:
+                title = f"라이브러리 ({len(books)}개)"
+
+            e = info_embed(title, "\n\n".join(lines))
+            e.set_footer(text="/library info로 상세 조회 및 다운로드")
+            return e
+
+        # 페이지가 1개면 버튼 없이
+        if len(sorted_pages) <= 1:
+            await interaction.response.send_message(embed=build_page_embed(sorted_pages[0]))
+        else:
+            view = LibraryListView(sorted_pages, pages, page_labels, build_page_embed, len(books))
+            await interaction.response.send_message(
+                embed=build_page_embed(sorted_pages[0]),
+                view=view,
+            )
+            view._message_ref = await interaction.original_response()
 
     @library.command(name="edit", description="내가 만든 엔트리 편집")
     async def edit_entries(self, interaction: discord.Interaction):

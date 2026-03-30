@@ -175,8 +175,8 @@ class AdminCog(commands.Cog):
             )
 
     # ── /admin entries ──────────────────────────────────────
-    @admin.command(name="entries", description="전체 엔트리 편집/삭제")
-    async def admin_entries(self, interaction: discord.Interaction):
+    @admin.command(name="edit", description="전체 엔트리 편집/삭제")
+    async def admin_edit(self, interaction: discord.Interaction):
         if not is_admin(interaction):
             return await interaction.response.send_message(
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True

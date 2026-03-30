@@ -61,6 +61,8 @@ class LibraryDB:
             await _add_column("books", "alias", "TEXT")
             await _add_column("books", "author", "TEXT")
             await _add_column("books", "author_alias", "TEXT")
+            await _add_column("books", "page", "INTEGER DEFAULT 0")
+            await _add_column("books", "sort_order", "INTEGER DEFAULT 0")
 
             await db.commit()
             logger.info("도서관 DB 초기화 완료")
@@ -100,7 +102,7 @@ class LibraryDB:
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
                 GROUP BY b.id
-                ORDER BY b.created_at DESC
+                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT ? OFFSET ?
             """, (per_page, offset))
             rows = await cursor.fetchall()
@@ -114,7 +116,7 @@ class LibraryDB:
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
                 GROUP BY b.id
-                ORDER BY b.created_at DESC
+                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
             """)
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -128,7 +130,7 @@ class LibraryDB:
                 LEFT JOIN files f ON f.book_id = b.id
                 WHERE b.creator_id = ?
                 GROUP BY b.id
-                ORDER BY b.created_at DESC
+                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT 25
             """, (creator_id,))
             rows = await cursor.fetchall()
@@ -239,7 +241,7 @@ class LibraryDB:
                    OR b.author_alias LIKE ?
                    OR b.description LIKE ?
                 GROUP BY b.id
-                ORDER BY b.created_at DESC
+                ORDER BY CASE WHEN b.page = 0 THEN 9999 ELSE b.page END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
                 LIMIT 10
             """, (like, like, like, like, like))
             rows = await cursor.fetchall()
