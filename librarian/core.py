@@ -196,10 +196,15 @@ class AILibrarianBot(discord.Client):
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
 
-        # 프롬프트 조립: 페르소나 → 규칙 → 상황 → 리마인더 → 페르소나
+        # 프롬프트 조립: 페르소나 → 규칙(도서관+기억 포함) → 상황 → 리마인더 → 페르소나
         parts = []
         parts.append(self.persona.persona_text)
-        parts.append(self.persona.prompt_text)
+
+        # 도서관 목록 + 기억을 prompt에 삽입
+        catalog = await self._build_catalog()
+        memories = await self._build_memories()
+        prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories)
+        parts.append(prompt)
 
         # 상황 정보
         admin_names = []
@@ -346,14 +351,24 @@ class AILibrarianBot(discord.Client):
                 _meta["error"] = "safety_filter"
                 return "", None, _meta
 
-            reply_parts = []
-            for part in response.candidates[0].content.parts:
-                if part.text:
-                    text = part.text.strip()
-                    if text:
-                        logger.info(f"원문: {text[:100]}")
-                        reply_parts.append(text)
-            reply = "\n".join(reply_parts) if reply_parts else ""
+            reply = self._extract_reply(response)
+
+            # 반복 체크: 직전 봇 답변과 동일하면 temperature 올려서 1회 재시도
+            if reply and self._is_repeat(history, reply):
+                logger.warning(f"반복 감지, 재시도 (temperature 1.0): {reply[:50]}...")
+                retry_config = types.GenerateContentConfig(
+                    system_instruction=config.system_instruction,
+                    tools=library_tools,
+                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                    temperature=1.0,
+                )
+                try:
+                    retry_response = self._call_gemini(history, retry_config)
+                    retry_reply = self._extract_reply(retry_response)
+                    if retry_reply:
+                        reply = retry_reply
+                except Exception as e:
+                    logger.warning(f"재시도 실패: {e}")
 
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
@@ -423,6 +438,68 @@ class AILibrarianBot(discord.Client):
         if last_err:
             raise last_err
         raise ClientError("모든 API 키 소진")
+
+    @staticmethod
+    def _extract_reply(response) -> str:
+        """Gemini 응답에서 텍스트 추출"""
+        if not response.candidates or not response.candidates[0].content.parts:
+            return ""
+        parts = []
+        for part in response.candidates[0].content.parts:
+            if part.text:
+                text = part.text.strip()
+                if text:
+                    parts.append(text)
+        return "\n".join(parts) if parts else ""
+
+    @staticmethod
+    def _is_repeat(history: list, reply: str) -> bool:
+        """직전 봇 답변과 동일한지 확인"""
+        for h in reversed(history):
+            if h.role == "model" and h.parts and h.parts[0].text:
+                prev = h.parts[0].text.replace("\ufe0f", "").strip()
+                curr = reply.replace("\ufe0f", "").strip()
+                return prev == curr
+        return False
+
+    async def _build_catalog(self) -> str:
+        """도서관 목록을 프롬프트용 텍스트로"""
+        books = await self.library_db.list_all_books()
+        if not books:
+            return "(도서관이 비어있음)"
+        lines = []
+        for b in books:
+            detail = await self.library_db.get_book_detail(b["id"])
+            alias = f" (별칭: {b['alias']})" if b.get("alias") else ""
+            author = f" - {b['author']}" if b.get("author") else ""
+            line = f"책장 #{b['id']}: {b['title']}{author}{alias}"
+            files = detail.get("files", [])
+            if files:
+                for f in files:
+                    size_mb = f["file_size"] / (1024 * 1024)
+                    line += f"\n  file:{f['id']} {f['filename']} ({size_mb:.1f}MB)"
+            else:
+                line += "\n  (파일 없음)"
+            lines.append(line)
+        return "\n".join(lines)
+
+    async def _build_memories(self) -> str:
+        """기억(learned)을 프롬프트용 텍스트로"""
+        import aiosqlite
+        from config import LIBRARIAN_DB_PATH
+        async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT author, content FROM learned ORDER BY id")
+            rows = await cursor.fetchall()
+        if not rows:
+            return "(기억 없음)"
+        lines = []
+        for r in rows:
+            if r["author"]:
+                lines.append(f"- {r['author']}: {r['content']}")
+            else:
+                lines.append(f"- {r['content']}")
+        return "\n".join(lines)
 
     def _trim_history(self, channel_id: int):
         """히스토리를 MAX_HISTORY 턴으로 제한"""
