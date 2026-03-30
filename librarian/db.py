@@ -181,13 +181,17 @@ class LibrarianDB:
 
             # 학습 (기억 포함)
             cursor = await db.execute("""
-                SELECT content FROM learned
+                SELECT author, content FROM learned
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                   OR author LIKE ?
                 LIMIT ?
-            """, (like, like_nospace, limit))
+            """, (like, like_nospace, like, limit))
             rows = await cursor.fetchall()
             if rows:
-                result["기억"] = [r["content"] for r in rows]
+                result["기억"] = [
+                    f"{r['author']}: {r['content']}" if r["author"] else r["content"]
+                    for r in rows
+                ]
 
         return result
 
@@ -218,8 +222,10 @@ class LibrarianDB:
 
     # ── 저장 ──────────────────────────────────────────────
 
-    async def save(self, content: str) -> int:
-        """기억/지식 통합 저장 (중복 방지)"""
+    MAX_LEARNED = 100
+
+    async def save(self, content: str, author: str | None = None) -> int:
+        """기억/지식 통합 저장 (중복 방지, 최대 건수 유지)"""
         now = datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
@@ -227,7 +233,13 @@ class LibrarianDB:
             if await cursor.fetchone():
                 return -1
             cursor = await db.execute(
-                "INSERT INTO learned (content, created_at) VALUES (?, ?)",
-                (content, now))
+                "INSERT INTO learned (content, author, created_at) VALUES (?, ?, ?)",
+                (content, author, now))
+            # 오래된 기억 삭제 (최대 건수 초과 시)
+            await db.execute(f"""
+                DELETE FROM learned WHERE id NOT IN (
+                    SELECT id FROM learned ORDER BY id DESC LIMIT {self.MAX_LEARNED}
+                )
+            """)
             await db.commit()
             return cursor.lastrowid

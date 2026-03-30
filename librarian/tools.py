@@ -16,7 +16,7 @@ library_tools = [
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="search",
-            description="도서관, 지식, 유저 기억을 한번에 검색한다. 질문이나 요청이 오면 이 도구를 먼저 호출해. 도서/자료/인물/개념/잡담 뭐든 이걸로 검색.",
+            description="지식과 기억을 검색한다. 프롬프트에 없는 정보가 필요할 때 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -124,7 +124,6 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
 
     if name == "search":
         keyword = args.get("keyword", "")
-        user_id = args.get("_user_id", "")
         result = {}
 
         # 키워드 확장: 별칭 + 공백 분리
@@ -134,19 +133,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 if part not in keywords:
                     keywords.append(part)
 
-        # 도서 검색
-        seen_book_ids = set()
-        all_books = []
-        for kw in keywords:
-            for b in await library_db.search_books(kw):
-                if b["id"] not in seen_book_ids:
-                    seen_book_ids.add(b["id"])
-                    all_books.append({"id": b["id"], "title": b["title"],
-                                     "author": b.get("author") or "", "file_count": b["file_count"]})
-        if all_books:
-            result["도서"] = all_books[:5]
-
-        # 지식 + 기억 통합 검색
+        # 지식 + 기억 검색 (도서는 프롬프트에 이미 있으므로 제외)
         seen_content = set()
         for kw in keywords:
             kw_result = await librarian_db.search_all(kw)
@@ -156,8 +143,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                         seen_content.add(item)
                         result.setdefault(key, []).append(item)
         for key in result:
-            if key != "도서":
-                result[key] = result[key][:5]
+            result[key] = result[key][:5]
 
         if not result:
             return json.dumps({"result": f"'{keyword}' 관련 정보 없음."}, ensure_ascii=False)

@@ -189,7 +189,7 @@ class AILibrarianBot(discord.Client):
 
         # 도서관 목록 + 기억을 prompt에 삽입
         catalog = await self._build_catalog()
-        memories = await self._build_memories()
+        memories = await self._build_memories(user_name)
         prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories)
         parts.append(prompt)
 
@@ -539,23 +539,40 @@ class AILibrarianBot(discord.Client):
             lines.append(line)
         return "\n".join(lines)
 
-    async def _build_memories(self) -> str:
-        """기억(learned)을 프롬프트용 텍스트로"""
+    async def _build_memories(self, user_name: str) -> str:
+        """기억(learned)을 프롬프트용 텍스트로: 발화자 기억 + 나머지 최근"""
         import aiosqlite
         from config import LIBRARIAN_DB_PATH
+
+        def _fmt(r):
+            return f"- {r['author']}: {r['content'][:150]}" if r["author"] else f"- {r['content'][:150]}"
+
         async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT author, content FROM learned ORDER BY id")
-            rows = await cursor.fetchall()
-        if not rows:
-            return "(기억 없음)"
-        lines = []
-        for r in rows:
-            if r["author"]:
-                lines.append(f"- {r['author']}: {r['content']}")
-            else:
-                lines.append(f"- {r['content']}")
-        return "\n".join(lines)
+
+            # 현재 대화 상대가 가르쳐준 것 (최근 10건)
+            cursor = await db.execute(
+                "SELECT author, content FROM learned WHERE author LIKE ? ORDER BY id DESC LIMIT 10",
+                (f"{user_name}%",))
+            user_rows = await cursor.fetchall()
+
+            # 나머지 최근 10건 (발화자 제외)
+            cursor = await db.execute(
+                "SELECT author, content FROM learned WHERE author IS NULL OR author NOT LIKE ? ORDER BY id DESC LIMIT 10",
+                (f"{user_name}%",))
+            other_rows = await cursor.fetchall()
+
+        sections = []
+
+        if user_rows:
+            lines = [_fmt(r) for r in reversed(user_rows)]
+            sections.append(f"[{user_name}의 기억]\n" + "\n".join(lines))
+
+        if other_rows:
+            lines = [_fmt(r) for r in reversed(other_rows)]
+            sections.append("[최근 기억]\n" + "\n".join(lines))
+
+        return "\n\n".join(sections) if sections else "(기억 없음)"
 
     def _trim_history(self, channel_id: int):
         """히스토리를 MAX_HISTORY 턴으로 제한"""
