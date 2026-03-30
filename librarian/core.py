@@ -241,15 +241,28 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
         # 최근 웹 검색 / 미디어 인식 결과
-        recent_web = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
-        recent_media = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
-        cache_lines = []
-        for w in recent_web:
-            cache_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
-        for m in recent_media:
-            cache_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
-        if cache_lines:
-            parts.append("## 최근 조회\n" + "\n".join(cache_lines))
+        user_web, other_web = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
+        user_media, other_media = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
+
+        cache_sections = []
+        user_lines = []
+        for w in user_web:
+            user_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
+        for m in user_media:
+            user_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
+        if user_lines:
+            cache_sections.append(f"[{user_name}의 조회]\n" + "\n".join(user_lines))
+
+        other_lines = []
+        for w in other_web:
+            other_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
+        for m in other_media:
+            other_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:150]}")
+        if other_lines:
+            cache_sections.append("[최근 조회]\n" + "\n".join(other_lines))
+
+        if cache_sections:
+            parts.append("## 최근 조회\n\n" + "\n\n".join(cache_sections))
 
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.character_text)
