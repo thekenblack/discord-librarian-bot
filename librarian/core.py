@@ -3,16 +3,14 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 """
 
 import os
-import re
 import json
 import asyncio
 import discord
 import logging
-from collections import deque
 from datetime import date, timedelta
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError, ServerError
+from google.genai.errors import ClientError
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
@@ -25,7 +23,7 @@ from librarian import server_log
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
-BUFFER_SIZE = AI_BUFFER_SIZE
+MAX_HISTORY = 20
 
 
 class AILibrarianBot(discord.Client):
@@ -39,46 +37,14 @@ class AILibrarianBot(discord.Client):
         self.librarian_db = LibrarianDB()
         self._gemini_clients = [genai.Client(api_key=k) for k in gemini_api_keys]
         self._client_index = 0
-        self._dead_until: dict[int, date] = {}  # client index -> 일일 한도 만료일
-        self.chat_histories: dict[int, list] = {}  # channel_id -> Gemini 대화 턴
-        self.channel_buffers: dict[int, deque] = {}  # channel_id -> 최근 메시지 버퍼
-        self.global_buffer: deque = deque(maxlen=BUFFER_SIZE)  # 전체 채널 통합 버퍼
-        self._channel_locks: dict[int, asyncio.Lock] = {}  # 채널별 동시 요청 방지
+        self._dead_until: dict[int, date] = {}
+        self.chat_histories: dict[int, list] = {}
+        self._channel_locks: dict[int, asyncio.Lock] = {}
         self._ready = False
 
-        # 기억 트리거 로드
-        librarian_dir = os.path.dirname(os.path.abspath(__file__))
-        self._memory_triggers = self._load_patterns(os.path.join(librarian_dir, "memory_triggers.txt"), ["기억해"])
-
-        # 에러 메시지 목록 (히스토리 필터용)
         self._error_messages = set(
             persona._error_messages + persona._rate_limit_messages + persona._daily_limit_messages
         )
-
-    @staticmethod
-    def _load_patterns(path: str, default: list[str]) -> list[str]:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                return [line.strip() for line in f if line.strip()]
-        return default
-
-    def _get_buffer(self, channel_id: int) -> deque:
-        if channel_id not in self.channel_buffers:
-            self.channel_buffers[channel_id] = deque(maxlen=BUFFER_SIZE)
-        return self.channel_buffers[channel_id]
-
-    def _add_to_buffer(self, channel_id: int, channel_name: str,
-                       user_id: str, user_name: str,
-                       text: str, is_bot: bool = False):
-        entry = {
-            "channel_name": channel_name,
-            "user_id": user_id,
-            "user_name": user_name,
-            "text": text,
-            "is_bot": is_bot,
-        }
-        self._get_buffer(channel_id).append(entry)
-        self.global_buffer.append(entry)
 
     @staticmethod
     def _extract_extras(msg) -> str:
@@ -95,147 +61,6 @@ class AILibrarianBot(discord.Client):
         for att in msg.attachments:
             extras.append(f"[첨부: {att.filename}]")
         return " ".join(extras)
-
-    async def _fetch_channel_history(self, channel, limit: int) -> list[str]:
-        """디스코드 API로 채널 히스토리를 가져와서 텍스트로 변환 (답글 구조 포함)"""
-        messages = []
-        async for msg in channel.history(limit=limit):
-            messages.append(msg)
-        messages.reverse()
-        lines = []
-        last_line = ""
-        for msg in messages:
-            name = self.persona.name if (self.user and msg.author.id == self.user.id) else msg.author.display_name
-            text = msg.content
-            extras = self._extract_extras(msg)
-            if extras:
-                text = f"{text} {extras}" if text else extras
-            for user in msg.mentions:
-                text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
-                text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
-            # 답글 여부
-            ref_msg = None
-            if msg.reference:
-                ref_msg = msg.reference.resolved
-                if not ref_msg and msg.reference.message_id:
-                    try:
-                        ref_msg = await channel.fetch_message(msg.reference.message_id)
-                    except Exception:
-                        pass
-            if ref_msg:
-                ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
-                ref_text = ref_msg.content[:50]
-                ref_extras = self._extract_extras(ref_msg)
-                if ref_extras:
-                    ref_text = f"{ref_text} {ref_extras}" if ref_text else ref_extras
-                for u in ref_msg.mentions:
-                    ref_text = ref_text.replace(f"<@{u.id}>", f"@{u.display_name}")
-                    ref_text = ref_text.replace(f"<@!{u.id}>", f"@{u.display_name}")
-                line = f"{name} [원본: {ref_name}이 쓴 \"{ref_text}\"]: {text}"
-            else:
-                line = f"{name}: {text}"
-            # 중복 제거 + 봇 에러 메시지 제거
-            is_error = (name == self.persona.name and text in self._error_messages)
-            if line != last_line and not is_error:
-                lines.append(line)
-                last_line = line
-        return lines
-
-    async def _build_context(self, channel_id: int, user_id: str, guild) -> dict:
-        """현재 채널은 API로, 다른 채널은 버퍼로 (현재 채널은 버퍼에서 제외)"""
-        current_channel = self.get_channel(channel_id)
-        ch_lines = await self._fetch_channel_history(current_channel, BUFFER_SIZE) if current_channel else []
-
-        current_ch_name = getattr(current_channel, "name", "") if current_channel else ""
-        global_lines = []
-        for msg in self.global_buffer:
-            if msg["channel_name"] == current_ch_name:
-                continue
-            name = self.persona.name if msg["is_bot"] else msg["user_name"]
-            global_lines.append(f"[#{msg['channel_name']}] {name}: {msg['text']}")
-        global_lines = global_lines[-BUFFER_SIZE:]
-
-        user = self.get_user(int(user_id))
-        user_name = user.display_name if user else user_id
-        user_lines = [l for l in ch_lines if l.startswith(f"{user_name}")][-5:]
-
-        return {
-            "channel": "\n".join(ch_lines),
-            "global": "\n".join(global_lines),
-            "user": "\n".join(user_lines),
-        }
-
-    @staticmethod
-    def _clean_reply(text: str) -> str:
-        """응답에서 쓰레기 데이터 정리"""
-        lines = text.split("\n")
-        cleaned = []
-        for l in lines:
-            s = l.strip()
-            if s.startswith("{") or s.startswith("<"):
-                continue
-            if s.startswith("[") and not s.startswith("[원본:"):
-                continue
-            if "(" in s and ")" in s and any(kw in s for kw in ["print(", "search(", "import ", "def ", "await ", "return "]):
-                continue
-            cleaned.append(l)
-        text = "\n".join(cleaned).strip()
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        # 잔여 멘션 태그 제거
-        text = re.sub(r"<@!?\d+>", "", text).strip()
-        # 내부 도구 이름 노출 방지
-        tool_names = ["list_entries", "search_entries", "get_entry_detail", "send_file",
-                      "save_memory", "add_knowledge", "add_entry_alias", "add_alias",
-                      "web_search", "search(", "recall_"]
-        if text and any(tn in text for tn in tool_names):
-            return ""
-        return text
-
-    async def _web_search(self, query: str, prompt: str, past_replies: set = None) -> str:
-        """Google Search로 웹 검색 후 정리된 답변 반환"""
-        if "[원본:" in query:
-            idx = query.find("]")
-            if idx != -1:
-                query = query[idx + 1:].strip()
-        from librarian.tools import google_search_tool
-        web_history = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-        web_config = types.GenerateContentConfig(
-            system_instruction=prompt,
-            tools=google_search_tool,
-            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-            temperature=1.0,
-        )
-        for _ in range(len(self._gemini_clients) * 2):
-            today = date.today()
-            self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
-            idx = self._client_index
-            self._client_index = (self._client_index + 1) % len(self._gemini_clients)
-            if idx in self._dead_until:
-                continue
-            client = self._gemini_clients[idx]
-            try:
-                response = client.models.generate_content(
-                    model=MODEL, contents=web_history, config=web_config)
-                if response.candidates and response.candidates[0].content.parts:
-                    for part in response.candidates[0].content.parts:
-                        if part.text:
-                            logger.info(f"웹 검색 원문: {part.text[:100]}")
-                            cleaned = self._clean_reply(part.text)
-                            if cleaned:
-                                norm = cleaned.replace("\ufe0f", "").strip()
-                                if past_replies and norm in past_replies:
-                                    logger.warning(f"웹 검색 반복: {cleaned[:50]}...")
-                                    return ""
-                                return cleaned
-                return ""
-            except ClientError as e:
-                if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
-                    self._dead_until[idx] = date.today() + timedelta(days=1)
-                    logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
-                continue
-            except Exception:
-                continue
-        return ""
 
     async def on_ready(self):
         await self.library_db.init()
@@ -260,13 +85,6 @@ class AILibrarianBot(discord.Client):
 
         if message.author.bot:
             if self.user and message.author.id == self.user.id:
-                self._add_to_buffer(
-                    message.channel.id, channel_name,
-                    str(message.author.id),
-                    self.persona.name,
-                    message.content,
-                    is_bot=True,
-                )
                 server_log.log(guild=guild_name, channel=channel_name,
                                author=self.persona.name, content=message.content, is_bot=True)
             return
@@ -279,13 +97,8 @@ class AILibrarianBot(discord.Client):
 
         server_log.log(guild=guild_name, channel=channel_name,
                        author=message.author.display_name, content=text)
-        self._add_to_buffer(
-            message.channel.id, channel_name,
-            str(message.author.id),
-            message.author.display_name,
-            text,
-        )
 
+        # 멘션 체크
         bot_mentioned = self.user and self.user in message.mentions
         role_mentioned = False
         if not bot_mentioned and self.user and message.guild:
@@ -296,12 +109,14 @@ class AILibrarianBot(discord.Client):
         if not bot_mentioned and not role_mentioned:
             return
 
+        # 멘션 태그 제거
         for mention in [f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
             text = text.replace(mention, "")
         for role in message.role_mentions:
             text = text.replace(f"<@&{role.id}>", "")
         text = text.strip()
 
+        # 첨부/임베드 정보 추가
         msg_extras = self._extract_extras(message)
         if msg_extras:
             text = f"{text} {msg_extras}" if text else msg_extras
@@ -309,6 +124,7 @@ class AILibrarianBot(discord.Client):
         if not text:
             text = ""
 
+        # 답글 맥락
         if message.reference:
             ref_msg = message.reference.resolved
             if not ref_msg and message.reference.message_id:
@@ -328,59 +144,28 @@ class AILibrarianBot(discord.Client):
                     ref_name = self.persona.name if (self.user and ref_msg.author.id == self.user.id) else ref_msg.author.display_name
                     text = f"[원본: {ref_name}이 쓴 \"{ref_content}\"] {text}"
 
-        web_keywords = ["검색해", "구글링해", "웹검색", "구글 검색",
-                        "조사해", "알아봐",
-                        "뉴스 알려", "소식 알려", "시세 알려", "날씨 알려"]
-        text_normalized = " ".join(text.split())
-        use_web = any(kw in text_normalized for kw in web_keywords)
-
+        # 채널 락
         ch_id = message.channel.id
         if ch_id not in self._channel_locks:
             self._channel_locks[ch_id] = asyncio.Lock()
 
         async with self._channel_locks[ch_id]:
             async with message.channel.typing():
-                reply_text, file_to_send, ai_saved, _meta = await self._ask_gemini(
+                reply_text, file_to_send, _meta = await self._ask_gemini(
                     channel_id=ch_id,
                     user_id=str(message.author.id),
                     user_name=message.author.display_name,
                     user_text=text,
                     guild=message.guild,
-                    use_web=use_web,
                 )
 
-        if text and not ai_saved:
-            clean_text = text
-            if self.user:
-                for tag in [f"@{self.persona.name}", f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
-                    clean_text = clean_text.replace(tag, "").strip()
-            text_lower = text.lower()
-            display = message.author.display_name
-
-            has_question = "?" in text
-            confirm_patterns = ["알았어", "알았지", "알겠어", "알겠지", "알겠니", "알겠냐"]
-            is_question = has_question and not any(cp in text_lower for cp in confirm_patterns)
-
-            if not is_question and any(kw in text_lower for kw in self._memory_triggers):
-                await self.librarian_db.save(f"{display}: {clean_text}")
-                logger.info(f"학습 저장: {clean_text}")
-
-            elif (len(clean_text) >= 10
-                  and "?" not in clean_text
-                  and "[원본:" not in clean_text
-                  and not any(q in clean_text for q in ["뭐", "누구", "알아", "몇", "어디", "언제", "왜"])
-                  and re.search(r'.+[은는이가]\s+.+(?:이야|이다|야|다|임)$', clean_text)):
-                await self.librarian_db.save(clean_text)
-                logger.info(f"설명식 학습 저장: {clean_text}")
-
         if not reply_text and not file_to_send:
-            logger.warning("모든 시도 실패 - 에러 메시지 출력")
+            logger.warning("응답 없음 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
-        # 구조화된 대화 로그
         chat_log.log_chat(
             guild=guild_name,
             channel=channel_name,
@@ -391,8 +176,8 @@ class AILibrarianBot(discord.Client):
             tools_called=_meta["tools_called"],
             tool_results=_meta["tool_results"],
             has_file=file_to_send is not None,
-            retries=_meta["retries"],
-            web_search=use_web,
+            retries=0,
+            web_search=False,
             error=_meta["error"],
         )
 
@@ -403,17 +188,20 @@ class AILibrarianBot(discord.Client):
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
-                          guild=None, use_web=False) -> tuple[str, discord.File | None, bool, dict]:
-        """Gemini에게 질문하고 응답 + 파일(있으면) + AI저장여부 + 메타 반환"""
-        _meta = {"tools_called": [], "tool_results": [], "retries": 0, "error": None}
+                          guild=None) -> tuple[str, discord.File | None, dict]:
+        """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
+        _meta = {"tools_called": [], "tool_results": [], "error": None}
+
         if channel_id not in self.chat_histories:
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
 
+        # 프롬프트 조립: 페르소나 → 규칙 → 상황 → 리마인더 → 페르소나
         parts = []
         parts.append(self.persona.persona_text)
         parts.append(self.persona.prompt_text)
 
+        # 상황 정보
         admin_names = []
         if guild:
             for aid in ADMIN_IDS:
@@ -444,16 +232,13 @@ class AILibrarianBot(discord.Client):
             info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
         parts.append(info_block)
 
-        ctx = await self._build_context(channel_id, user_id, guild)
-        if ctx["channel"]:
-            parts.append(f"## 현재 채널 대화\n{ctx['channel']}")
-
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.persona_text)
 
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
 
+        # 유저 메시지
         if user_text:
             user_content = f"{user_name}: {user_text}"
         else:
@@ -462,96 +247,22 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
         file_to_send = None
-        ai_saved = False
-        history_snapshot = len(history)
 
-        def _gen_config():
-            return types.GenerateContentConfig(
-                system_instruction=dynamic_prompt,
-                tools=library_tools,
-                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                temperature=0.8,
-            )
-
-        def _next_client():
-            today = date.today()
-            self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
-            for _ in range(len(self._gemini_clients)):
-                idx = self._client_index
-                self._client_index = (self._client_index + 1) % len(self._gemini_clients)
-                if idx not in self._dead_until:
-                    return idx, self._gemini_clients[idx]
-            return None, None
-
-        def _call_gemini(contents):
-            last_err = None
-            max_attempts = len(self._gemini_clients) * 2
-            for _ in range(max_attempts):
-                idx, client = _next_client()
-                if client is None:
-                    break
-                try:
-                    return client.models.generate_content(
-                        model=MODEL, contents=contents, config=_gen_config(),
-                    )
-                except ClientError as e:
-                    if e.status == "INVALID_ARGUMENT":
-                        raise
-                    if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
-                        self._dead_until[idx] = date.today() + timedelta(days=1)
-                        logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
-                    else:
-                        logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
-                    last_err = e
-                    continue
-                except Exception as e:
-                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
-                    last_err = e
-                    continue
-            if last_err:
-                raise last_err
-            raise ClientError("모든 API 키 소진")
+        config = types.GenerateContentConfig(
+            system_instruction=dynamic_prompt,
+            tools=library_tools,
+            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+            temperature=0.8,
+        )
 
         try:
-            def _normalize(t):
-                return t.replace("\ufe0f", "").strip()
+            response = self._call_gemini(history, config)
 
-            past_replies = set()
-            for h in history:
-                if h.role == "model" and h.parts and h.parts[0].text:
-                    past_replies.add(_normalize(h.parts[0].text))
-            bot_name = self.persona.name
-            for line in (ctx.get("channel", "") or "").split("\n"):
-                if line.startswith(f"{bot_name}: "):
-                    past_replies.add(_normalize(line.split(": ", 1)[1]))
-                elif line.startswith(f"{bot_name} ["):
-                    idx = line.find("]: ")
-                    if idx != -1:
-                        past_replies.add(_normalize(line[idx + 3:]))
-
-            if use_web:
-                logger.info("웹 검색 모드")
-                reply = await self._web_search(user_text, dynamic_prompt, past_replies)
-                if not reply:
-                    logger.info("웹 검색 재시도 (맥락 제거)")
-                    clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
-                    clean_prompt = "\n\n".join(p for p in clean_parts if p)
-                    reply = await self._web_search(user_text, clean_prompt, past_replies)
-                if reply:
-                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                    if len(history) > 6:
-                        self.chat_histories[channel_id] = history[-6:]
-                    if len(reply) > 2000:
-                        reply = reply[:1997] + "..."
-                    return reply, file_to_send, ai_saved, _meta
-                _meta["error"] = "web_search_failed"
-                return self.persona.error_message, None, False, _meta
-
-            response = _call_gemini(history)
-
+            # function call 루프 (최대 5회)
             for _ in range(5):
                 if not response.candidates or not response.candidates[0].content.parts:
                     break
+
                 fc = None
                 for part in response.candidates[0].content.parts:
                     if part.function_call:
@@ -562,22 +273,43 @@ class AILibrarianBot(discord.Client):
 
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
-                if fc.name in ("save_memory", "add_knowledge"):
-                    ai_saved = True
 
+                # web_search 도구: Google Search grounding으로 전환
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                     logger.info(f"AI 판단 웹 검색: {query}")
-                    reply = await self._web_search(query, dynamic_prompt, past_replies)
-                    if reply:
-                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-                        if len(history) > 6:
-                            self.chat_histories[channel_id] = history[-6:]
-                        if len(reply) > 2000:
-                            reply = reply[:1997] + "..."
-                        return reply, file_to_send, ai_saved, _meta
+                    from librarian.tools import google_search_tool
+                    web_config = types.GenerateContentConfig(
+                        system_instruction=dynamic_prompt,
+                        tools=google_search_tool,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=1.0,
+                    )
+                    web_history = list(history) + [
+                        response.candidates[0].content,
+                        types.Content(role="user", parts=[types.Part.from_function_response(
+                            name="web_search",
+                            response={"instruction": f"Google에서 '{query}'를 검색해서 구체적인 정보를 답변에 포함해."},
+                        )]),
+                    ]
+                    try:
+                        web_response = self._call_gemini(web_history, web_config)
+                        if web_response.candidates and web_response.candidates[0].content.parts:
+                            for p in web_response.candidates[0].content.parts:
+                                if p.text:
+                                    reply = p.text.strip()
+                                    if reply:
+                                        logger.info(f"웹 검색 결과: {reply[:100]}")
+                                        history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+                                        self._trim_history(channel_id)
+                                        if len(reply) > 2000:
+                                            reply = reply[:1997] + "..."
+                                        return reply, file_to_send, _meta
+                    except Exception as e:
+                        logger.warning(f"웹 검색 실패: {e}")
                     break
 
+                # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
                 if fc.name in ("search", "save_memory"):
                     tool_args["_user_id"] = user_id
@@ -586,6 +318,7 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"도구 결과: {tool_result[:200]}")
                 _meta["tool_results"].append(tool_result[:200])
 
+                # send_file 액션
                 if tool_data.get("_action") == "send_file":
                     save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
@@ -602,111 +335,25 @@ class AILibrarianBot(discord.Client):
                 ))
 
                 try:
-                    response = _call_gemini(history)
+                    response = self._call_gemini(history, config)
                 except Exception:
                     self.chat_histories[channel_id] = []
                     raise
 
+            # 최종 응답 추출
             if not response.candidates or not response.candidates[0].content.parts:
                 logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
                 _meta["error"] = "safety_filter"
-                return "", None, False, _meta
+                return "", None, _meta
 
             reply_parts = []
             for part in response.candidates[0].content.parts:
                 if part.text:
-                    logger.info(f"원문: {part.text[:100]}")
-                    cleaned = self._clean_reply(part.text)
-                    if cleaned:
-                        reply_parts.append(cleaned)
+                    text = part.text.strip()
+                    if text:
+                        logger.info(f"원문: {text[:100]}")
+                        reply_parts.append(text)
             reply = "\n".join(reply_parts) if reply_parts else ""
-
-            norm_reply = _normalize(reply) if reply else ""
-            logger.info(f"반복 비교: reply={norm_reply[:50] if norm_reply else '없음'}... past={len(past_replies)}개")
-            if norm_reply and norm_reply in past_replies:
-                logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
-                _meta["retries"] += 1
-                self.chat_histories[channel_id] = []
-                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
-                clean_prompt = "\n\n".join(p for p in clean_parts if p)
-                def _clean_config():
-                    return types.GenerateContentConfig(
-                        system_instruction=clean_prompt,
-                        tools=library_tools,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=0.9,
-                    )
-                try:
-                    clean_history = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
-
-                    def _retry_call(contents):
-                        last_err = None
-                        for _ in range(len(self._gemini_clients) * 2):
-                            ri, rc = _next_client()
-                            if rc is None:
-                                break
-                            try:
-                                return rc.models.generate_content(
-                                    model=MODEL, contents=contents, config=_clean_config())
-                            except Exception as e:
-                                last_err = e
-                                continue
-                        if last_err:
-                            raise last_err
-
-                    response = _retry_call(clean_history)
-                    if response:
-                        for _ in range(5):
-                            if not response.candidates or not response.candidates[0].content.parts:
-                                break
-                            fc = None
-                            for part in response.candidates[0].content.parts:
-                                    fc = part.function_call
-                                    break
-                            if not fc:
-                                break
-                            logger.info(f"도구 호출 (재시도): {fc.name}({fc.args})")
-
-                            if fc.name == "web_search":
-                                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
-                                logger.info(f"재시도 웹 검색: {query}")
-                                reply = await self._web_search(query, clean_prompt, past_replies)
-                                if reply:
-                                    return reply, file_to_send, ai_saved, _meta
-                                break
-
-                            tool_args = dict(fc.args) if fc.args else {}
-                            if fc.name in ("search", "save_memory"):
-                                tool_args["_user_id"] = user_id
-                            tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-                            tool_data = json.loads(tool_result)
-                            logger.info(f"도구 결과: {tool_result[:200]}")
-
-                            clean_history.append(response.candidates[0].content)
-                            clean_history.append(types.Content(role="user", parts=[types.Part.from_function_response(
-                                name=fc.name, response=tool_data)]))
-                            response = _retry_call(clean_history)
-                        reply_parts = []
-                        for part in response.candidates[0].content.parts:
-                            if part.text:
-                                cleaned = self._clean_reply(part.text)
-                                if cleaned:
-                                    reply_parts.append(cleaned)
-                        reply = "\n".join(reply_parts) if reply_parts else ""
-                        if reply and _normalize(reply) in past_replies:
-                            logger.warning(f"2차 재시도에서도 반복: {reply[:50]}...")
-                            reply = ""
-                except Exception as e:
-                    logger.error(f"재시도 실패: {e}")
-                    reply = ""
-
-            # 3차: 웹 검색 폴백
-            if not reply and user_text:
-                logger.info("3차 웹 검색 폴백")
-                _meta["retries"] += 1
-                clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
-                web_prompt = "\n\n".join(p for p in clean_parts if p)
-                reply = await self._web_search(user_text, web_prompt, past_replies)
 
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
@@ -714,13 +361,12 @@ class AILibrarianBot(discord.Client):
                 if history and history[-1].role == "user":
                     history.pop()
 
-            if len(history) > 6:
-                self.chat_histories[channel_id] = history[-6:]
+            self._trim_history(channel_id)
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
 
-            return reply, file_to_send, ai_saved, _meta
+            return reply, file_to_send, _meta
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
@@ -730,16 +376,56 @@ class AILibrarianBot(discord.Client):
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
                     _meta["error"] = "daily_limit"
-                    return self.persona.daily_limit_message, None, False, _meta
+                    return self.persona.daily_limit_message, None, _meta
                 else:
                     logger.warning("분당 한도 초과")
                     _meta["error"] = "rate_limit"
-                    return self.persona.rate_limit_message, None, False, _meta
+                    return self.persona.rate_limit_message, None, _meta
             _meta["error"] = f"client_error:{e.status}"
-            return self.persona.error_message, None, False, _meta
+            return self.persona.error_message, None, _meta
 
         except Exception as e:
             self.chat_histories[channel_id] = []
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             _meta["error"] = f"{type(e).__name__}"
-            return self.persona.error_message, None, False, _meta
+            return self.persona.error_message, None, _meta
+
+    def _call_gemini(self, contents, config):
+        """살아있는 키로 호출, 실패 시 다음 키로 재시도"""
+        last_err = None
+        max_attempts = len(self._gemini_clients) * 2
+        for _ in range(max_attempts):
+            today = date.today()
+            self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
+            idx = self._client_index
+            self._client_index = (self._client_index + 1) % len(self._gemini_clients)
+            if idx in self._dead_until:
+                continue
+            client = self._gemini_clients[idx]
+            try:
+                return client.models.generate_content(
+                    model=MODEL, contents=contents, config=config,
+                )
+            except ClientError as e:
+                if e.status == "INVALID_ARGUMENT":
+                    raise
+                if e.status == "RESOURCE_EXHAUSTED" and "PerDay" in str(e):
+                    self._dead_until[idx] = date.today() + timedelta(days=1)
+                    logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
+                else:
+                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                last_err = e
+                continue
+            except Exception as e:
+                logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                last_err = e
+                continue
+        if last_err:
+            raise last_err
+        raise ClientError("모든 API 키 소진")
+
+    def _trim_history(self, channel_id: int):
+        """히스토리를 MAX_HISTORY 턴으로 제한"""
+        history = self.chat_histories.get(channel_id)
+        if history and len(history) > MAX_HISTORY:
+            self.chat_histories[channel_id] = history[-MAX_HISTORY:]
