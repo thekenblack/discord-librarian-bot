@@ -143,7 +143,7 @@ class AILibrarianBot(discord.Client):
             text = ""
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
-        reply_chain = await self._build_reply_chain(message)
+        reply_chain, seen_filenames = await self._build_reply_chain(message)
         pre_context = await self._build_pre_context(message)
 
         # 채널 락
@@ -162,6 +162,7 @@ class AILibrarianBot(discord.Client):
                     reply_chain=reply_chain,
                     pre_context=pre_context,
                     attachments=message.attachments,
+                    seen_filenames=seen_filenames,
                 )
 
         if not reply_text and not file_to_send:
@@ -180,7 +181,8 @@ class AILibrarianBot(discord.Client):
                           user_name: str, user_text: str,
                           guild=None, reply_chain: list[str] = None,
                           pre_context: list[str] = None,
-                          attachments: list = None) -> tuple[str, discord.File | None, dict]:
+                          attachments: list = None,
+                          seen_filenames: list[str] = None) -> tuple[str, discord.File | None, dict]:
         """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
@@ -240,7 +242,7 @@ class AILibrarianBot(discord.Client):
 
         # 최근 웹 검색 / 미디어 인식 결과
         recent_web = await self.librarian_db.get_recent_web_results(5)
-        recent_media = await self.librarian_db.get_recent_media_results(5)
+        recent_media = await self.librarian_db.get_recent_media_results(5, exclude_filenames=seen_filenames or [])
         cache_lines = []
         for w in recent_web:
             cache_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
@@ -374,7 +376,10 @@ class AILibrarianBot(discord.Client):
                                 )
                                 media_result = self._extract_reply(media_response)
                                 if media_result:
-                                    await self.librarian_db.save_media_result(att.filename, media_result, user_name)
+                                    # user_name = 멘션한 사람, uploader = 파일 올린 사람
+                                    uploader = att.filename  # 첨부파일은 현재 메시지에서 오므로 message.author
+                                    await self.librarian_db.save_media_result(
+                                        att.filename, media_result, user_name=user_name, uploader=user_name)
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:
@@ -555,9 +560,10 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
-    async def _build_reply_chain(self, message) -> list[str]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""
+    async def _build_reply_chain(self, message) -> tuple[list[str], list[str]]:
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. 첨부파일명도 수집."""
         chain = []
+        seen_filenames = []
         current = message
         while current.reference:
             ref = current.reference.resolved
@@ -576,6 +582,8 @@ class AILibrarianBot(discord.Client):
             extras = await self._extract_extras(ref)
             if extras:
                 content = f"{content} {extras}" if content else extras
+            for att in ref.attachments:
+                seen_filenames.append(att.filename)
             chain.append(f"{name}: {content}")
             current = ref
         chain.reverse()
@@ -586,7 +594,7 @@ class AILibrarianBot(discord.Client):
             tail = chain[-5:]
             chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
 
-        return chain
+        return chain, seen_filenames
 
     async def _build_pre_context(self, message, limit=10) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""

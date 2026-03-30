@@ -35,6 +35,7 @@ conn.execute("""
         filename   TEXT NOT NULL,
         result     TEXT NOT NULL,
         user_name  TEXT,
+        uploader   TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
 """)
