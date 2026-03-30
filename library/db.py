@@ -288,6 +288,12 @@ class LibraryDB:
             await db.execute("UPDATE files SET hidden = ? WHERE id = ?", (1 if hidden else 0, file_id))
             await db.commit()
 
+    async def unassign_page_books(self, page_id: int):
+        """페이지의 엔트리들을 미배정(0)으로"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("UPDATE books SET page_id = 0 WHERE page_id = ?", (page_id,))
+            await db.commit()
+
     async def set_page_hidden(self, page_id: int, hidden: bool):
         async with aiosqlite.connect(self.path) as db:
             await db.execute("UPDATE pages SET hidden = ? WHERE id = ?", (1 if hidden else 0, page_id))

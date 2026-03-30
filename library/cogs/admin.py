@@ -372,6 +372,30 @@ class AdminHideView(BotView):
         self.stop()
 
 
+class PageHideConfirmView(BotView):
+    def __init__(self, bot, page: dict, entry_count: int):
+        super().__init__(timeout=30)
+        self.bot = bot
+        self.page = page
+        self.entry_count = entry_count
+
+    @discord.ui.button(label="숨기기 (미배정으로 이동)", style=discord.ButtonStyle.danger, row=0)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.bot.db.unassign_page_books(self.page["id"])
+        await self.bot.db.set_page_hidden(self.page["id"], True)
+        await interaction.response.edit_message(
+            embed=success_embed("변경 완료", f"**{self.page['title']}** → 숨김\n엔트리 {self.entry_count}개가 미배정으로 이동됨"),
+            view=None)
+        self.stop()
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, row=0)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=info_embed("취소됨", "페이지 숨기기가 취소되었습니다."),
+            view=None)
+        self.stop()
+
+
 class AdminPagesView(BotView):
     def __init__(self, bot, pages: list[dict]):
         super().__init__(timeout=120)
@@ -424,11 +448,28 @@ class AdminPageActionView(BotView):
     @discord.ui.button(label="숨기기", style=discord.ButtonStyle.danger, row=0)
     async def hide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_hidden = self.page.get("hidden", 0)
-        await self.bot.db.set_page_hidden(self.page["id"], not is_hidden)
-        status = "숨김" if not is_hidden else "공개"
-        await interaction.response.edit_message(
-            embed=success_embed("변경 완료", f"**{self.page['title']}** → {status}"),
-            view=None)
+        if is_hidden:
+            # 보이기로 바꾸기 — 바로 실행
+            await self.bot.db.set_page_hidden(self.page["id"], False)
+            await interaction.response.edit_message(
+                embed=success_embed("변경 완료", f"**{self.page['title']}** → 공개"),
+                view=None)
+            self.stop()
+            return
+        # 숨기기 — 엔트리 확인
+        books = await self.bot.db.list_all_books(include_hidden=True)
+        page_books = [b for b in books if b.get("page_id") == self.page["id"]]
+        if page_books:
+            view = PageHideConfirmView(self.bot, self.page, len(page_books))
+            view._message_ref = getattr(self, "_message_ref", None)
+            await interaction.response.edit_message(
+                embed=info_embed("확인", f"이 페이지에 엔트리 {len(page_books)}개가 있습니다.\n숨기면 해당 엔트리들은 미배정으로 이동됩니다."),
+                view=view)
+        else:
+            await self.bot.db.set_page_hidden(self.page["id"], True)
+            await interaction.response.edit_message(
+                embed=success_embed("변경 완료", f"**{self.page['title']}** → 숨김"),
+                view=None)
         self.stop()
 
     @discord.ui.button(label="← 돌아가기", style=discord.ButtonStyle.secondary, row=0)
