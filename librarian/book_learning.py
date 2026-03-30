@@ -4,6 +4,8 @@
 
 import os
 import logging
+import asyncio
+from functools import partial
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY, FILES_DIR, GEMINI_MODEL
@@ -44,23 +46,28 @@ async def learn_book(librarian_db, book_id: int, title: str, filename: str, stor
         logger.info(f"도서 학습 시작: 《{title}》 ({len(data):,} bytes)")
 
         client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[
-                types.Content(role="user", parts=[
-                    types.Part.from_bytes(data=data, mime_type=mime_type),
-                    types.Part.from_text(text=(
-                        f"이 책의 제목은 《{title}》이다. "
-                        "사서가 이 책의 내용을 숙지할 수 있도록 상세하게 설명해. "
-                        "핵심 주장, 주요 개념, 챕터별 내용, 인상적인 구절이나 수치를 빠짐없이 포함해."
-                    )),
-                ]),
-            ],
-            config=types.GenerateContentConfig(
-                max_output_tokens=8192,
-                temperature=0.3,
-            ),
-        )
+
+        def _call_gemini():
+            return client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
+                    types.Content(role="user", parts=[
+                        types.Part.from_bytes(data=data, mime_type=mime_type),
+                        types.Part.from_text(text=(
+                            f"이 책의 제목은 《{title}》이다. "
+                            "사서가 이 책의 내용을 숙지할 수 있도록 상세하게 설명해. "
+                            "핵심 주장, 주요 개념, 챕터별 내용, 인상적인 구절이나 수치를 빠짐없이 포함해."
+                        )),
+                    ]),
+                ],
+                config=types.GenerateContentConfig(
+                    max_output_tokens=8192,
+                    temperature=0.3,
+                ),
+            )
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, _call_gemini)
 
         result = ""
         if response.candidates and response.candidates[0].content.parts:
