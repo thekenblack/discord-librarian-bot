@@ -261,12 +261,53 @@ def get_prompt_block() -> str:
         if weather_parts:
             block += "\n\n## 날씨\n" + " | ".join(weather_parts)
 
-    # 뉴스
-    if _news_cache["domestic"] or _news_cache["international"]:
-        block += "\n\n## 뉴스"
-        if _news_cache["domestic"]:
-            block += "\n[국내] " + " | ".join(_news_cache["domestic"])
-        if _news_cache["international"]:
-            block += "\n[국제] " + " | ".join(_news_cache["international"])
-
     return block
+
+
+def get_news() -> dict:
+    """뉴스 캐시 반환 (search용)"""
+    return _news_cache
+
+
+async def get_weather_for(city_name: str) -> str | None:
+    """도시명으로 날씨 조회 (국내 캐시 → 없으면 geocoding → Open-Meteo)"""
+    # 국내 캐시 확인
+    if city_name in _weather_cache:
+        w = _weather_cache[city_name]
+        if w.get("temp") is not None:
+            return f"{city_name} {w['temp']:.0f}°C {w['desc']}"
+
+    # 국제: geocoding → 날씨 조회
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city_name}&count=1&language=ko"
+            async with session.get(geo_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                geo = await resp.json()
+                results = geo.get("results")
+                if not results:
+                    return None
+                lat = results[0]["latitude"]
+                lon = results[0]["longitude"]
+                name = results[0].get("name", city_name)
+
+            weather_url = (
+                f"https://api.open-meteo.com/v1/forecast?"
+                f"latitude={lat}&longitude={lon}"
+                f"&current=temperature_2m,weather_code"
+                f"&timezone=auto"
+            )
+            async with session.get(weather_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                current = data.get("current", {})
+                temp = current.get("temperature_2m")
+                code = current.get("weather_code", 0)
+                if temp is not None:
+                    return f"{name} {temp:.0f}°C {WMO_CODES.get(code, '알 수 없음')}"
+    except Exception as e:
+        logger.warning(f"날씨 조회 실패 ({city_name}): {e}")
+    return None

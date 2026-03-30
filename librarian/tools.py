@@ -7,6 +7,7 @@ from google.genai import types
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
+from librarian.bitcoin_data import get_news, get_weather_for
 
 # ── 도구 정의 ────────────────────────────────────────
 
@@ -16,7 +17,7 @@ library_tools = [
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
             name="search",
-            description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해.",
+            description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -178,6 +179,24 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         result = {}
         for cat, items in merged.items():
             result[cat] = list(items)[:10]
+        # 뉴스 키워드 감지
+        if "뉴스" in keyword or "news" in keyword.lower() or "헤드라인" in keyword:
+            news = get_news()
+            if news["domestic"] or news["international"]:
+                result["news"] = news
+
+        # 날씨 키워드 감지
+        weather_keywords = ["날씨", "기온", "weather"]
+        if any(wk in keyword.lower() for wk in weather_keywords):
+            # 키워드에서 날씨 관련 단어 제거하고 도시명 추출
+            city = keyword
+            for wk in weather_keywords:
+                city = city.replace(wk, "").strip()
+            if city:
+                weather = await get_weather_for(city)
+                if weather:
+                    result["weather"] = weather
+
         if not result:
             result["info"] = f"'{keyword}'에 대해 아는 게 없음."
         if aliases_used:
