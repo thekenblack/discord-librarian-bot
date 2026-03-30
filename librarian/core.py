@@ -17,6 +17,7 @@ from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
 from librarian import server_log
+from librarian import bitcoin_data
 
 logger = logging.getLogger("AILibrarian")
 
@@ -92,6 +93,7 @@ class AILibrarianBot(discord.Client):
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
         ))
+        asyncio.create_task(bitcoin_data.start_background_update())
         self._ready = True
 
     async def on_message(self, message: discord.Message):
@@ -231,6 +233,11 @@ class AILibrarianBot(discord.Client):
         if LIGHTNING_ADDRESS:
             info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
         parts.append(info_block)
+
+        # 비트코인 실시간 데이터
+        btc_block = bitcoin_data.get_prompt_block()
+        if btc_block:
+            parts.append(btc_block)
 
         # 채널 맥락 (답글 체인 시작점 직전 또는 멘션 직전)
         if pre_context:
