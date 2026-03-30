@@ -620,7 +620,11 @@ class LibraryCog(commands.Cog):
         import asyncio
         from librarian.db import LibrarianDB
         from librarian.book_learning import learn_book
-        asyncio.create_task(learn_book(LibrarianDB(), book_id, title, download_name, stored_name))
+        async def _learn_task():
+            db = LibrarianDB()
+            await db.init()
+            await learn_book(db, book_id, title, download_name, stored_name)
+        asyncio.create_task(_learn_task())
 
         return file_id
 
