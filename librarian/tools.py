@@ -128,6 +128,17 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
+            name="set_mood",
+            description="현재 대화 상대에 대한 감정을 설정. 대화 톤에 반영됨. 0=최악 100=최고. 매 대화마다 호출해.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "score": types.Schema(type="INTEGER", description="감정 점수 (0-100)"),
+                },
+                required=["score"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="recognize_media",
             description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 '이거 뭐야', '읽어봐' 같은 요청을 하면 사용.",
             parameters=types.Schema(

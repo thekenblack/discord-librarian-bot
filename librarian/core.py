@@ -18,6 +18,7 @@ from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
 from librarian import server_log
 from librarian import bitcoin_data
+from librarian.mood import MoodSystem
 
 logger = logging.getLogger("AILibrarian")
 
@@ -37,6 +38,7 @@ class AILibrarianBot(discord.Client):
         self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[int, list] = {}
         self._channel_locks: dict[int, asyncio.Lock] = {}
+        self._mood = MoodSystem()
         self._ready = False
 
         self._error_messages = set(
@@ -239,6 +241,9 @@ class AILibrarianBot(discord.Client):
         if btc_block:
             parts.append(btc_block)
 
+        # 감정 상태
+        parts.append(self._mood.get_prompt_block(user_name))
+
         # 채널 맥락 (답글 체인 시작점 직전 또는 멘션 직전)
         if pre_context:
             parts.append("## 직전 대화\n" + "\n".join(pre_context))
@@ -422,6 +427,17 @@ class AILibrarianBot(discord.Client):
                     except Exception as e:
                         logger.warning(f"[1차] 미디어 인식 후 API 에러: {e}")
                         break
+                    continue
+
+                # set_mood 도구: 메모리에서 직접 처리 (API 재호출 불필요)
+                if fc.name == "set_mood":
+                    target = (dict(fc.args) if fc.args else {}).get("score", 50)
+                    self._mood.update(user_name, float(target))
+                    _meta["tool_results"].append(f"mood:{target}")
+                    # 텍스트 응답도 같이 있으면 그걸 쓰고, 아니면 루프 계속
+                    text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
+                    if text_parts:
+                        break  # 텍스트 응답 있으면 루프 종료 → 그 텍스트가 reply
                     continue
 
                 # 일반 도구 실행
