@@ -399,13 +399,13 @@ class AILibrarianBot(discord.Client):
                         logger.warning(f"웹 검색 실패: {e}")
 
                     if web_result:
-                        logger.info(f"웹 검색 결과: {web_result[:100]}")
+                        logger.info(f"웹 검색 결과: {web_result}")
                         await self.librarian_db.save_web_result(query, web_result, user_name)
-                        tool_data = {"result": web_result[:500]}
+                        tool_data = {"result": web_result}
                     else:
                         tool_data = {"result": f"'{query}' 검색 결과 없음"}
 
-                    _meta["tool_results"].append(f"web:{web_result[:200]}")
+                    _meta["tool_results"].append(f"web:{web_result}")
                     history.append(response.candidates[0].content)
                     history.append(types.Content(
                         role="user",
@@ -479,10 +479,11 @@ class AILibrarianBot(discord.Client):
                     else:
                         media_result = "첨부파일이 없어."
 
-                    tool_data = {"result": media_result[:500] if media_result else "인식 실패"}
+                    tool_data = {"result": media_result if media_result else "인식 실패"}
                     if media_result and stored_name:
                         tool_data["media_id"] = saved_media_id
-                    _meta["tool_results"].append(f"media:{media_result[:200]}")
+                    logger.info(f"미디어 인식 결과: {media_result}")
+                    _meta["tool_results"].append(f"media:{media_result}")
                     history.append(response.candidates[0].content)
                     history.append(types.Content(
                         role="user",
@@ -531,8 +532,9 @@ class AILibrarianBot(discord.Client):
                             logger.warning(f"링크 인식 실패: {e}")
                             link_result = f"페이지를 열 수 없었어."
 
-                    tool_data = {"result": link_result[:500] if link_result else "인식 실패"}
-                    _meta["tool_results"].append(f"link:{link_result[:200]}")
+                    tool_data = {"result": link_result if link_result else "인식 실패"}
+                    logger.info(f"링크 인식 결과: {link_result}")
+                    _meta["tool_results"].append(f"link:{link_result}")
                     history.append(response.candidates[0].content)
                     history.append(types.Content(
                         role="user",
@@ -559,8 +561,8 @@ class AILibrarianBot(discord.Client):
                     tool_args["_exclude_media_ids"] = media_ids
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
-                logger.info(f"도구 결과: {tool_result[:200]}")
-                _meta["tool_results"].append(tool_result[:200])
+                logger.info(f"도구 결과: {tool_result}")
+                _meta["tool_results"].append(tool_result)
 
                 # deliver 액션
                 if tool_data.get("_action") == "deliver":
@@ -612,7 +614,7 @@ class AILibrarianBot(discord.Client):
                 logger.warning(f"[1차] 빈 응답 → 에러 처리")
                 return "…미안, 지금 대답을 못 하겠어.", file_to_send, _meta
             else:
-                logger.info(f"[1차] 응답: {reply[:80]}")
+                logger.info(f"[1차] 응답: {reply}")
 
             # ── 반복 감지 시에만 재시도 ──────────
             def _is_repeat_reply(r):
@@ -635,7 +637,7 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[2차] API 호출")
                     r = self._extract_reply(self._call_gemini(clean_message, retry_config))
-                    logger.info(f"[2차] 응답: {'빈 응답' if not r else r[:80]}")
+                    logger.info(f"[2차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
                 except Exception as e:
@@ -654,7 +656,7 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[3차] API 호출")
                     r = self._extract_reply(self._call_gemini(clean_message, web_config))
-                    logger.info(f"[3차] 응답: {'빈 응답' if not r else r[:80]}")
+                    logger.info(f"[3차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
                 except Exception as e:
