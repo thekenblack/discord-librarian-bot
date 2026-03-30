@@ -292,8 +292,6 @@ class LibrarianDB:
 
     # ── 저장 ──────────────────────────────────────────────
 
-    MAX_LEARNED = 100
-
     async def forget(self, keyword: str) -> int:
         """키워드에 매칭되는 기억을 soft delete"""
         like = f"%{keyword}%"
@@ -315,11 +313,5 @@ class LibrarianDB:
             cursor = await db.execute(
                 "INSERT INTO learned (content, author, created_at) VALUES (?, ?, ?)",
                 (content, author, now))
-            # 오래된 기억 삭제 (최대 건수 초과 시)
-            await db.execute(f"""
-                DELETE FROM learned WHERE id NOT IN (
-                    SELECT id FROM learned ORDER BY id DESC LIMIT {self.MAX_LEARNED}
-                )
-            """)
             await db.commit()
             return cursor.lastrowid
