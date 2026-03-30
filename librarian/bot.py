@@ -19,11 +19,30 @@ file_handler = TimedRotatingFileHandler(
 )
 file_handler.suffix = "%Y-%m-%d"
 
+import zoneinfo
+_tz_name = os.getenv("TZ", "Asia/Seoul")
+try:
+    _tz = zoneinfo.ZoneInfo(_tz_name)
+except Exception:
+    _tz = None
+
+class _TZFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        from datetime import datetime, timezone
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        if _tz:
+            dt = dt.astimezone(_tz)
+        return dt.strftime(datefmt or "%Y-%m-%d %H:%M:%S")
+
+_formatter = _TZFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+file_handler.setFormatter(_formatter)
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        stream_handler,
         file_handler,
     ],
 )

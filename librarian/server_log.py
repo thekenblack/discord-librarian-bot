@@ -22,7 +22,23 @@ _handler = TimedRotatingFileHandler(
     encoding="utf-8",
 )
 _handler.suffix = "%Y-%m-%d"
-_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+
+import zoneinfo
+_tz_name = os.getenv("TZ", "Asia/Seoul")
+try:
+    _tz = zoneinfo.ZoneInfo(_tz_name)
+except Exception:
+    _tz = None
+
+class _TZFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        from datetime import datetime, timezone
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        if _tz:
+            dt = dt.astimezone(_tz)
+        return dt.strftime(datefmt or "%Y-%m-%d %H:%M:%S")
+
+_handler.setFormatter(_TZFormatter("%(asctime)s %(message)s"))
 _logger.addHandler(_handler)
 
 
