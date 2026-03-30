@@ -257,30 +257,9 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
             logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # 최근 웹 검색 / 미디어 인식 결과
-        user_web, other_web, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
-        user_media, other_media, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
-
-        cache_sections = []
-        user_lines = []
-        for w in user_web:
-            user_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:100]}")
-        for m in user_media:
-            user_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:100]}")
-        if user_lines:
-            cache_sections.append(f"[{user_name}의 조회]\n" + "\n".join(user_lines))
-
-        other_lines = []
-        for w in other_web:
-            other_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:100]}")
-        for m in other_media:
-            other_lines.append(f"- 미디어 '{m['filename']}': {m['result'][:100]}")
-        if other_lines:
-            cache_sections.append("[최근 조회]\n" + "\n".join(other_lines))
-
-        if cache_sections:
-            parts.append("## 최근 조회\n\n" + "\n\n".join(cache_sections))
-            logger.info(f"프롬프트 캐시: 웹 {len(user_web)+len(other_web)}건, 미디어 {len(user_media)+len(other_media)}건")
+        # 웹/미디어 ID 수집 (search 중복 제거용, 프롬프트에는 안 넣음)
+        _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
+        _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
 
         parts.append(self.persona.reminder_text)
         parts.append(self.persona.character_text)
@@ -395,7 +374,7 @@ class AILibrarianBot(discord.Client):
                                 data = await att.read()
                                 media_parts = [
                                     types.Part.from_bytes(data=data, mime_type=ct),
-                                    types.Part.from_text(text="이 파일의 내용을 설명해."),
+                                    types.Part.from_text(text="한 줄로 짧게 설명해."),
                                 ]
                                 media_config = types.GenerateContentConfig(
                                     max_output_tokens=AI_MAX_OUTPUT_TOKENS,
