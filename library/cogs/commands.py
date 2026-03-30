@@ -615,6 +615,13 @@ class LibraryCog(commands.Cog):
             file_size=file.size,
             mime_type=file.content_type,
         )
+
+        # 도서 학습 (백그라운드)
+        import asyncio
+        from librarian.db import LibrarianDB
+        from librarian.book_learning import learn_book
+        asyncio.create_task(learn_book(LibrarianDB(), book_id, title, download_name, stored_name))
+
         return file_id
 
     @library.command(name="add_file", description="파일을 라이브러리에 업로드")

@@ -316,7 +316,16 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-        return result
+            # 6. 도서 지식
+            cursor = await db.execute("""
+                SELECT source, content FROM book_knowledge
+                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                   OR source LIKE ?
+                LIMIT ?
+            """, (like, like_nospace, like, limit))
+            rows = [f"《{r['source']}》: {r['content']}" if r["source"] else r["content"] for r in await cursor.fetchall()]
+            if rows:
+                result["도서"] = rows
 
         return result
 
@@ -420,6 +429,21 @@ class LibrarianDB:
                 (filename, result, user_name, uploader, stored_name))
             await db.commit()
             return cursor.lastrowid
+
+    async def save_book_knowledge(self, book_id: int, content: str, source: str = None):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO book_knowledge (book_id, content, source) VALUES (?, ?, ?)",
+                (book_id, content, source))
+            await db.commit()
+
+    async def has_book_knowledge(self, book_id: int) -> bool:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM book_knowledge WHERE book_id = ?",
+                (book_id,))
+            row = await cursor.fetchone()
+            return row[0] > 0
 
     async def get_media_by_filename(self, filename: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:

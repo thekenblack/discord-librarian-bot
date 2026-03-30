@@ -147,7 +147,20 @@ class AILibrarianBot(discord.Client):
             type=discord.ActivityType.watching, name=self.persona.status_text
         ))
         asyncio.create_task(bitcoin_data.start_background_update())
+        asyncio.create_task(self._learn_all_books())
         self._ready = True
+
+    async def _learn_all_books(self):
+        """미학습 도서 일괄 학습"""
+        from librarian.book_learning import learn_book
+        try:
+            books = await self.library_db.list_all_books()
+            for book in books:
+                detail = await self.library_db.get_book_detail(book["id"])
+                for f in detail.get("files", []):
+                    await learn_book(self.librarian_db, book["id"], book["title"], f["filename"], f["stored_name"])
+        except Exception as e:
+            logger.error(f"도서 일괄 학습 실패: {e}")
 
     async def on_message(self, message: discord.Message):
         if not self._ready:
