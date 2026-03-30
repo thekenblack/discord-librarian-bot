@@ -61,18 +61,23 @@ class AILibrarianBot(discord.Client):
             import aiosqlite
             from config import LIBRARIAN_DB_PATH
             desc = ""
+            media_id = None
             try:
                 async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
                     db.row_factory = aiosqlite.Row
                     cursor = await db.execute(
-                        "SELECT result FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                        "SELECT id, result, stored_name FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
                         (att.filename,))
                     row = await cursor.fetchone()
                     if row:
                         desc = row["result"][:100]
+                        if row["stored_name"]:
+                            media_id = row["id"]
             except Exception as e:
                 logger.warning(f"미디어 캐시 조회 실패: {att.filename}: {e}")
-            if desc:
+            if desc and media_id:
+                extras.append(f"[첨부: {att.filename} | media_id:{media_id} | {desc}]")
+            elif desc:
                 extras.append(f"[첨부: {att.filename} | {desc}]")
             else:
                 extras.append(f"[첨부: {att.filename}]")
