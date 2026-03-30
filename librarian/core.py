@@ -346,6 +346,9 @@ class AILibrarianBot(discord.Client):
                                     media_config,
                                 )
                                 media_result = self._extract_reply(media_response)
+                                if media_result:
+                                    await self.librarian_db.save(
+                                        f"[{att.filename}] {media_result[:250]}", author="media")
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:
