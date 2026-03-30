@@ -450,11 +450,11 @@ class AILibrarianBot(discord.Client):
             _meta["error"] = f"{type(e).__name__}"
             return self.persona.error_message, None, _meta
 
-    def _call_gemini(self, contents, config):
-        """살아있는 키로 호출, 실패 시 다음 키로 재시도"""
+    def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
+        """API 호출. 실패 시 키 로테이션 + 재시도 (ServerError 등 대응)"""
+        import time
         last_err = None
-        max_attempts = len(self._gemini_clients) * 2
-        for _ in range(max_attempts):
+        for attempt in range(max_retries):
             today = date.today()
             self._dead_until = {k: v for k, v in self._dead_until.items() if v > today}
             idx = self._client_index
@@ -473,11 +473,15 @@ class AILibrarianBot(discord.Client):
                     self._dead_until[idx] = date.today() + timedelta(days=1)
                     logger.warning(f"키 #{idx} 일일 한도 초과, 내일까지 비활성화")
                 else:
-                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                    logger.warning(f"키 #{idx} 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
                 last_err = e
                 continue
             except Exception as e:
-                logger.warning(f"키 #{idx} 에러({type(e).__name__}), 다음 키로 재시도...")
+                logger.warning(f"키 #{idx} 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
                 last_err = e
                 continue
         if last_err:
