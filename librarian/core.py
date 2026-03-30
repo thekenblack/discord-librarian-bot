@@ -20,6 +20,7 @@ from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_BUF
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
 from librarian import chat_log
+from librarian import server_log
 
 logger = logging.getLogger("AILibrarian")
 
@@ -255,6 +256,7 @@ class AILibrarianBot(discord.Client):
             return
 
         channel_name = getattr(message.channel, "name", "DM")
+        guild_name = message.guild.name if message.guild else "DM"
 
         if message.author.bot:
             if self.user and message.author.id == self.user.id:
@@ -265,6 +267,8 @@ class AILibrarianBot(discord.Client):
                     message.content,
                     is_bot=True,
                 )
+                server_log.log(guild=guild_name, channel=channel_name,
+                               author=self.persona.name, content=message.content, is_bot=True)
             return
 
         text = message.content
@@ -272,6 +276,9 @@ class AILibrarianBot(discord.Client):
             for user in message.mentions:
                 text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
                 text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
+
+        server_log.log(guild=guild_name, channel=channel_name,
+                       author=message.author.display_name, content=text)
         self._add_to_buffer(
             message.channel.id, channel_name,
             str(message.author.id),
@@ -370,8 +377,6 @@ class AILibrarianBot(discord.Client):
             logger.warning("모든 시도 실패 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
-        guild_name = message.guild.name if message.guild else "DM"
-        channel_name = getattr(message.channel, "name", "DM")
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
