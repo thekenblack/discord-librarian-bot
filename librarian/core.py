@@ -353,7 +353,7 @@ class AILibrarianBot(discord.Client):
 
             reply = self._extract_reply(response)
 
-            # 반복 체크: 직전 봇 답변과 동일하면 temperature 올려서 1회 재시도
+            # 반복 체크: 히스토리 내 봇 답변과 동일하면 별도 히스토리로 1회 재시도
             if reply and self._is_repeat(history, reply):
                 logger.warning(f"반복 감지, 재시도 (temperature 1.0): {reply[:50]}...")
                 retry_config = types.GenerateContentConfig(
@@ -363,7 +363,9 @@ class AILibrarianBot(discord.Client):
                     temperature=1.0,
                 )
                 try:
-                    retry_response = self._call_gemini(history, retry_config)
+                    # 유저 메시지만으로 1회성 히스토리 (원본에 영향 없음)
+                    retry_history = [history[-1]]  # 마지막 유저 메시지만
+                    retry_response = self._call_gemini(retry_history, retry_config)
                     retry_reply = self._extract_reply(retry_response)
                     if retry_reply:
                         reply = retry_reply
