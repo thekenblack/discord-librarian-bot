@@ -189,18 +189,20 @@ class LibraryDB:
             await db.commit()
             return cursor.lastrowid
 
-    async def list_book_files(self, book_id: int) -> list[dict]:
+    async def list_book_files(self, book_id: int, include_hidden=False) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
+            hidden_filter = "" if include_hidden else "AND (hidden IS NULL OR hidden = 0)"
             cursor = await db.execute(
-                "SELECT * FROM files WHERE book_id = ? ORDER BY uploaded_at DESC", (book_id,))
+                f"SELECT * FROM files WHERE book_id = ? {hidden_filter} ORDER BY uploaded_at DESC", (book_id,))
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
     async def get_file(self, file_id: int) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM files WHERE id = ?", (file_id,))
+            cursor = await db.execute(
+                "SELECT * FROM files WHERE id = ? AND (hidden IS NULL OR hidden = 0)", (file_id,))
             row = await cursor.fetchone()
             return dict(row) if row else None
 
