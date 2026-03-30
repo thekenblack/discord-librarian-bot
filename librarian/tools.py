@@ -112,6 +112,17 @@ library_tools = [
                 required=["name", "alias"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="forget_memory",
+            description="잘못된 기억이나 더 이상 필요 없는 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
+                },
+                required=["keyword"],
+            ),
+        ),
     ]),
 ]
 
@@ -183,6 +194,13 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         author = args.get("_user_name")
         saved_id = await librarian_db.save(content, author=author)
         return json.dumps({"result": f"저장 완료 (ID: {saved_id})"}, ensure_ascii=False)
+
+    elif name == "forget_memory":
+        keyword = args.get("keyword", "")
+        count = await librarian_db.forget(keyword)
+        if count > 0:
+            return json.dumps({"result": f"'{keyword}' 관련 기억 {count}건 잊음"}, ensure_ascii=False)
+        return json.dumps({"result": f"'{keyword}' 관련 기억 없음"}, ensure_ascii=False)
 
     elif name == "add_entry_alias":
         entry_id = args.get("entry_id")

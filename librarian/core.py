@@ -551,15 +551,15 @@ class AILibrarianBot(discord.Client):
         async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
             db.row_factory = aiosqlite.Row
 
-            # 현재 대화 상대가 가르쳐준 것 (최근 10건)
+            # 현재 대화 상대가 가르쳐준 것 (최근 10건, forgotten 제외)
             cursor = await db.execute(
-                "SELECT author, content FROM learned WHERE author LIKE ? ORDER BY id DESC LIMIT 10",
+                "SELECT author, content FROM learned WHERE author LIKE ? AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
             user_rows = await cursor.fetchall()
 
-            # 나머지 최근 10건 (발화자 제외)
+            # 나머지 최근 10건 (발화자 제외, forgotten 제외)
             cursor = await db.execute(
-                "SELECT author, content FROM learned WHERE author IS NULL OR author NOT LIKE ? ORDER BY id DESC LIMIT 10",
+                "SELECT author, content FROM learned WHERE (author IS NULL OR author NOT LIKE ?) AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
             other_rows = await cursor.fetchall()
 

@@ -179,11 +179,12 @@ class LibrarianDB:
             if rows:
                 result["지식"] = [r["content"] for r in rows]
 
-            # 학습 (기억 포함)
+            # 학습 (기억 포함, forgotten 제외)
             cursor = await db.execute("""
                 SELECT author, content FROM learned
-                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                   OR author LIKE ?
+                WHERE (forgotten IS NULL OR forgotten = 0)
+                  AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                       OR author LIKE ?)
                 LIMIT ?
             """, (like, like_nospace, like, limit))
             rows = await cursor.fetchall()
@@ -223,6 +224,16 @@ class LibrarianDB:
     # ── 저장 ──────────────────────────────────────────────
 
     MAX_LEARNED = 100
+
+    async def forget(self, keyword: str) -> int:
+        """키워드에 매칭되는 기억을 soft delete"""
+        like = f"%{keyword}%"
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "UPDATE learned SET forgotten = 1 WHERE content LIKE ? AND (forgotten IS NULL OR forgotten = 0)",
+                (like,))
+            await db.commit()
+            return cursor.rowcount
 
     async def save(self, content: str, author: str | None = None) -> int:
         """기억/지식 통합 저장 (중복 방지, 최대 건수 유지)"""
