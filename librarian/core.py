@@ -241,8 +241,8 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
         # 최근 웹 검색 / 미디어 인식 결과
-        recent_web = await self.librarian_db.get_recent_web_results(5)
-        recent_media = await self.librarian_db.get_recent_media_results(5, exclude_filenames=seen_filenames or [])
+        recent_web = await self.librarian_db.get_recent_web_results(10)
+        recent_media = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [])
         cache_lines = []
         for w in recent_web:
             cache_lines.append(f"- 웹검색 '{w['query']}': {w['result'][:150]}")
@@ -252,7 +252,6 @@ class AILibrarianBot(discord.Client):
             parts.append("## 최근 조회\n" + "\n".join(cache_lines))
 
         parts.append(self.persona.reminder_text)
-        parts.append(self.persona.persona_text)
 
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
