@@ -501,7 +501,7 @@ class AILibrarianBot(discord.Client):
                         )
                         link_result = self._extract_reply(link_response)
                         if link_result:
-                            await self.librarian_db.save_web_result(self._normalize_url(url), link_result, user_name=user_name)
+                            await self.librarian_db.save_web_result(self._normalize_url(url), link_result, user_name=user_name, original_url=url)
                     except Exception as e:
                         logger.warning(f"링크 인식 실패: {e}")
                         link_result = f"페이지를 열 수 없었어."

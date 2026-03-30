@@ -387,11 +387,11 @@ class LibrarianDB:
 
     # ── 웹 검색 / 미디어 인식 캐시 ────────────────────────
 
-    async def save_web_result(self, query: str, result: str, user_name: str = None):
+    async def save_web_result(self, query: str, result: str, user_name: str = None, original_url: str = None):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO web_results (query, result, user_name) VALUES (?, ?, ?)",
-                (query, result, user_name))
+                "INSERT INTO web_results (query, result, user_name, original_url) VALUES (?, ?, ?, ?)",
+                (query, result, user_name, original_url))
             await db.commit()
 
     async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
