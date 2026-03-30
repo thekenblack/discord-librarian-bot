@@ -594,6 +594,8 @@ class AILibrarianBot(discord.Client):
             alias = f" (별칭: {b['alias']})" if b.get("alias") else ""
             author = f" - {b['author']}" if b.get("author") else ""
             line = f"책장 #{b['id']}: {b['title']}{author}{alias}"
+            if b.get("description"):
+                line += f"\n  {b['description']}"
             files = detail.get("files", [])
             if files:
                 for f in files:
