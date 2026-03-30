@@ -45,6 +45,17 @@ class AILibrarianBot(discord.Client):
             persona._messages
         )
 
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """URL 정규화: 프로토콜/www/끝슬래시/index.html 차이 통일"""
+        import re
+        url = url.strip()
+        url = re.sub(r'^https?://', '', url)  # 프로토콜 제거
+        url = re.sub(r'^www\.', '', url)       # www. 제거
+        url = url.rstrip('/')                  # 끝 슬래시 제거
+        url = re.sub(r'/index\.html?$', '', url)  # index.html 제거
+        return url.lower()
+
     async def _extract_extras(self, msg) -> str:
         """메시지에서 임베드/첨부 정보 추출 (미디어 캐시 포함)"""
         extras = []
@@ -87,12 +98,12 @@ class AILibrarianBot(discord.Client):
         from config import LIBRARIAN_DB_PATH as _DB_PATH
         urls = _re.findall(r'https?://[^\s<>\"]+', msg.content or "")
         for url in urls:
-            normalized = url.rstrip("/")
+            normalized = self._normalize_url(url)
             try:
                 async with _aiosqlite.connect(_DB_PATH) as db:
                     db.row_factory = _aiosqlite.Row
                     cursor = await db.execute(
-                        "SELECT result FROM web_results WHERE RTRIM(query, '/') = ? ORDER BY id DESC LIMIT 1",
+                        "SELECT result FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1",
                         (normalized,))
                     row = await cursor.fetchone()
                     if row:
@@ -484,7 +495,7 @@ class AILibrarianBot(discord.Client):
                                         )
                                         link_result = self._extract_reply(link_response)
                                         if link_result:
-                                            await self.librarian_db.save_web_result(url.rstrip("/"), link_result, user_name=user_name)
+                                            await self.librarian_db.save_web_result(self._normalize_url(url), link_result, user_name=user_name)
                                     else:
                                         link_result = "페이지에서 텍스트를 추출할 수 없었어."
                                 else:
