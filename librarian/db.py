@@ -233,7 +233,7 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
 
-            # 1. 기억 (유저 우선 + 나머지)
+            # 1. 기억 (유저 10건 + 나머지 10건)
             memory_items = []
             if user_name:
                 cursor = await db.execute(f"""
@@ -248,20 +248,18 @@ class LibrarianDB:
                     memory_items.append(f"{r['author']}: {r['content']}" if r["author"] else r["content"])
 
             user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
-            remaining = limit - len(memory_items)
-            if remaining > 0:
-                cursor = await db.execute(f"""
-                    SELECT author, content FROM learned
-                    WHERE (forgotten IS NULL OR forgotten = 0)
-                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
-                      {mem_exclude} {user_exclude}
-                    LIMIT ?
-                """, (like, like_nospace, like, remaining))
-                seen = set(memory_items)
-                for r in await cursor.fetchall():
-                    item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
-                    if item not in seen:
-                        memory_items.append(item)
+            cursor = await db.execute(f"""
+                SELECT author, content FROM learned
+                WHERE (forgotten IS NULL OR forgotten = 0)
+                  AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
+                  {mem_exclude} {user_exclude}
+                LIMIT ?
+            """, (like, like_nospace, like, limit))
+            seen = set(memory_items)
+            for r in await cursor.fetchall():
+                item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
+                if item not in seen:
+                    memory_items.append(item)
             if memory_items:
                 result["기억"] = memory_items
 
