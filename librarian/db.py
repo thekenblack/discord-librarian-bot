@@ -151,11 +151,21 @@ class LibrarianDB:
 
             await db.execute("DELETE FROM knowledge_base")
 
+            category_priority = {
+                "bitcoin_basics": 95, "bip": 70, "money_history": 80,
+                "bitcoin_culture": 75, "bitcoin_people": 75,
+                "bitcoin_economics": 65, "bitcoin_tech_deep": 55,
+                "bitcoin_technology": 60, "bitcoin_philosophy": 50,
+                "bitcoin_history": 50, "bitcoin_lightning": 50,
+                "bitcoin_books": 50, "ereader": 35, "austrian_economics": 65,
+            }
+
             total = 0
             for filename in sorted(os.listdir(knowledge_dir)):
                 if not filename.endswith(".txt"):
                     continue
                 category = filename.replace(".txt", "")
+                priority = category_priority.get(category, 50)
                 filepath = os.path.join(knowledge_dir, filename)
                 fc = 0
                 with open(filepath, encoding="utf-8") as f:
@@ -167,8 +177,8 @@ class LibrarianDB:
                             else:
                                 content, alias = line, None
                             await db.execute(
-                                "INSERT INTO knowledge_base (category, alias, content) VALUES (?, ?, ?)",
-                                (category, alias, content))
+                                "INSERT INTO knowledge_base (category, alias, content, priority) VALUES (?, ?, ?, ?)",
+                                (category, alias, content, priority))
                             fc += 1
                 logger.info(f"지식 로드: {category} ({fc}건)")
                 total += fc
@@ -255,22 +265,24 @@ class LibrarianDB:
             if memory_items:
                 result["기억"] = memory_items
 
-            # 2. 지식
+            # 2. 지식 (priority 높은 순 → 같으면 랜덤)
             cursor = await db.execute("""
                 SELECT content FROM knowledge_base
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
                    OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                ORDER BY COALESCE(priority, 50) DESC, RANDOM()
                 LIMIT ?
             """, (like, like_nospace, like, like_nospace, limit))
             rows = [r["content"] for r in await cursor.fetchall()]
             if rows:
                 result["지식"] = rows
 
-            # 3. 커스텀
+            # 3. 커스텀 (priority 높은 순 → 같으면 랜덤)
             cursor = await db.execute("""
                 SELECT content FROM customs
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
                    OR alias LIKE ? OR REPLACE(alias, ' ', '') LIKE ?
+                ORDER BY COALESCE(priority, 50) DESC, RANDOM()
                 LIMIT ?
             """, (like, like_nospace, like, like_nospace, limit))
             rows = [r["content"] for r in await cursor.fetchall()]
