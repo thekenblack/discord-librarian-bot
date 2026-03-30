@@ -42,9 +42,8 @@ class AILibrarianBot(discord.Client):
             persona._error_messages + persona._rate_limit_messages + persona._daily_limit_messages
         )
 
-    @staticmethod
-    def _extract_extras(msg) -> str:
-        """메시지에서 임베드/첨부 정보 추출"""
+    async def _extract_extras(self, msg) -> str:
+        """메시지에서 임베드/첨부 정보 추출 (미디어 캐시 포함)"""
         extras = []
         for embed in msg.embeds:
             parts = []
@@ -55,7 +54,25 @@ class AILibrarianBot(discord.Client):
             if parts:
                 extras.append(f"[임베드: {' - '.join(parts)}]")
         for att in msg.attachments:
-            extras.append(f"[첨부: {att.filename}]")
+            # media_results에서 캐시된 설명 조회
+            import aiosqlite
+            from config import LIBRARIAN_DB_PATH
+            desc = ""
+            try:
+                async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
+                    cursor = await db.execute(
+                        "SELECT result FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                        (att.filename,))
+                    row = await cursor.fetchone()
+                    if row:
+                        desc = row["result"][:100]
+            except Exception:
+                pass
+            if desc:
+                extras.append(f"[첨부: {att.filename} | {desc}]")
+            else:
+                extras.append(f"[첨부: {att.filename}]")
         if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
             for snap in msg.message_snapshots:
                 snap_content = getattr(snap, 'content', '') or ''
@@ -118,7 +135,7 @@ class AILibrarianBot(discord.Client):
         text = text.strip()
 
         # 첨부/임베드 정보 추가
-        msg_extras = self._extract_extras(message)
+        msg_extras = await self._extract_extras(message)
         if msg_extras:
             text = f"{text} {msg_extras}" if text else msg_extras
 
@@ -556,7 +573,7 @@ class AILibrarianBot(discord.Client):
             else:
                 name = f"{ref.author.display_name}(<@{ref.author.id}>)"
             content = ref.content[:150]
-            extras = self._extract_extras(ref)
+            extras = await self._extract_extras(ref)
             if extras:
                 content = f"{content} {extras}" if content else extras
             chain.append(f"{name}: {content}")
