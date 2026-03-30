@@ -4,6 +4,7 @@
 
 import os
 import json
+import subprocess
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +12,20 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ── config.json (커밋됨) ────────────────────────
 with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
     _conf = json.load(f)
+
+# ── 버전 ────────────────────────────────────────
+VERSION = _conf.get("version", "0.0.0")
+
+def get_git_hash() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=BASE_DIR, stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+GIT_HASH = get_git_hash()
 
 # ── .env (비밀값) ───────────────────────────────
 load_dotenv(os.path.join(BASE_DIR, ".env"))

@@ -19,6 +19,7 @@ from librarian.db import LibrarianDB
 from config import FILES_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_BUFFER_SIZE, AI_MAX_OUTPUT_TOKENS
 from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool
+from librarian import chat_log
 
 logger = logging.getLogger("AILibrarian")
 
@@ -241,7 +242,9 @@ class AILibrarianBot(discord.Client):
         knowledge_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
         await self.librarian_db.load_knowledge_from_files(knowledge_dir)
         await self.librarian_db.cleanup_learned()
-        logger.info(f"{self.user} 온라인! ({self.persona.name})")
+        from config import VERSION, GIT_HASH
+        logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
+        chat_log.log_startup(self.persona.name, self.persona.prompt_text, len(self._gemini_clients))
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
         ))
@@ -330,7 +333,7 @@ class AILibrarianBot(discord.Client):
 
         async with self._channel_locks[ch_id]:
             async with message.channel.typing():
-                reply_text, file_to_send, ai_saved = await self._ask_gemini(
+                reply_text, file_to_send, ai_saved, _meta = await self._ask_gemini(
                     channel_id=ch_id,
                     user_id=str(message.author.id),
                     user_name=message.author.display_name,
@@ -372,6 +375,22 @@ class AILibrarianBot(discord.Client):
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
+        # 구조화된 대화 로그
+        chat_log.log_chat(
+            guild=guild_name,
+            channel=channel_name,
+            user_id=str(message.author.id),
+            user_name=message.author.display_name,
+            user_text=text,
+            reply_text=reply_text,
+            tools_called=_meta["tools_called"],
+            tool_results=_meta["tool_results"],
+            has_file=file_to_send is not None,
+            retries=_meta["retries"],
+            web_search=use_web,
+            error=_meta["error"],
+        )
+
         if file_to_send:
             await message.reply(reply_text, file=file_to_send)
         else:
@@ -379,8 +398,9 @@ class AILibrarianBot(discord.Client):
 
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
-                          guild=None, use_web=False) -> tuple[str, discord.File | None, bool]:
-        """Gemini에게 질문하고 응답 + 파일(있으면) + AI저장여부 반환"""
+                          guild=None, use_web=False) -> tuple[str, discord.File | None, bool, dict]:
+        """Gemini에게 질문하고 응답 + 파일(있으면) + AI저장여부 + 메타 반환"""
+        _meta = {"tools_called": [], "tool_results": [], "retries": 0, "error": None}
         if channel_id not in self.chat_histories:
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
@@ -518,8 +538,9 @@ class AILibrarianBot(discord.Client):
                         self.chat_histories[channel_id] = history[-6:]
                     if len(reply) > 2000:
                         reply = reply[:1997] + "..."
-                    return reply, file_to_send, ai_saved
-                return self.persona.error_message, None, False
+                    return reply, file_to_send, ai_saved, _meta
+                _meta["error"] = "web_search_failed"
+                return self.persona.error_message, None, False, _meta
 
             response = _call_gemini(history)
 
@@ -535,6 +556,7 @@ class AILibrarianBot(discord.Client):
                     break
 
                 logger.info(f"도구 호출: {fc.name}({fc.args})")
+                _meta["tools_called"].append(fc.name)
                 if fc.name in ("save_memory", "add_knowledge"):
                     ai_saved = True
 
@@ -548,7 +570,7 @@ class AILibrarianBot(discord.Client):
                             self.chat_histories[channel_id] = history[-6:]
                         if len(reply) > 2000:
                             reply = reply[:1997] + "..."
-                        return reply, file_to_send, ai_saved
+                        return reply, file_to_send, ai_saved, _meta
                     break
 
                 tool_args = dict(fc.args) if fc.args else {}
@@ -557,6 +579,7 @@ class AILibrarianBot(discord.Client):
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result[:200]}")
+                _meta["tool_results"].append(tool_result[:200])
 
                 if tool_data.get("_action") == "send_file":
                     save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
@@ -581,7 +604,8 @@ class AILibrarianBot(discord.Client):
 
             if not response.candidates or not response.candidates[0].content.parts:
                 logger.warning("Gemini 안전 필터에 의해 응답 차단됨")
-                return "", None, False
+                _meta["error"] = "safety_filter"
+                return "", None, False, _meta
 
             reply_parts = []
             for part in response.candidates[0].content.parts:
@@ -596,6 +620,7 @@ class AILibrarianBot(discord.Client):
             logger.info(f"반복 비교: reply={norm_reply[:50] if norm_reply else '없음'}... past={len(past_replies)}개")
             if norm_reply and norm_reply in past_replies:
                 logger.warning("직전 답변과 동일 - 채널 대화 없이 재시도")
+                _meta["retries"] += 1
                 self.chat_histories[channel_id] = []
                 clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
                 clean_prompt = "\n\n".join(p for p in clean_parts if p)
@@ -642,7 +667,7 @@ class AILibrarianBot(discord.Client):
                                 logger.info(f"재시도 웹 검색: {query}")
                                 reply = await self._web_search(query, clean_prompt, past_replies)
                                 if reply:
-                                    return reply, file_to_send, ai_saved
+                                    return reply, file_to_send, ai_saved, _meta
                                 break
 
                             tool_args = dict(fc.args) if fc.args else {}
@@ -673,6 +698,7 @@ class AILibrarianBot(discord.Client):
             # 3차: 웹 검색 폴백
             if not reply and user_text:
                 logger.info("3차 웹 검색 폴백")
+                _meta["retries"] += 1
                 clean_parts = [p for p in parts if not p.startswith("## 현재 채널 대화")]
                 web_prompt = "\n\n".join(p for p in clean_parts if p)
                 reply = await self._web_search(user_text, web_prompt, past_replies)
@@ -689,7 +715,7 @@ class AILibrarianBot(discord.Client):
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
 
-            return reply, file_to_send, ai_saved
+            return reply, file_to_send, ai_saved, _meta
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
@@ -698,13 +724,17 @@ class AILibrarianBot(discord.Client):
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
-                    return self.persona.daily_limit_message, None, False
+                    _meta["error"] = "daily_limit"
+                    return self.persona.daily_limit_message, None, False, _meta
                 else:
                     logger.warning("분당 한도 초과")
-                    return self.persona.rate_limit_message, None, False
-            return self.persona.error_message, None, False
+                    _meta["error"] = "rate_limit"
+                    return self.persona.rate_limit_message, None, False, _meta
+            _meta["error"] = f"client_error:{e.status}"
+            return self.persona.error_message, None, False, _meta
 
         except Exception as e:
             self.chat_histories[channel_id] = []
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
-            return self.persona.error_message, None, False
+            _meta["error"] = f"{type(e).__name__}"
+            return self.persona.error_message, None, False, _meta
