@@ -421,6 +421,24 @@ class LibrarianDB:
             await db.commit()
             return cursor.lastrowid
 
+    async def get_media_by_filename(self, filename: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, filename, result, stored_name FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                (filename,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_web_by_query(self, query: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, query, result FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1",
+                (query,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
     async def get_media_by_id(self, media_id: int) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row

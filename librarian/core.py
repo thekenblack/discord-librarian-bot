@@ -430,7 +430,15 @@ class AILibrarianBot(discord.Client):
                     if att_idx < len(self._current_attachments):
                         att = self._current_attachments[att_idx]
                         ct = att.content_type or ""
-                        if ct.startswith("image/") or ct == "application/pdf":
+
+                        # 캐시 확인: 같은 파일명이면 재인식 안 함
+                        cached = await self.librarian_db.get_media_by_filename(att.filename)
+                        if cached:
+                            logger.info(f"미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
+                            media_result = cached["result"]
+                            stored_name = cached.get("stored_name")
+                            saved_media_id = cached["id"]
+                        elif ct.startswith("image/") or ct == "application/pdf":
                             logger.info(f"미디어 인식: {att.filename} ({ct})")
                             try:
                                 data = await att.read()
@@ -494,26 +502,34 @@ class AILibrarianBot(discord.Client):
                 if fc.name == "recognize_link":
                     url = (dict(fc.args) if fc.args else {}).get("url", "")
                     link_result = ""
-                    try:
-                        logger.info(f"링크 인식: {url}")
-                        link_parts = [
-                            types.Part.from_uri(file_uri=url, mime_type="text/html"),
-                            types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                        ]
-                        link_config = types.GenerateContentConfig(
-                            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                            temperature=0.5,
-                        )
-                        link_response = self._call_gemini(
-                            [types.Content(role="user", parts=link_parts)],
-                            link_config,
-                        )
-                        link_result = self._extract_reply(link_response)
-                        if link_result:
-                            await self.librarian_db.save_web_result(self._normalize_url(url), link_result, user_name=user_name, original_url=url)
-                    except Exception as e:
-                        logger.warning(f"링크 인식 실패: {e}")
-                        link_result = f"페이지를 열 수 없었어."
+                    normalized = self._normalize_url(url)
+
+                    # 캐시 확인: 같은 URL이면 재인식 안 함
+                    cached = await self.librarian_db.get_web_by_query(normalized)
+                    if cached:
+                        logger.info(f"링크 캐시 히트: {url}")
+                        link_result = cached["result"]
+                    else:
+                        try:
+                            logger.info(f"링크 인식: {url}")
+                            link_parts = [
+                                types.Part.from_uri(file_uri=url, mime_type="text/html"),
+                                types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                            ]
+                            link_config = types.GenerateContentConfig(
+                                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                                temperature=0.5,
+                            )
+                            link_response = self._call_gemini(
+                                [types.Content(role="user", parts=link_parts)],
+                                link_config,
+                            )
+                            link_result = self._extract_reply(link_response)
+                            if link_result:
+                                await self.librarian_db.save_web_result(normalized, link_result, user_name=user_name, original_url=url)
+                        except Exception as e:
+                            logger.warning(f"링크 인식 실패: {e}")
+                            link_result = f"페이지를 열 수 없었어."
 
                     tool_data = {"result": link_result[:500] if link_result else "인식 실패"}
                     _meta["tool_results"].append(f"link:{link_result[:200]}")
