@@ -134,6 +134,56 @@ if os.path.isdir(MIGRATIONS_DIR):
         else:
             print(f"[마이그레이션] {script} 실패 (코드: {result.returncode})")
 
+# ── DB 패치 (로컬 전용, gitignore) ─────────────────
+PATCHES_DIR = os.path.join(DATA_DIR, "patches")
+os.makedirs(PATCHES_DIR, exist_ok=True)
+
+patches_tracking = os.path.join(DATA_DIR, "patches_applied.json")
+patches_applied = set()
+if os.path.exists(patches_tracking):
+    with open(patches_tracking, encoding="utf-8") as f:
+        patches_applied = set(json.load(f))
+
+for patch_file in sorted(os.listdir(PATCHES_DIR)):
+    if not (patch_file.endswith(".sql") or patch_file.endswith(".py")):
+        continue
+    if patch_file in patches_applied:
+        continue
+
+    patch_path = os.path.join(PATCHES_DIR, patch_file)
+    print(f"[패치] {patch_file} 실행 중...")
+
+    if patch_file.endswith(".sql"):
+        import sqlite3
+        # 파일명에서 대상 DB 추론: library_ → library.db, librarian_ → librarian.db
+        if patch_file.startswith("library_"):
+            target_db = os.path.join(DATA_DIR, _db.get("library", "library.db"))
+        else:
+            target_db = os.path.join(DATA_DIR, _db.get("librarian", "librarian.db"))
+        try:
+            with open(patch_path, encoding="utf-8") as f:
+                sql = f.read()
+            conn = sqlite3.connect(target_db)
+            conn.executescript(sql)
+            conn.close()
+            patches_applied.add(patch_file)
+            print(f"[패치] {patch_file} 완료 → {os.path.basename(target_db)}")
+        except Exception as e:
+            print(f"[패치] {patch_file} 실패: {e}")
+
+    elif patch_file.endswith(".py"):
+        result = subprocess.run(
+            [sys.executable, patch_path], cwd=BASE_DIR,
+        )
+        if result.returncode == 0:
+            patches_applied.add(patch_file)
+            print(f"[패치] {patch_file} 완료")
+        else:
+            print(f"[패치] {patch_file} 실패 (코드: {result.returncode})")
+
+with open(patches_tracking, "w", encoding="utf-8") as f:
+    json.dump(sorted(patches_applied), f)
+
 # ── DB 백업 ─────────────────────────────────────────
 for db_name in [_db.get("library", "library.db"), _db.get("librarian", "librarian.db")]:
     db_path = os.path.join(DATA_DIR, db_name)

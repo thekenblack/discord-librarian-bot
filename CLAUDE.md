@@ -57,9 +57,23 @@ startup.py가 하는 일:
 - `logs/` — bot.log (gitignore)
 - 서버 이전 시 data/ + files/ 만 옮기면 된다.
 
-### 마이그레이션
+### 마이그레이션 vs 패치
 
-DB 스키마 변경이 필요하면 `migrations/` 에 번호 붙인 .py 스크립트를 추가한다. startup.py가 `data/migrations_applied.json`으로 적용 여부를 추적하며, 한 번 실행된 스크립트는 다시 실행하지 않는다.
+**마이그레이션** (`migrations/`, 커밋됨) — 스키마 변경. 모든 서버에 적용.
+- `migrations/001_xxx.py` → startup.py가 `data/migrations_applied.json`으로 추적
+
+**패치** (`data/patches/`, gitignore) — 데이터 수정. 그 서버에서만 실행.
+- `.sql` 파일: 파일명이 `library_`로 시작하면 library.db, 그 외는 librarian.db에 실행
+- `.py` 파일: Python 스크립트로 실행
+- startup.py가 `data/patches_applied.json`으로 추적
+- 예: 쓰레기 학습 삭제, 잘못된 별칭 수정, 특정 데이터 정리
+
+패치 예시:
+```sql
+-- data/patches/librarian_001_cleanup.sql
+DELETE FROM learned WHERE content LIKE '%쓰레기%';
+DELETE FROM learned WHERE content LIKE '%[원본:%';
+```
 
 ## AI 사서봇 설계 의도
 
