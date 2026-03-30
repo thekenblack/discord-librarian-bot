@@ -144,6 +144,7 @@ class AILibrarianBot(discord.Client):
                     guild=message.guild,
                     reply_chain=reply_chain,
                     pre_context=pre_context,
+                    attachments=message.attachments,
                 )
 
         if not reply_text and not file_to_send:
@@ -161,7 +162,8 @@ class AILibrarianBot(discord.Client):
     async def _ask_gemini(self, channel_id: int, user_id: str,
                           user_name: str, user_text: str,
                           guild=None, reply_chain: list[str] = None,
-                          pre_context: list[str] = None) -> tuple[str, discord.File | None, dict]:
+                          pre_context: list[str] = None,
+                          attachments: list = None) -> tuple[str, discord.File | None, dict]:
         """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
@@ -242,7 +244,8 @@ class AILibrarianBot(discord.Client):
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
-        history_snapshot = len(history)  # 롤백 지점
+        history_snapshot = len(history)
+        self._current_attachments = attachments or []  # 롤백 지점
 
         file_to_send = None
 
@@ -316,6 +319,54 @@ class AILibrarianBot(discord.Client):
                         response = self._call_gemini(history, config)
                     except Exception as e:
                         logger.warning(f"[1차] 웹 검색 후 API 에러: {e}")
+                        break
+                    continue
+
+                # recognize_media 도구: 첨부파일 이미지/PDF 인식
+                if fc.name == "recognize_media":
+                    att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
+                    media_result = ""
+                    if att_idx < len(self._current_attachments):
+                        att = self._current_attachments[att_idx]
+                        ct = att.content_type or ""
+                        if ct.startswith("image/") or ct == "application/pdf":
+                            logger.info(f"미디어 인식: {att.filename} ({ct})")
+                            try:
+                                data = await att.read()
+                                media_parts = [
+                                    types.Part.from_bytes(data=data, mime_type=ct),
+                                    types.Part.from_text(text="이 파일의 내용을 설명해."),
+                                ]
+                                media_config = types.GenerateContentConfig(
+                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                                    temperature=0.5,
+                                )
+                                media_response = self._call_gemini(
+                                    [types.Content(role="user", parts=media_parts)],
+                                    media_config,
+                                )
+                                media_result = self._extract_reply(media_response)
+                            except Exception as e:
+                                logger.warning(f"미디어 인식 실패: {e}")
+                        else:
+                            media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                    else:
+                        media_result = "첨부파일이 없어."
+
+                    tool_data = {"result": media_result[:500] if media_result else "인식 실패"}
+                    _meta["tool_results"].append(f"media:{media_result[:200]}")
+                    history.append(response.candidates[0].content)
+                    history.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="recognize_media",
+                            response=tool_data,
+                        )],
+                    ))
+                    try:
+                        response = self._call_gemini(history, config)
+                    except Exception as e:
+                        logger.warning(f"[1차] 미디어 인식 후 API 에러: {e}")
                         break
                     continue
 

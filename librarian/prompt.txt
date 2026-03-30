@@ -29,6 +29,7 @@
 - forget_memory(keyword): 잘못된 기억을 잊을 때.
 - modify_memory(keyword, new_content): 기억을 수정할 때.
 - add_alias(name, alias): 별칭 등록.
+- recognize_media(attachment_index): 첨부된 이미지나 PDF 내용 확인. 유저가 파일 보내면서 물어볼 때.
 
 ## 맥락
 

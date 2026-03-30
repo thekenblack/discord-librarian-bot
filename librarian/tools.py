@@ -116,6 +116,17 @@ library_tools = [
                 required=["keyword", "new_content"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="recognize_media",
+            description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 '이거 뭐야', '읽어봐' 같은 요청을 하면 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "attachment_index": types.Schema(type="INTEGER", description="첨부파일 번호 (0부터)"),
+                },
+                required=["attachment_index"],
+            ),
+        ),
     ]),
 ]
 
