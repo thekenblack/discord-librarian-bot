@@ -191,6 +191,7 @@ class AILibrarianBot(discord.Client):
         catalog = await self._build_catalog()
         memories = await self._build_memories(user_name)
         prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories)
+        prompt_no_memories = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", "(기억 없음)")
         parts.append(prompt)
 
         # 상황 정보
@@ -238,10 +239,15 @@ class AILibrarianBot(discord.Client):
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
 
-        # 2-3차 리트라이용 클린 프롬프트 (직전 대화/답글 체인 제외)
+        # 2차용 클린 프롬프트 (직전 대화/답글 체인 제외, 기억은 유지)
         clean_parts = [p for p in parts
                        if not p.startswith("## 직전 대화") and not p.startswith("## 답글 흐름")]
         clean_prompt = "\n\n".join(p for p in clean_parts if p)
+
+        # 3차용 프롬프트 (직전 대화/답글 체인/기억 모두 제외)
+        bare_parts = [self.persona.persona_text, prompt_no_memories, info_block,
+                      self.persona.reminder_text, self.persona.persona_text]
+        bare_prompt = "\n\n".join(p for p in bare_parts if p)
 
         # 유저 메시지
         if user_text:
@@ -371,13 +377,13 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"2차 실패: {e}")
 
-            # 3차: 클린 프롬프트 + 히스토리 없이 + 웹 검색 + temperature 1.0
+            # 3차: 기억도 빼고 + 히스토리 없이 + 웹 검색 + temperature 1.0
             if _needs_retry(reply):
-                logger.warning(f"2차 {'반복' if reply else '빈 응답'}, 3차 시도 (클린+웹, 1.0)")
+                logger.warning(f"2차 {'반복' if reply else '빈 응답'}, 3차 시도 (bare+웹, 1.0)")
                 try:
                     from librarian.tools import google_search_tool
                     web_config = types.GenerateContentConfig(
-                        system_instruction=clean_prompt,
+                        system_instruction=bare_prompt,
                         tools=google_search_tool,
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=1.0,
