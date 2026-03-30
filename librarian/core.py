@@ -147,8 +147,11 @@ class AILibrarianBot(discord.Client):
             text = ""
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
-        reply_chain, seen_filenames = await self._build_reply_chain(message)
+        reply_chain, seen_filenames, chain_attachments = await self._build_reply_chain(message)
         pre_context = await self._build_pre_context(message)
+
+        # 첨부파일: 현재 메시지 + 답글 체인의 첨부파일
+        all_attachments = list(message.attachments) + chain_attachments
 
         # 채널 락
         ch_id = message.channel.id
@@ -165,7 +168,7 @@ class AILibrarianBot(discord.Client):
                     guild=message.guild,
                     reply_chain=reply_chain,
                     pre_context=pre_context,
-                    attachments=message.attachments,
+                    attachments=all_attachments,
                     seen_filenames=seen_filenames,
                 )
 
@@ -597,10 +600,11 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
-    async def _build_reply_chain(self, message) -> tuple[list[str], list[str]]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. 첨부파일명도 수집."""
+    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list]:
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. 첨부파일명+객체도 수집."""
         chain = []
         seen_filenames = []
+        chain_attachments = []
         current = message
         while current.reference:
             ref = current.reference.resolved
@@ -621,6 +625,7 @@ class AILibrarianBot(discord.Client):
                 content = f"{content} {extras}" if content else extras
             for att in ref.attachments:
                 seen_filenames.append(att.filename)
+                chain_attachments.append(att)
             chain.append(f"{name}: {content}")
             current = ref
         chain.reverse()
@@ -631,7 +636,7 @@ class AILibrarianBot(discord.Client):
             tail = chain[-5:]
             chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
 
-        return chain, seen_filenames
+        return chain, seen_filenames, chain_attachments
 
     async def _build_pre_context(self, message, limit=10) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
