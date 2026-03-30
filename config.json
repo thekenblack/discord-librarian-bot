@@ -17,7 +17,6 @@
   },
   "ai": {
     "model": "gemini-3.1-flash-lite-preview",
-    "buffer_size": 30,
     "max_output_tokens": 500
   },
   "max_file_size": 10485760
