@@ -338,8 +338,8 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"도구 결과: {tool_result[:200]}")
                 _meta["tool_results"].append(tool_result[:200])
 
-                # send_file 액션
-                if tool_data.get("_action") == "send_file":
+                # give 액션
+                if tool_data.get("_action") == "deliver":
                     save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])

@@ -34,7 +34,7 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="send_file",
+            name="deliver",
             description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
             parameters=types.Schema(
                 type="OBJECT",
@@ -168,13 +168,13 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                   for b in books]
         return json.dumps({"entries": entries}, ensure_ascii=False)
 
-    elif name == "send_file":
+    elif name == "deliver":
         file_id = args.get("file_id")
         file_info = await library_db.get_file(file_id)
         if not file_info:
             return json.dumps({"result": f"파일 ID {file_id}을 찾을 수 없습니다."}, ensure_ascii=False)
         return json.dumps({
-            "_action": "send_file",
+            "_action": "deliver",
             "file_id": file_info["id"], "title": file_info["title"],
             "filename": file_info["filename"], "stored_name": file_info["stored_name"],
             "file_size": file_info["file_size"],
