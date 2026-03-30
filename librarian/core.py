@@ -328,7 +328,7 @@ class AILibrarianBot(discord.Client):
 
                     if web_result:
                         logger.info(f"웹 검색 결과: {web_result[:100]}")
-                        await self.librarian_db.save_web_result(query, web_result)
+                        await self.librarian_db.save_web_result(query, web_result, user_name)
                         tool_data = {"result": web_result[:500]}
                     else:
                         tool_data = {"result": f"'{query}' 검색 결과 없음"}
@@ -374,7 +374,7 @@ class AILibrarianBot(discord.Client):
                                 )
                                 media_result = self._extract_reply(media_response)
                                 if media_result:
-                                    await self.librarian_db.save_media_result(att.filename, media_result)
+                                    await self.librarian_db.save_media_result(att.filename, media_result, user_name)
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:

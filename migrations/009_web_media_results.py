@@ -24,6 +24,7 @@ conn.execute("""
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         query      TEXT NOT NULL,
         result     TEXT NOT NULL,
+        user_name  TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
 """)
@@ -33,6 +34,7 @@ conn.execute("""
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         filename   TEXT NOT NULL,
         result     TEXT NOT NULL,
+        user_name  TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
 """)

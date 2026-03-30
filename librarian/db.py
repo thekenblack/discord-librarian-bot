@@ -338,11 +338,11 @@ class LibrarianDB:
 
     # ── 웹 검색 / 미디어 인식 캐시 ────────────────────────
 
-    async def save_web_result(self, query: str, result: str):
+    async def save_web_result(self, query: str, result: str, user_name: str = None):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO web_results (query, result) VALUES (?, ?)",
-                (query, result[:500]))
+                "INSERT INTO web_results (query, result, user_name) VALUES (?, ?, ?)",
+                (query, result[:500], user_name))
             await db.commit()
 
     async def get_recent_web_results(self, limit: int = 5) -> list[dict]:
@@ -352,11 +352,11 @@ class LibrarianDB:
                 "SELECT query, result FROM web_results ORDER BY id DESC LIMIT ?", (limit,))
             return [dict(r) for r in await cursor.fetchall()]
 
-    async def save_media_result(self, filename: str, result: str):
+    async def save_media_result(self, filename: str, result: str, user_name: str = None):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO media_results (filename, result) VALUES (?, ?)",
-                (filename, result[:500]))
+                "INSERT INTO media_results (filename, result, user_name) VALUES (?, ?, ?)",
+                (filename, result[:500], user_name))
             await db.commit()
 
     async def get_recent_media_results(self, limit: int = 5) -> list[dict]:
