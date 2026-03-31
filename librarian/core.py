@@ -502,7 +502,6 @@ class AILibrarianBot(discord.Client):
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
-        history_snapshot = len(history)
         self._current_attachments = attachments or []
         _mood_applied = False
 
@@ -516,13 +515,14 @@ class AILibrarianBot(discord.Client):
         )
 
         try:
-            logger.info(f"[1차] API 호출 (temperature=0.8, 히스토리={len(history)}턴)")
-            response = await self._call_gemini(history, config)
+            # 도구 루프용 로컬 리스트 (영구 히스토리 + 현재 요청)
+            loop_contents = list(history)
+
+            logger.info(f"[1차] API 호출 (temperature=0.8, 히스토리={len(loop_contents)}턴)")
+            response = await self._call_gemini(loop_contents, config)
             logger.info("[1차] API 응답 수신")
 
             for loop_i in range(10):
-                self._trim_history(user_id)
-                history = self.chat_histories[user_id]
                 if not response.candidates or not response.candidates[0].content.parts:
                     logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
                     break
@@ -577,8 +577,8 @@ class AILibrarianBot(discord.Client):
                     if response_mode in ("emoji", "unicode_emoji", "discord_emoji"):
                         result_str += f" | response: {response_mode}"
                     tool_data = {"result": result_str}
-                    history.append(response.candidates[0].content)
-                    history.append(types.Content(
+                    loop_contents.append(response.candidates[0].content)
+                    loop_contents.append(types.Content(
                         role="user",
                         parts=[types.Part.from_function_response(
                             name="feel",
@@ -586,7 +586,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = await self._call_gemini(history, config)
+                        response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
                         logger.warning(f"[1차] feel 후 API 에러: {e}")
                         break
@@ -603,8 +603,8 @@ class AILibrarianBot(discord.Client):
                         web_ids.append(cached["id"])
                         tool_data = {"result": cached["result"]}
                         _meta["tool_results"].append(f"web_cache:{cached['result']}")
-                        history.append(response.candidates[0].content)
-                        history.append(types.Content(
+                        loop_contents.append(response.candidates[0].content)
+                        loop_contents.append(types.Content(
                             role="user",
                             parts=[types.Part.from_function_response(
                                 name="web_search",
@@ -612,7 +612,7 @@ class AILibrarianBot(discord.Client):
                             )],
                         ))
                         try:
-                            response = await self._call_gemini(history, config)
+                            response = await self._call_gemini(loop_contents, config)
                         except Exception as e:
                             logger.warning(f"[1차] 웹 캐시 후 API 에러: {e}")
                             break
@@ -643,8 +643,8 @@ class AILibrarianBot(discord.Client):
                         tool_data = {"result": f"'{query}' 검색 결과 없음"}
 
                     _meta["tool_results"].append(f"web:{web_result}")
-                    history.append(response.candidates[0].content)
-                    history.append(types.Content(
+                    loop_contents.append(response.candidates[0].content)
+                    loop_contents.append(types.Content(
                         role="user",
                         parts=[types.Part.from_function_response(
                             name="web_search",
@@ -652,7 +652,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = await self._call_gemini(history, config)
+                        response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
                         logger.warning(f"[1차] 웹 검색 후 API 에러: {e}")
                         break
@@ -731,8 +731,8 @@ class AILibrarianBot(discord.Client):
                         tool_data["media_id"] = saved_media_id
                     logger.info(f"미디어 인식 결과: {media_result}")
                     _meta["tool_results"].append(f"media:{media_result}")
-                    history.append(response.candidates[0].content)
-                    history.append(types.Content(
+                    loop_contents.append(response.candidates[0].content)
+                    loop_contents.append(types.Content(
                         role="user",
                         parts=[types.Part.from_function_response(
                             name="recognize_media",
@@ -740,7 +740,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = await self._call_gemini(history, config)
+                        response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
                         logger.warning(f"[1차] 미디어 인식 후 API 에러: {e}")
                         break
@@ -776,8 +776,8 @@ class AILibrarianBot(discord.Client):
                     tool_data = {"result": link_result if link_result else "인식 실패"}
                     logger.info(f"링크 인식 결과: {link_result}")
                     _meta["tool_results"].append(f"link:{link_result}")
-                    history.append(response.candidates[0].content)
-                    history.append(types.Content(
+                    loop_contents.append(response.candidates[0].content)
+                    loop_contents.append(types.Content(
                         role="user",
                         parts=[types.Part.from_function_response(
                             name="recognize_link",
@@ -785,7 +785,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = await self._call_gemini(history, config)
+                        response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
                         logger.warning(f"[1차] 링크 인식 후 API 에러: {e}")
                         break
@@ -817,8 +817,8 @@ class AILibrarianBot(discord.Client):
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
-                history.append(response.candidates[0].content)
-                history.append(types.Content(
+                loop_contents.append(response.candidates[0].content)
+                loop_contents.append(types.Content(
                     role="user",
                     parts=[types.Part.from_function_response(
                         name=fc.name,
@@ -827,7 +827,7 @@ class AILibrarianBot(discord.Client):
                 ))
 
                 try:
-                    response = await self._call_gemini(history, config)
+                    response = await self._call_gemini(loop_contents, config)
                 except Exception as e:
                     logger.warning(f"[1차] 도구 후 API 에러: {e}")
                     break
@@ -923,17 +923,17 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"인라인 함수 실행 결과: {_tool_result[:100]}")
 
                         # history에 function call/response 추가
-                        history.append(types.Content(role="model", parts=[
+                        loop_contents.append(types.Content(role="model", parts=[
                             types.Part.from_text(text=reply),
                         ]))
-                        history.append(types.Content(role="user", parts=[
+                        loop_contents.append(types.Content(role="user", parts=[
                             types.Part.from_function_response(name=_tool_name, response=_tool_data),
                         ]))
 
                         if _before:
                             # 앞부분 텍스트 있으면 reply로 쓰고 함수 결과로 재응답
                             try:
-                                _follow_response = await self._call_gemini(history, config)
+                                _follow_response = await self._call_gemini(loop_contents, config)
                                 _follow_reply = self._extract_reply(_follow_response)
                                 if _follow_reply:
                                     reply = _before + "\n" + _follow_reply
@@ -945,7 +945,7 @@ class AILibrarianBot(discord.Client):
                         else:
                             # 앞부분 없으면 함수 결과로만 재응답
                             try:
-                                _follow_response = await self._call_gemini(history, config)
+                                _follow_response = await self._call_gemini(loop_contents, config)
                                 _follow_reply = self._extract_reply(_follow_response)
                                 if _follow_reply:
                                     reply = _follow_reply
@@ -959,8 +959,9 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_mood(reply)
 
             if not reply:
-                self.chat_histories[user_id] = history[:history_snapshot]
-                history = self.chat_histories[user_id]
+                # 빈 응답 → 유저 메시지도 히스토리에서 제거
+                if history and history[-1].role == "user":
+                    history.pop()
                 logger.warning(f"[1차] 빈 응답 → 에러 처리")
                 return "…미안, 지금 대답을 못 하겠어.", file_to_send, _meta
             else:
