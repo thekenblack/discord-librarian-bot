@@ -1104,6 +1104,9 @@ class AILibrarianBot(discord.Client):
             else:
                 name = f"{msg.author.display_name}(<@{msg.author.id}>)"
             content = msg.content[:150]
+            extras = await self._extract_extras(msg)
+            if extras:
+                content = f"{content} {extras}" if content else extras
             lines.append(f"{name}: {content}")
         lines.reverse()
         return lines
