@@ -920,6 +920,11 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_mood(reply)
 
             if not reply:
+                if _mood_applied:
+                    # feel 도구가 호출된 후 빈 응답 → 의도적
+                    logger.info("[1차] 빈 응답 (feel 호출됨 → 의도적)")
+                    _meta["intentional_silence"] = True
+                    return "", file_to_send, _meta
                 self.chat_histories[user_id] = history[:history_snapshot]
                 history = self.chat_histories[user_id]
                 logger.warning(f"[1차] 빈 응답 → 에러 처리")
