@@ -713,7 +713,6 @@ class AILibrarianBot(discord.Client):
                     clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
                     retry_config = types.GenerateContentConfig(
                         system_instruction=dynamic_prompt,
-                        tools=library_tools,
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=0.8,
                     )
