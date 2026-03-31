@@ -23,7 +23,7 @@ from librarian.mood import MoodSystem
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
-MAX_HISTORY = 20
+MAX_HISTORY = 10
 
 
 class AILibrarianBot(discord.Client):
@@ -37,6 +37,7 @@ class AILibrarianBot(discord.Client):
         self.librarian_db = LibrarianDB()
         self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[str, list] = {}  # user_id → history
+        self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
         self._mood = MoodSystem()
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
@@ -304,12 +305,17 @@ class AILibrarianBot(discord.Client):
         # 첨부파일: 현재 메시지 + 답글 체인의 첨부파일
         all_attachments = list(message.attachments) + chain_attachments
 
-        try:
-            await message.channel.typing()
-        except Exception:
-            pass
-        reply_text, file_to_send, _meta = await self._ask_gemini(
-                    user_id=str(message.author.id),
+        uid = str(message.author.id)
+        if uid not in self._user_locks:
+            self._user_locks[uid] = asyncio.Lock()
+
+        async with self._user_locks[uid]:
+            try:
+                await message.channel.typing()
+            except Exception:
+                pass
+            reply_text, file_to_send, _meta = await self._ask_gemini(
+                    user_id=uid,
                     user_name=message.author.display_name,
                     user_text=text,
                     guild=message.guild,
