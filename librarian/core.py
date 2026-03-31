@@ -934,6 +934,7 @@ class AILibrarianBot(discord.Client):
                         raw = re.sub(r':\s*\+(\d)', r': \1', raw)
                         feel_json = _json.loads(raw)
                         reason = feel_json.pop("reason", "")
+                        response_val = feel_json.pop("response", None)
                         changes = {}
                         for axis in self.librarian_db.ALL_AXES:
                             prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
@@ -949,6 +950,13 @@ class AILibrarianBot(discord.Client):
                                     target_user_name=user_name, reason=reason or "json fallback"))
                             _mood_applied = True
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
+                        # response 처리 (이모지 리액션/무응답)
+                        if response_val and response_val not in ("normal",):
+                            if response_val == "ignore":
+                                _meta["intentional_silence"] = True
+                            elif not _meta.get("reaction"):
+                                _meta["reaction"] = response_val
+                                logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
                     except Exception as e:
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
