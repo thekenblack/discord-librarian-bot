@@ -824,7 +824,18 @@ class LibrarianDB:
                 await db.execute(
                     "UPDATE bot_emotion SET value = ?, updated_at = ? WHERE key = ?",
                     (new_val, datetime.now(timezone.utc).isoformat(), axis))
-                result[axis] = new_val
+
+            # 항상 전체 상태 반환
+            if target_user_id:
+                cursor = await db.execute(
+                    "SELECT * FROM user_emotion WHERE user_id = ?", (target_user_id,))
+                row = await cursor.fetchone()
+                if row:
+                    for axis in self.USER_AXES:
+                        result[f"user_{axis}"] = row[axis]
+            cursor = await db.execute("SELECT key, value FROM bot_emotion")
+            for row in await cursor.fetchall():
+                result[row["key"]] = row["value"]
 
             # 로그
             changes_str = json.dumps(changes, ensure_ascii=False)
