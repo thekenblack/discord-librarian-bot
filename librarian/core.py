@@ -706,6 +706,29 @@ class AILibrarianBot(discord.Client):
                     logger.warning("분당 한도 초과")
                     _meta["error"] = "rate_limit"
                     return self.persona.error_message, None, _meta
+            # INVALID_ARGUMENT (히스토리 꼬임 등): 히스토리 초기화 후 클린 재시도
+            if e.status == "INVALID_ARGUMENT":
+                logger.warning("INVALID_ARGUMENT → 히스토리 초기화 후 클린 재시도")
+                try:
+                    clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+                    retry_config = types.GenerateContentConfig(
+                        system_instruction=dynamic_prompt,
+                        tools=library_tools,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=0.8,
+                    )
+                    response = self._call_gemini(clean_message, retry_config)
+                    reply = self._extract_reply(response)
+                    if reply:
+                        import re
+                        mood_match = re.search(r'\[mood:(\d+)\]', reply)
+                        if mood_match:
+                            self._mood.update(user_name, int(mood_match.group(1)))
+                            reply = reply.replace(mood_match.group(0), '').strip()
+                        logger.info(f"[클린 재시도] 응답: {reply}")
+                        return reply, None, _meta
+                except Exception as retry_e:
+                    logger.warning(f"[클린 재시도] 실패: {retry_e}")
             _meta["error"] = f"client_error:{e.status}"
             return self.persona.error_message, None, _meta
 
