@@ -12,3 +12,6 @@ google-genai>=1.0.0
 
 # HTTP (비트코인 데이터, 환율, 날씨, 뉴스)
 aiohttp>=3.9.0
+
+# epub 텍스트 추출 (도서 학습)
+ebooklib>=0.18
