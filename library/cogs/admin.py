@@ -176,9 +176,14 @@ class AdminCog(commands.Cog):
 
         try:
             await interaction.user.send(content=code_block)
+            # UTF-8 BOM 추가해서 전송 (한글 깨짐 방지)
+            import io
+            with open(log_path, encoding="utf-8") as f:
+                content_bytes = ("\ufeff" + f.read()).encode("utf-8")
+            buf = io.BytesIO(content_bytes)
             await interaction.user.send(
                 content="봇 로그 파일",
-                file=discord.File(log_path, filename=f"bot.{today}.txt")
+                file=discord.File(buf, filename=f"bot.{today}.txt")
             )
             await interaction.followup.send(
                 embed=success_embed("로그 전송", "DM으로 로그를 전송했습니다."), ephemeral=True

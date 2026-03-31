@@ -302,6 +302,8 @@ class AILibrarianBot(discord.Client):
         if not bot_mentioned and not role_mentioned:
             return
 
+        logger.info(f"[수신] {message.author.display_name}(#{getattr(message.channel, 'name', 'DM')}): {message.content[:100]}")
+
         # 멘션 태그 제거
         for mention in [f"<@{self.user.id}>", f"<@!{self.user.id}>"]:
             text = text.replace(mention, "")
