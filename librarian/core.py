@@ -855,6 +855,9 @@ class AILibrarianBot(discord.Client):
                     return text
                 # feel(...) 인라인 제거
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
+                # 빈 JSON 잔여물 제거 ([], {})
+                text = re.sub(r'\[\s*\]', '', text).strip()
+                text = re.sub(r'\{\s*\}', '', text).strip()
                 # JSON 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
                 json_match = re.search(r'\{[^}]*"reason"[^}]*\}', text, flags=re.DOTALL)
                 if json_match and not _mood_applied:
