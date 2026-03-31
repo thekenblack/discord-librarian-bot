@@ -567,7 +567,10 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    tool_data = {"result": current}
+                    result_parts = []
+                    for k, v in current.items():
+                        result_parts.append(f"{k} {v:+.1f}/±10.0")
+                    tool_data = {"result": " | ".join(result_parts)}
                     history.append(response.candidates[0].content)
                     history.append(types.Content(
                         role="user",
