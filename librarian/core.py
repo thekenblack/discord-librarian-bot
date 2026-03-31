@@ -937,7 +937,15 @@ class AILibrarianBot(discord.Client):
         return text, memory_ids
 
     def _trim_history(self, channel_id: int):
-        """히스토리를 MAX_HISTORY 턴으로 제한"""
+        """히스토리를 MAX_HISTORY 턴으로 제한. function_call/response 쌍 보장."""
         history = self.chat_histories.get(channel_id)
         if history and len(history) > MAX_HISTORY:
-            self.chat_histories[channel_id] = history[-MAX_HISTORY:]
+            trimmed = history[-MAX_HISTORY:]
+            # 첫 항목이 function_response(고아)면 제거
+            while trimmed and trimmed[0].role == "user" and trimmed[0].parts:
+                has_fn_response = any(hasattr(p, 'function_response') and p.function_response for p in trimmed[0].parts)
+                if has_fn_response:
+                    trimmed.pop(0)
+                else:
+                    break
+            self.chat_histories[channel_id] = trimmed
