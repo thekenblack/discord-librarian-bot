@@ -596,12 +596,15 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
+                    # response에 이모지/텍스트가 있으면 그걸 바로 답변으로
+                    if response_mode and response_mode not in ("normal", "ignore"):
+                        logger.info(f"이모지 응답: {response_mode}")
+                        return response_mode, file_to_send, _meta
+
                     result_parts = []
                     for k, v in current.items():
                         result_parts.append(f"{k} {v:.1f} (0 ~ 10)")
                     result_str = " | ".join(result_parts)
-                    if response_mode in ("emoji", "unicode_emoji", "discord_emoji"):
-                        result_str += f" | response: {response_mode}"
                     tool_data = {"result": result_str}
                     loop_contents.append(response.candidates[0].content)
                     loop_contents.append(types.Content(

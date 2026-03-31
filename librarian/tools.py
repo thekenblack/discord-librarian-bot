@@ -224,7 +224,7 @@ library_tools = [
                     "self_energy": types.Schema(type="INTEGER", description="기력 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
-                    "response": types.Schema(type="STRING", description="응답 모드: normal(기본), short(이모지/한마디), ignore(무시)"),
+                    "response": types.Schema(type="STRING", description="ignore(무시), 이모지(😊 등), 또는 생략(기본 답변)"),
                 },
                 required=["reason"],
             ),
