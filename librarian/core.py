@@ -504,6 +504,7 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         history_snapshot = len(history)
         self._current_attachments = attachments or []
+        _mood_applied = False
 
         file_to_send = None
 
