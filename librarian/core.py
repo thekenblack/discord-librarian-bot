@@ -159,7 +159,7 @@ class AILibrarianBot(discord.Client):
                     continue
                 await user.send(content)
                 if os.path.exists(log_path):
-                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.log"))
+                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.txt"))
             except Exception as e:
                 print(f"어드민 DM 실패 ({admin_id}): {e}")  # logger 쓰면 무한루프
 
@@ -206,7 +206,7 @@ class AILibrarianBot(discord.Client):
                 await user.send(content)
                 # 로그 파일
                 if os.path.exists(log_path):
-                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.log"))
+                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.txt"))
             except Exception as e:
                 logger.warning(f"어드민 DM 실패 ({admin_id}): {e}")
 

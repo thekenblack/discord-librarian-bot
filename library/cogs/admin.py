@@ -178,7 +178,7 @@ class AdminCog(commands.Cog):
             await interaction.user.send(content=code_block)
             await interaction.user.send(
                 content="봇 로그 파일",
-                file=discord.File(log_path, filename=f"bot.{today}.log")
+                file=discord.File(log_path, filename=f"bot.{today}.txt")
             )
             await interaction.followup.send(
                 embed=success_embed("로그 전송", "DM으로 로그를 전송했습니다."), ephemeral=True
