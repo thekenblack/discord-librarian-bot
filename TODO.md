@@ -1,8 +1,17 @@
 # TODO
 
+감정 시스템 v2 (feel 도구 기반):
+- self_/user_ 축 분리 (DB 테이블 재설계)
+- self_mood, self_fatigue (전역)
+- user_fondness, user_respect, user_familiarity, user_formality, user_patience (유저별)
+- feel(target) 대상 유저 지정 (답글 체인에 보이는 아무 유저)
+- 감쇠 로직 (조회 시 계산, 축별 반감기 차등)
+- bulk 조회 (답글 체인 유저 IN 쿼리 1회)
+- 프롬프트 유저 감정 표시 (체인 참여 유저별)
+
+기타:
 - 가짜 전달 방지 ("건네줄게" 자연어만 쓰고 deliver 안 부르는 케이스)
 - deliver 횟수 제한 (1요청당 최대 N회)
-- mood 상대값(+/-) 프롬프트 안내 (character.txt 수정)
 
 ## DONE
 
@@ -20,8 +29,6 @@
 - MAX_HISTORY 20 → 10
 - _call_gemini 비동기화 (run_in_executor 내장)
 - deliver/mood 인라인 함수 파싱 (positional args 포함)
-- mood 1회 적용 + 상대값(+/-) 지원
-- [mood:XX] 태그 노출 수정 (인라인 함수 재응답에서도 제거)
 - 어드민 알림 대기열 (10초 내 모아서 1회 전송)
 - bot.log [수신] 시점 로그 추가
 - DM 로그 한글 깨짐 수정 (UTF-8 BOM)
@@ -29,7 +36,11 @@
 - discord.py _ready 충돌 수정 (_bot_ready)
 - typing Forbidden/503 에러 처리
 - 반복 감지 임계값 0.8 → 0.9
+- feel 도구 + 6축 감정 (DB 영구, MoodSystem 대체)
+- feel(response: ignore/short) 의도적 무응답
+- v4 캐릭터 조정 (프롬프트 부정형 제거, 따뜻한 톤)
 
 ## DROP
 
 - 오디오/비디오 인식 (토큰 비용 대비 실용성 낮음)
+- mood 태그 텍스트 방식 (feel 도구로 대체, 폴백만 유지)
