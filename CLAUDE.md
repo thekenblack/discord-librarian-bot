@@ -10,9 +10,9 @@
 슬래시 커맨드 기반의 자료 관리 시스템.
 
 - 책장(엔트리) 생성/편집/숨기기
-- 파일 업로드/편집/숨기기
+- 파일 업로드/편집/숨기기 + 도서 자동 학습
 - 페이지 관리 (분류/정렬)
-- 어드민 관리 (봇 중지/재개, 업데이트, 백업, 통계)
+- 어드민 관리 (봇 중지/재개, 업데이트, 백업, 통계, 로그)
 - 누구나 자료를 등록할 수 있고, 자기가 올린 것은 직접 편집 가능
 
 ### AI 사서봇 (librarian/)
@@ -20,15 +20,21 @@
 Gemini 기반 대화형 사서. 멘션하면 반응한다. 시타델 도서관의 "사람" 역할.
 
 - 도서관 목록을 프롬프트에 직접 포함 — 도구 호출 없이 즉시 안내 가능
+- 도서 내용 학습 (epub/pdf → Gemini 요약 → book_knowledge, search에 연결)
 - 자연어로 파일 전송 (deliver)
 - 비트코인 관련 지식 내장 (knowledge/*.txt)
 - 유저가 가르치면 기억 (learned 테이블, AI 자발 저장)
 - 기억 수정/삭제 (modify_memory, forget_memory — soft delete)
 - 웹 검색(Google Search grounding) + 결과 자동 학습
-- 이미지/PDF 인식 (recognize_media — 멀티모달)
+- URL 인식 (recognize_link — Gemini에 URL 직접 전달, 유튜브 자막 우선)
+- 이미지/PDF 인식 (recognize_media — 멀티모달) + 미디어 첨부 (attach)
+- 실시간 비트코인 현황, 환율(KRW), 김프, 날씨(8개 도시), 뉴스
 - 답글 체인 추적 (무제한 깊이, 10건 초과 시 앞5+뒤5)
-- 반복 감지 + 리트라이 (1-4차)
-- 페르소나: 비트코인 맥시멀리스트, 반말, 이모지, 유머
+- 반복 감지 + 리트라이 (반복만 재시도)
+- EMA 기반 감정 시스템 (상대값 +/-, cap=15)
+- 유저 멘션 / 채널 링크 / 커스텀 이모지
+- 어드민 에러 알림 (대기열 방식, 10초 내 모아서 1회)
+- 페르소나: 비트코인 맥시멀리스트, 반말, 위트+쿨, 주인은 Ken
 
 ### 왜 봇이 2개인가
 
@@ -61,8 +67,9 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 - `data/` — DB 파일 (library.db, librarian.db) + 백업 (gitignore)
 - `files/` — 업로드된 실제 파일 (gitignore)
+- `librarian/media/` — 인식된 미디어 파일 (gitignore)
 - `logs/` — 날짜별 로그 bot.YYYY-MM-DD.log, server.YYYY-MM-DD.log (gitignore)
-- 서버 이전 시 data/ + files/ 만 옮기면 된다
+- 서버 이전 시 data/ + files/ + librarian/media/ 를 옮기면 된다
 
 ### 마이그레이션 vs 패치
 
@@ -80,80 +87,86 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 ```
 페르소나 (persona.txt)
-규칙 + 도서관 목록 + 기억 (prompt.txt)
+규칙 + 도서관 목록 + 기억 (functioning.txt)
 상황 정보 (시간, 유저, 관리자)
-직전 대화 (답글 체인 시작점 직전 10건)
+비트코인 현황 + 환율 + 김프 + 국내 날씨
+감정 상태
+직전 대화 (답글 체인 시작점 직전 10건, 첨부/링크 설명 포함)
 답글 흐름 (체인, 무제한 → 10건 초과 시 앞5+뒤5)
+최근 인식 (웹/미디어 캐시 각 10건)
 리마인더 (reminder.txt)
-페르소나 (반복)
+캐릭터 (character.txt)
 ```
 
-페르소나를 앞뒤로 반복(샌드위치)해서 캐릭터 이탈 방지.
+### 히스토리
 
-### 도서관 목록을 프롬프트에 직접 포함
+- **유저별** 관리 (user_id → history). 채널별 아님.
+- **유저 락** (asyncio.Lock)으로 같은 유저 동시 요청 직렬화
+- **MAX_HISTORY = 10** (5왕복)
+- trim 시 function_call/response 쌍 보장
 
-매 요청마다 DB에서 도서관 목록을 빌드해서 프롬프트에 삽입.
-AI가 "뭐 있어?"에 도구 호출 없이 바로 답변. "모위비 줘"에 deliver 1회로 끝.
-파일 없는 엔트리, hidden 엔트리는 제외.
+### 도서 학습
 
-### 기억 시스템
-
-프롬프트에 포함:
-- 발화자(현재 유저) 기억 최근 10건
-- 나머지 최근 10건 (발화자 제외)
-
-search 도구:
-- 발화자 우선 10건 + 통합(지식+기억) 10건
-- 프롬프트에 이미 포함된 기억은 제외 (ID 기반)
-
-저장:
-- AI가 save_memory 자발 호출 시만 저장 (author 포함)
-- 최대 100건, 초과 시 오래된 것부터 삭제
-
-삭제/수정:
-- forget_memory — soft delete (forgotten = 1)
-- modify_memory — forget + save
+- 파일 업로드 시 + 사서봇 시작 시 미학습 도서 자동 처리
+- epub: ebooklib 텍스트 추출 (toc.ncx 없으면 zipfile 폴백) → Gemini 요약
+- pdf/txt: Gemini에 바이너리 직접 전달
+- status: pending → done/failed. 재시작 시 pending/failed 정리
+- search에서 done만 검색, 키워드 주변 200자 스니펫
 
 ### 도구 목록
 
 | 도구 | 용도 |
 |---|---|
 | deliver(file_id) | 파일 전송 |
-| search(keyword) | 지식+기억 통합 검색 (발화자 우선) |
+| search(keyword) | 지식+기억+도서+웹+미디어 통합 검색. 뉴스/날씨도 가능 |
 | web_search(query) | 웹 검색 + 결과 자동 저장 |
 | save_memory(content) | 기억 저장 |
 | forget_memory(keyword) | 기억 잊기 (soft delete) |
 | modify_memory(keyword, new_content) | 기억 수정 |
 | add_alias(name, alias) | 별칭 등록 |
 | add_entry_alias(entry_id, alias) | 엔트리 별칭 추가 |
-| recognize_media(attachment_index) | 이미지/PDF 인식 |
+| forget_alias(alias_id) | 별칭 삭제 |
+| recognize_media(attachment_index) | 이미지/PDF 인식 (file_hash 중복 방지) |
+| recognize_link(url) | URL 인식 (pending → 백그라운드 처리 → done) |
+| attach(media_id) | 저장된 미디어 첨부 전송 |
 
 ### 리트라이 구조
 
 ```
-1차: 히스토리 + 전체 프롬프트 (0.8)
+1차: 유저별 히스토리 + 전체 프롬프트 (0.8)
   → 도구 루프 최대 10회
-  → 반복/빈 응답 시 ↓
+  → 반복 감지 시 (Jaccard 0.9) ↓
 2차: 클린 (유저 메시지만, 맥락 제거, 기억 유지) (0.9)
-  → 반복/빈 응답 시 ↓
+  → 여전히 반복 시 ↓
 3차: bare (기억도 제거, 도서관만) + 웹 검색 (1.0)
-  → 반복/빈 응답 시 ↓
-4차: 포기 → 에러 메시지
+  → 여전히 반복 시 → 포기
+
+빈 응답: 즉시 에러 메시지 (재시도 안 함)
+INVALID_ARGUMENT: 히스토리 초기화 + 도구 없이 1회 재시도
 ```
 
-반복 감지: 단어 기반 Jaccard 유사도 80% (이모지/구두점 제거 후 비교).
-히스토리 롤백: 루프 실패 시 스냅샷으로 복구.
-2-3차는 1회성 히스토리 (원본 오염 없음).
+인라인 함수 감지: 2-3차 재시도 응답에도 deliver(5) 같은 패턴 감지 → 실행 + 텍스트 제거.
+
+### 감정 시스템
+
+- [mood:+12] 상대값: cap=±15 → EMA(α=0.08) 적용
+- [mood:60] 절대값: EMA(α=0.08) 적용
+- 시간 감쇠 τ=21600s (6시간)
+- 한 요청당 1회만 적용 (_apply_mood)
+- 혼자일 때 원점수 그대로
 
 ### API 호출
 
-단일 API 키. 재시도 3회, 1초 간격. INVALID_ARGUMENT는 즉시 raise.
+- 단일 API 키
+- `_call_gemini`: async (run_in_executor 내장), 재시도 3회, 1초 간격
+- 이벤트 루프 블로킹 없음
 
 ### 로그
 
-- `bot.YYYY-MM-DD.log` — 상세 단계별 추적 ([1차], [2차] 등)
+- `bot.YYYY-MM-DD.log` — [수신] 시점 + 상세 단계별 추적 ([1차], [2차] 등)
 - `server.YYYY-MM-DD.log` — 서버 전체 메시지 (멘션 무관)
-- 시간대: .env TZ 기준 (기본 Asia/Seoul, +09:00 표시)
+- 시간대: .env TZ 기준 (기본 Asia/Seoul)
+- 어드민 에러 알림: 대기열 10초, 모아서 DM 1회 (UTF-8 BOM)
 
 ## 슬래시 커맨드
 
@@ -165,7 +178,7 @@ search 도구:
 | /library info | 엔트리 상세 + 다운로드 |
 | /library share | 엔트리 정보 채널에 공유 |
 | /library add_entry | 새 엔트리 생성 |
-| /library add_file | 파일 업로드 |
+| /library add_file | 파일 업로드 (+ 도서 자동 학습) |
 | /library edit_entry | 내가 만든 엔트리 편집 |
 | /library edit_files | 내가 올린 파일 편집 |
 | /help | 명령어 도움말 |

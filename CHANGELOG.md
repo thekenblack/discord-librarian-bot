@@ -4,6 +4,62 @@
 
 ---
 
+## v4 (2026-04-01 ~)
+
+v3 로그 분석(3월 31일) 기반 전면 개선. 안정성 + 성능 + 기능 확장.
+
+### 의도
+
+**안정성:**
+- INVALID_ARGUMENT 근절: 히스토리를 채널별 → 유저별로 분리, 채널 락 → 유저 락
+- MAX_HISTORY 20 → 10 (5왕복), trim 시 function_call/response 쌍 보장
+- INVALID_ARGUMENT 발생 시 히스토리 초기화 + 클린 재시도
+- deliver/mood 텍스트 노출 방지: 인라인 함수 파싱 (positional args 포함, 재시도 응답에도 적용)
+- mood 1회 적용 (_apply_mood 공통 함수)
+- discord.py _ready 충돌 수정, typing 에러 처리
+
+**성능:**
+- _call_gemini 비동기화 (run_in_executor 내장) — 이벤트 루프 블로킹 근절
+- URL 인식: pending → 백그라운드 처리 → done (유튜브 자막 우선)
+- 도서 학습: 비동기 백그라운드, status 관리 (pending/done/failed)
+- 미디어 인식: file_hash SHA-256 기반 중복 방지
+
+**기능:**
+- 도서 내용 학습 (epub/pdf → Gemini 요약 → book_knowledge → search)
+- 환율 (업비트 KRW 시세 + USD/KRW + 김치 프리미엄)
+- 날씨 (국내 8개 도시 + 국제 온디맨드)
+- 뉴스 (국내/국제, search에서 조회)
+- URL 인식 (recognize_link, Gemini에 URL 직접 전달)
+- 미디어 첨부 (attach, librarian/media/ 저장)
+- 유저 멘션 / 채널 링크 / 커스텀 이모지
+- 감정 시스템: 상대값 [mood:+12] 지원, cap=15, 절대값 폴백
+
+**로그/알림:**
+- bot.log [수신] 시점 로그 추가 (처리 시점과 구분)
+- 어드민 에러 알림 대기열 (10초 내 모아서 1회 전송)
+- DM 로그 UTF-8 BOM (한글 깨짐 방지)
+- 직전 대화에 첨부/임베드/링크 정보 포함
+
+**검색:**
+- search: 7개 카테고리 (기억, 지식, 커스텀, 웹, URL, 미디어, 도서)
+- 기억: 유저 10건 + 나머지 10건 (분리)
+- 도서: 키워드 주변 200자 스니펫
+- 반복 감지 임계값 0.8 → 0.9
+- 프롬프트 웹/미디어 캐시 각 10건
+- id 네이밍 정리 (entry_id, file_id 표기)
+
+### 주요 변경
+
+- 히스토리: 채널별 → 유저별, MAX_HISTORY 20 → 10
+- _call_gemini: 동기 → async (run_in_executor)
+- 도구 추가: recognize_link, attach
+- 도서 학습: book_learning.py (epub ebooklib + Gemini, status 관리)
+- url_results 테이블 분리 (web_results와 분리)
+- media_results: file_hash, stored_name 추가
+- 마이그레이션 011-017 추가
+
+---
+
 ## v3 (2026-03-30 ~)
 
 프로젝트 구조 전면 개편 + AI 판단 위임. v2 로그 분석을 기반으로 강제 트리거/필터를 전부 제거하고 모델에게 맡김.
