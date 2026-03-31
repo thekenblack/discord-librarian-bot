@@ -907,6 +907,53 @@ class AILibrarianBot(discord.Client):
                 logger.warning("[포기] 반복 해소 실패")
                 reply = ""
 
+            # 2-3차 결과에도 인라인 함수 패턴이 있으면 실행 + 제거
+            if reply:
+                _inline_pattern_retry = re.compile(
+                    r'(' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(([^)]*)\)',
+                    re.DOTALL
+                )
+                _inline_match_retry = _inline_pattern_retry.search(reply)
+                if _inline_match_retry:
+                    _tool_name_r = _inline_match_retry.group(1)
+                    _args_raw_r = _inline_match_retry.group(2).strip()
+                    logger.info(f"[재시도] 인라인 함수 감지: {_tool_name_r}({_args_raw_r[:80]})")
+
+                    _tool_args_r = {}
+                    _kv_r = list(re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw_r, re.DOTALL))
+                    if _kv_r:
+                        for _m in _kv_r:
+                            _tool_args_r[_m.group(1).strip()] = _m.group(2).strip().strip('"\'')
+                    elif _args_raw_r and _tool_name_r in _POSITIONAL_MAP:
+                        _val = _args_raw_r.strip().strip('"\'')
+                        try:
+                            _val = int(_val)
+                        except ValueError:
+                            pass
+                        _tool_args_r[_POSITIONAL_MAP[_tool_name_r]] = _val
+
+                    try:
+                        _tool_result_r = await execute_tool(self.library_db, self.librarian_db, _tool_name_r, _tool_args_r)
+                        _tool_data_r = json.loads(_tool_result_r)
+                        logger.info(f"[재시도] 인라인 함수 실행: {_tool_result_r[:100]}")
+
+                        if _tool_data_r.get("_action") == "deliver":
+                            save_path = os.path.join(FILES_DIR, _tool_data_r["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
+                                await self.library_db.increment_download(_tool_data_r["file_id"])
+                        elif _tool_data_r.get("_action") == "attach":
+                            save_path = os.path.join(MEDIA_DIR, _tool_data_r["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
+                    except Exception as _e:
+                        logger.warning(f"[재시도] 인라인 함수 실행 실패: {_e}")
+
+                    # 텍스트에서 함수 호출 제거
+                    reply = reply[:_inline_match_retry.start()].strip()
+                    if not reply:
+                        reply = f"여기 있어."
+
             if reply:
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
             else:
