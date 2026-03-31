@@ -216,7 +216,7 @@ library_tools = [
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "target": types.Schema(type="STRING", description="대상 유저 이름. 생략하면 현재 대화 상대"),
+                    "target": types.Schema(type="STRING", description="대상 유저 ID (<@ID> 또는 숫자). 생략하면 현재 대화 상대"),
                     "user_friendly": types.Schema(type="INTEGER", description="호감/우정 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "user_lovely": types.Schema(type="INTEGER", description="애정/설렘 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "user_trust": types.Schema(type="INTEGER", description="신뢰 변화량 (-3, -2, -1, 0, +1, +2, +3)"),

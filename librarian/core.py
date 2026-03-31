@@ -560,9 +560,20 @@ class AILibrarianBot(discord.Client):
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
-                    target_name = feel_args.pop("target", None) or user_name
-                    # target에서 user_id 추출 (현재 대화 상대면 그대로, 아니면 이름으로)
-                    target_id = user_id if target_name == user_name else target_name
+                    target_raw = feel_args.pop("target", None)
+                    # target에서 user_id 추출: <@ID>, 숫자ID, 이름 대응
+                    target_id = user_id
+                    target_name = user_name
+                    if target_raw:
+                        import re as _re
+                        id_match = _re.search(r'(\d{15,})', str(target_raw))
+                        if id_match:
+                            target_id = id_match.group(1)
+                            # 이름은 guild에서 조회 시도
+                            target_name = target_raw
+                        else:
+                            target_name = str(target_raw)
+                            target_id = target_raw
 
                     changes = {}
                     for axis in self.librarian_db.ALL_AXES:
