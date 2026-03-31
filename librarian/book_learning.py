@@ -30,7 +30,27 @@ def _extract_epub_text(file_path: str) -> str:
         def get_text(self):
             return "".join(self.parts)
 
-    book = epub.read_epub(file_path, options={"ignore_ncx": True})
+    try:
+        book = epub.read_epub(file_path, options={"ignore_ncx": True})
+    except KeyError as e:
+        if "toc.ncx" in str(e):
+            # toc.ncx 없는 EPUB3 — zipfile로 직접 파싱
+            import zipfile
+            texts = []
+            with zipfile.ZipFile(file_path) as z:
+                for name in z.namelist():
+                    if name.endswith((".html", ".xhtml", ".htm")):
+                        try:
+                            html = z.read(name).decode("utf-8", errors="replace")
+                            stripper = _HTMLStripper()
+                            stripper.feed(html)
+                            text = stripper.get_text().strip()
+                            if text:
+                                texts.append(text)
+                        except Exception:
+                            pass
+            return "\n\n".join(texts)
+        raise
     texts = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         html = item.get_content().decode("utf-8", errors="replace")
