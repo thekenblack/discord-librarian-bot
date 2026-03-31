@@ -457,21 +457,7 @@ class AILibrarianBot(discord.Client):
                 name = emo.get("user_name", uid)
                 emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
 
-        # 최근 감정 변동 (유저 5건 + 전체 5건)
-        user_logs = await self.librarian_db.get_emotion_log(target=user_id, limit=5)
-        other_logs = await self.librarian_db.get_emotion_log(target=None, limit=10)
-        other_logs = [l for l in other_logs if l not in user_logs][:5]
-        log_lines = []
-        for l in user_logs + other_logs:
-            changes = _json.loads(l["changes"]) if isinstance(l["changes"], str) else l["changes"]
-            ch_str = " ".join(f"{k}:{v:+.0f}" for k, v in changes.items() if isinstance(v, (int, float)) and v != 0)
-            reason = l.get("reason") or ""
-            if ch_str:
-                log_lines.append(f"{l['user_name']}: {ch_str} -- {reason[:20]}")
-
-        emo_block = "## 감정 (0이 중립, +긍정 -부정)\n" + "\n".join(emo_lines)
-        if log_lines:
-            emo_block += "\n\n최근 변동:\n" + "\n".join(log_lines)
+        emo_block = "## 감정 (5가 중립, 0 ~ 10)\n" + "\n".join(emo_lines)
         parts.append(emo_block)
         logger.info(f"[타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
         logger.info(f"[타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
