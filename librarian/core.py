@@ -850,16 +850,20 @@ class AILibrarianBot(discord.Client):
 
             def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
-                nonlocal _mood_applied
+                nonlocal _mood_applied, _had_inline_function
                 if not text:
                     return text
                 # feel(...) 인라인 제거
+                if re.search(r'feel\s*\([^)]*\)', text):
+                    _had_inline_function = True
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
                 # 빈 JSON 잔여물 제거 ([], {})
                 text = re.sub(r'\[\s*\]', '', text).strip()
                 text = re.sub(r'\{\s*\}', '', text).strip()
                 # JSON 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
                 json_match = re.search(r'\{[^}]*"reason"[^}]*\}', text, flags=re.DOTALL)
+                if json_match:
+                    _had_inline_function = True
                 if json_match and not _mood_applied:
                     try:
                         import json as _json
@@ -903,6 +907,7 @@ class AILibrarianBot(discord.Client):
             reply = _strip_feeling(reply)
 
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
+            _had_inline_function = False
             _TOOL_NAMES = {
                 "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
                 "web_search", "add_alias", "forget_alias", "forget_memory", "modify_memory",
@@ -931,6 +936,7 @@ class AILibrarianBot(discord.Client):
                     _tool_name = _inline_match.group(1)
                     _args_raw = _inline_match.group(2).strip()
                     logger.info(f"인라인 함수 감지: {_tool_name}({_args_raw[:80]})")
+                    _had_inline_function = True
 
                     # args 파싱
                     _tool_args = {}
@@ -1001,11 +1007,16 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if history and history[-1].role == "user":
-                    history.pop()
-                logger.info("[1차] 빈 응답 → 무응답")
-                _meta["intentional_silence"] = True
-                return "", file_to_send, _meta
+                if _had_inline_function:
+                    # 함수만 시도하고 텍스트 없음 → 리트라이
+                    logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
+                else:
+                    # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
+                    if history and history[-1].role == "user":
+                        history.pop()
+                    logger.info("[1차] 빈 응답 → 무응답")
+                    _meta["intentional_silence"] = True
+                    return "", file_to_send, _meta
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
