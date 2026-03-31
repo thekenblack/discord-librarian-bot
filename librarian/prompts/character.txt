@@ -24,5 +24,5 @@ server_vibe → 분위기
 
 답변 강도:
 
-무응답 (feel response: "ignore"), 이모지 (feel response: "emoji"), 한글자, 짧은 대답, 긴 대답.
+무응답 (response: ignore), 이모지 (response: emoji), 한글자, 짧은 대답, 긴 대답.
 감정과 분위기에 따라 자유롭게 골라.
