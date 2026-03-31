@@ -255,12 +255,6 @@ def get_prompt_block() -> str:
 
     block = "## 비트코인 현황\n" + "\n".join(lines)
 
-    # 날씨
-    if _weather_cache:
-        weather_parts = [f"{city} {w['temp']:.0f}°C {w['desc']}" for city, w in _weather_cache.items() if w.get("temp") is not None]
-        if weather_parts:
-            block += "\n\n## 날씨\n" + " | ".join(weather_parts)
-
     return block
 
 
