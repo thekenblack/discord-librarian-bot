@@ -281,6 +281,8 @@ class AILibrarianBot(discord.Client):
         if not bot_mentioned and not role_mentioned:
             return
 
+        import time as _time
+        _t0 = _time.monotonic()
         logger.info(f"[수신] {message.author.display_name}(#{getattr(message.channel, 'name', 'DM')}): {message.content[:100]}")
 
         # 멘션 태그 제거
@@ -291,7 +293,9 @@ class AILibrarianBot(discord.Client):
         text = text.strip()
 
         # 첨부/임베드 정보 추가
+        _t1 = _time.monotonic()
         msg_extras = await self._extract_extras(message)
+        logger.info(f"[타이밍] extract_extras: {_time.monotonic()-_t1:.2f}s")
         if msg_extras:
             text = f"{text} {msg_extras}" if text else msg_extras
 
@@ -299,8 +303,13 @@ class AILibrarianBot(discord.Client):
             text = ""
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
+        _t2 = _time.monotonic()
         reply_chain, seen_filenames, chain_attachments = await self._build_reply_chain(message)
+        logger.info(f"[타이밍] reply_chain: {_time.monotonic()-_t2:.2f}s ({len(reply_chain)}건)")
+        _t3 = _time.monotonic()
         pre_context = await self._build_pre_context(message)
+        logger.info(f"[타이밍] pre_context: {_time.monotonic()-_t3:.2f}s ({len(pre_context)}건)")
+        logger.info(f"[타이밍] 전처리 총: {_time.monotonic()-_t0:.2f}s")
 
         # 첨부파일: 현재 메시지 + 답글 체인의 첨부파일
         all_attachments = list(message.attachments) + chain_attachments
@@ -362,11 +371,17 @@ class AILibrarianBot(discord.Client):
         history = self.chat_histories[user_id]
 
         # 프롬프트 조립
+        import time as _time
+        _tp0 = _time.monotonic()
         parts = []
         parts.append(self.persona.persona_text)
 
+        _tp1 = _time.monotonic()
         catalog = await self._build_catalog()
+        logger.info(f"[타이밍] catalog: {_time.monotonic()-_tp1:.2f}s")
+        _tp2 = _time.monotonic()
         memories_text, memory_ids = await self._build_memories(user_name)
+        logger.info(f"[타이밍] memories: {_time.monotonic()-_tp2:.2f}s")
         prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
         prompt_no_memories = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", "(기억 없음)")
         parts.append(prompt)
@@ -413,6 +428,7 @@ class AILibrarianBot(discord.Client):
             parts.append(btc_block)
 
         # 감정 상태
+        _te0 = _time.monotonic()
         import json as _json
         emo_lines = []
 
@@ -457,6 +473,8 @@ class AILibrarianBot(discord.Client):
         if log_lines:
             emo_block += "\n\n최근 변동:\n" + "\n".join(log_lines)
         parts.append(emo_block)
+        logger.info(f"[타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
+        logger.info(f"[타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
 
         if pre_context:
             parts.append("## 직전 대화\n" + "\n".join(pre_context))
