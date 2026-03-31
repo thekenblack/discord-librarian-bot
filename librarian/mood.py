@@ -56,19 +56,29 @@ class MoodSystem:
                 active[user] = self._decay(data["raw"], data["updated"])
         return active
 
-    def update(self, user_name: str, target: float):
-        """AI가 set_mood 호출 시. EMA 적용."""
-        target = max(0, min(100, target))
+    def update(self, user_name: str, value: float, relative: bool = False):
+        """감정 업데이트. relative=True면 delta(+/-), False면 절대값. cap + EMA 적용."""
         now = datetime.now(timezone.utc)
+        CAP = 15
 
         if user_name in self._users:
             current = self._decay(self._users[user_name]["raw"], self._users[user_name]["updated"])
         else:
             current = BASELINE
 
+        if relative:
+            # 상대값: delta를 cap으로 자르고 EMA 적용
+            delta = max(-CAP, min(CAP, value))
+            target = current + delta
+        else:
+            # 절대값: 기존 EMA 방식
+            target = value
+
+        target = max(0, min(100, target))
         new_raw = current * (1 - ALPHA) + target * ALPHA
         self._users[user_name] = {"raw": new_raw, "updated": now}
-        logger.info(f"무드: {user_name}에 대한 감정 {current:.0f} → {new_raw:.0f} (AI 요청={target:.0f}, EMA α={ALPHA})")
+        mode = f"delta={value:+.0f}" if relative else f"abs={value:.0f}"
+        logger.info(f"무드: {user_name}에 대한 감정 {current:.0f} → {new_raw:.0f} ({mode}, EMA α={ALPHA})")
 
     def get_global(self) -> tuple[float, str]:
         """공통 무드 (활성 유저 원점수 평균)"""

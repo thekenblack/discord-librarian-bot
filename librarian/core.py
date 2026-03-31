@@ -733,18 +733,23 @@ class AILibrarianBot(discord.Client):
             _mood_applied = False
 
             def _apply_mood(text):
-                """[mood:XX] 태그 파싱 + 제거. 첫 1회만 update."""
+                """[mood:XX] 또는 [mood:+X]/[mood:-X] 태그 파싱 + 제거. 첫 1회만 update."""
                 nonlocal _mood_applied
-                m = re.search(r'\[mood:[+-]?\d+\]', text) if text else None
+                m = re.search(r'\[mood:([+-]?\d+)\]', text) if text else None
                 if m:
                     text = text.replace(m.group(0), '').strip()
                     if not _mood_applied:
-                        val = int(re.search(r'[+-]?\d+', m.group(0)).group())
-                        self._mood.update(user_name, val)
-                        _mood_applied = True
-                        global_score, global_emotion = self._mood.get_global()
-                        user_score, user_emotion = self._mood.get_user(user_name)
-                        logger.info(f"감정: AI 요청=[mood:{val}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
+                        raw = m.group(1)
+                        try:
+                            val = int(raw)
+                            relative = raw.startswith("+") or raw.startswith("-")
+                            self._mood.update(user_name, val, relative=relative)
+                            _mood_applied = True
+                            global_score, global_emotion = self._mood.get_global()
+                            user_score, user_emotion = self._mood.get_user(user_name)
+                            logger.info(f"감정: AI 요청=[mood:{raw}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
+                        except ValueError:
+                            logger.warning(f"mood 파싱 실패: {m.group(0)}")
                 return text
 
             reply = _apply_mood(reply)
