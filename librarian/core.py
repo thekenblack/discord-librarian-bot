@@ -849,14 +849,17 @@ class AILibrarianBot(discord.Client):
             import re
 
             def _strip_mood(text):
-                """[mood:XX] 태그 제거 + feel 미호출 시 폴백으로 DB 반영."""
+                """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
                 nonlocal _mood_applied
-                m = re.search(r'\[mood:([+-]?\d+)\]', text) if text else None
+                if not text:
+                    return text
+                # feel(...) 인라인 제거
+                text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
+                # JSON 블록 제거 (feel을 텍스트로 출력한 경우)
+                text = re.sub(r'\{[^}]*"reason"[^}]*\}', '', text, flags=re.DOTALL).strip()
+                # [mood:XX] 태그 처리
+                m = re.search(r'\[mood:([+-]?\d+)\]', text)
                 if not m:
-                    # feel(...) 인라인도 제거
-                    m2 = re.search(r'feel\s*\([^)]*\)', text) if text else None
-                    if m2:
-                        text = text[:m2.start()].strip()
                     return text
                 text = text.replace(m.group(0), '').strip()
                 if not _mood_applied:
