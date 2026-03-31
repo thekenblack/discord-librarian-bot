@@ -386,8 +386,15 @@ class AILibrarianBot(discord.Client):
 
         if file_to_send:
             await message.reply(reply_text, file=file_to_send)
-        else:
+        elif reply_text:
             await message.reply(reply_text)
+
+        # 이모지 리액션
+        if _meta.get("reaction"):
+            try:
+                await message.add_reaction(_meta["reaction"])
+            except Exception as e:
+                logger.warning(f"리액션 실패: {e}")
 
     async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
@@ -628,12 +635,11 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    # response에 이모지가 있으면 리액션으로
+                    # response에 이모지가 있으면 리액션 예약 (답변도 계속 진행)
                     if response_mode and response_mode not in ("normal", "ignore"):
-                        _meta["reaction"] = response_mode
-                        logger.info(f"이모지 리액션: {response_mode}")
-                        _meta["intentional_silence"] = True
-                        return "", None, _meta
+                        if not _meta.get("reaction"):
+                            _meta["reaction"] = response_mode
+                            logger.info(f"이모지 리액션 예약: {response_mode}")
 
                     result_parts = []
                     for k, v in current.items():
