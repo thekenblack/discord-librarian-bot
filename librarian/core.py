@@ -852,6 +852,13 @@ class AILibrarianBot(discord.Client):
                     except Exception as _e:
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
+                    # 인라인 함수 재응답에서 mood 태그 재파싱
+                    if reply:
+                        _mood_retry = re.search(r'\[mood:(\d+)\]', reply)
+                        if _mood_retry:
+                            self._mood.update(user_name, int(_mood_retry.group(1)))
+                            reply = reply.replace(_mood_retry.group(0), '').strip()
+
             if not reply:
                 self.chat_histories[channel_id] = history[:history_snapshot]
                 history = self.chat_histories[channel_id]
