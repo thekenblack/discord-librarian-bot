@@ -36,8 +36,7 @@ class AILibrarianBot(discord.Client):
         self.library_db = LibraryDB()
         self.librarian_db = LibrarianDB()
         self._gemini_client = genai.Client(api_key=gemini_api_key)
-        self.chat_histories: dict[int, list] = {}
-        self._channel_locks: dict[int, asyncio.Lock] = {}
+        self.chat_histories: dict[str, list] = {}  # user_id → history
         self._mood = MoodSystem()
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
@@ -305,18 +304,11 @@ class AILibrarianBot(discord.Client):
         # 첨부파일: 현재 메시지 + 답글 체인의 첨부파일
         all_attachments = list(message.attachments) + chain_attachments
 
-        # 채널 락
-        ch_id = message.channel.id
-        if ch_id not in self._channel_locks:
-            self._channel_locks[ch_id] = asyncio.Lock()
-
-        async with self._channel_locks[ch_id]:
-            try:
-                await message.channel.typing()
-            except Exception:
-                pass
-            reply_text, file_to_send, _meta = await self._ask_gemini(
-                    channel_id=ch_id,
+        try:
+            await message.channel.typing()
+        except Exception:
+            pass
+        reply_text, file_to_send, _meta = await self._ask_gemini(
                     user_id=str(message.author.id),
                     user_name=message.author.display_name,
                     user_text=text,
@@ -347,7 +339,7 @@ class AILibrarianBot(discord.Client):
         else:
             await message.reply(reply_text)
 
-    async def _ask_gemini(self, channel_id: int, user_id: str,
+    async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
                           guild=None, reply_chain: list[str] = None,
                           pre_context: list[str] = None,
@@ -356,9 +348,9 @@ class AILibrarianBot(discord.Client):
         """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
-        if channel_id not in self.chat_histories:
-            self.chat_histories[channel_id] = []
-        history = self.chat_histories[channel_id]
+        if user_id not in self.chat_histories:
+            self.chat_histories[user_id] = []
+        history = self.chat_histories[user_id]
 
         # 프롬프트 조립
         parts = []
@@ -853,8 +845,8 @@ class AILibrarianBot(discord.Client):
                     reply = _apply_mood(reply)
 
             if not reply:
-                self.chat_histories[channel_id] = history[:history_snapshot]
-                history = self.chat_histories[channel_id]
+                self.chat_histories[user_id] = history[:history_snapshot]
+                history = self.chat_histories[user_id]
                 logger.warning(f"[1차] 빈 응답 → 에러 처리")
                 return "…미안, 지금 대답을 못 하겠어.", file_to_send, _meta
             else:
@@ -960,7 +952,7 @@ class AILibrarianBot(discord.Client):
                 if history and history[-1].role == "user":
                     history.pop()
 
-            self._trim_history(channel_id)
+            self._trim_history(user_id)
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
@@ -969,7 +961,7 @@ class AILibrarianBot(discord.Client):
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
-            self.chat_histories[channel_id] = []
+            self.chat_histories[user_id] = []
             if e.status == "RESOURCE_EXHAUSTED":
                 msg = str(e)
                 if "PerDay" in msg or "per_day" in msg:
@@ -1001,7 +993,7 @@ class AILibrarianBot(discord.Client):
             return self.persona.error_message, None, _meta
 
         except Exception as e:
-            self.chat_histories[channel_id] = []
+            self.chat_histories[user_id] = []
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             _meta["error"] = f"{type(e).__name__}"
             return self.persona.error_message, None, _meta
@@ -1208,9 +1200,9 @@ class AILibrarianBot(discord.Client):
         text = "\n\n".join(sections) if sections else "(기억 없음)"
         return text, memory_ids
 
-    def _trim_history(self, channel_id: int):
+    def _trim_history(self, user_id: str):
         """히스토리를 MAX_HISTORY 턴으로 제한. function_call/response 쌍 보장."""
-        history = self.chat_histories.get(channel_id)
+        history = self.chat_histories.get(user_id)
         if history and len(history) > MAX_HISTORY:
             trimmed = history[-MAX_HISTORY:]
             while trimmed and trimmed[0].role == "user" and trimmed[0].parts:
@@ -1219,4 +1211,4 @@ class AILibrarianBot(discord.Client):
                     trimmed.pop(0)
                 else:
                     break
-            self.chat_histories[channel_id] = trimmed
+            self.chat_histories[user_id] = trimmed
