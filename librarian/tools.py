@@ -3,11 +3,60 @@ Gemini function calling 도구 정의 및 실행
 """
 
 import json
+from urllib.parse import urlparse, parse_qs, urlencode
 from google.genai import types
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 from librarian.bitcoin_data import get_news, get_weather_for
+
+# ── URL 정규화 (core.py에서 이동) ─────────────────────
+
+def parse_url(url: str) -> dict:
+    """URL 파싱 — 카테고리, 정규화, 플랫폼별 ID 추출"""
+    result = {"original_url": url, "normalized": None, "platform": None, "content_id": None}
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").removeprefix("www.").removeprefix("m.")
+
+    if host in ("youtube.com", "youtu.be"):
+        result["platform"] = "youtube"
+        if host == "youtu.be":
+            content_id = parsed.path.lstrip("/").split("/")[0]
+        else:
+            path = parsed.path.rstrip("/")
+            if path.startswith("/watch"):
+                content_id = parse_qs(parsed.query).get("v", [None])[0]
+            elif path.startswith(("/shorts/", "/live/")):
+                content_id = path.split("/")[2] if len(path.split("/")) > 2 else None
+            else:
+                content_id = None
+        result["content_id"] = content_id
+        result["normalized"] = f"youtube:{content_id}" if content_id else normalize_url(url)
+    else:
+        result["normalized"] = normalize_url(url)
+
+    return result
+
+
+def normalize_url(url: str) -> str:
+    """URL 정규화"""
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    host = host.removeprefix("www.").removeprefix("m.")
+    path = parsed.path.rstrip("/")
+    if path.endswith(("/index.html", "/index.htm")):
+        path = path.rsplit("/", 1)[0]
+    _tracking = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                  "fbclid", "gclid", "si", "ref", "source", "feature"}
+    params = {k: v for k, v in parse_qs(parsed.query).items() if k not in _tracking}
+    query = urlencode(params, doseq=True) if params else ""
+    result = host + path
+    if query:
+        result += "?" + query
+    return result.lower()
 
 # ── 도구 정의 ────────────────────────────────────────
 
@@ -176,6 +225,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         user_name = args.get("_user_name")
         exclude_memory_ids = args.get("_exclude_memory_ids", [])
         exclude_web_ids = args.get("_exclude_web_ids", [])
+        exclude_url_ids = args.get("_exclude_url_ids", [])
         exclude_media_ids = args.get("_exclude_media_ids", [])
 
         # 키워드 확장: 별칭 + 공백 분리
@@ -185,12 +235,13 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 if part not in keywords:
                     keywords.append(part)
 
-        # 5개 카테고리 검색
+        # 7개 카테고리 검색
         merged = {}
         for kw in keywords:
             kw_result = await librarian_db.search_all(
                 kw, exclude_memory_ids=exclude_memory_ids,
                 exclude_web_ids=exclude_web_ids,
+                exclude_url_ids=exclude_url_ids,
                 exclude_media_ids=exclude_media_ids,
                 user_name=user_name)
             for cat, items in kw_result.items():
@@ -204,13 +255,14 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         # 뉴스 키워드 감지
         if "뉴스" in keyword or "news" in keyword.lower() or "헤드라인" in keyword:
             news = get_news()
-            if news["domestic"] or news["international"]:
-                result["news"] = news
+            if news["domestic"]:
+                result["뉴스_국내"] = news["domestic"]
+            if news["international"]:
+                result["뉴스_국제"] = news["international"]
 
         # 날씨 키워드 감지
         weather_keywords = ["날씨", "기온", "weather"]
         if any(wk in keyword.lower() for wk in weather_keywords):
-            # 키워드에서 날씨 관련 단어 제거하고 도시명 추출
             city = keyword
             for wk in weather_keywords:
                 city = city.replace(wk, "").strip()

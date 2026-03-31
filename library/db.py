@@ -51,6 +51,27 @@ class LibraryDB:
                 )
             """)
 
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pages (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title      TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+
+            await db.execute("""
+                INSERT OR IGNORE INTO meta (key, value)
+                VALUES ('catalog_updated_at', datetime('now'))
+            """)
+
             # 마이그레이션
             async def _add_column(table, column, coltype):
                 try:
@@ -66,17 +87,29 @@ class LibraryDB:
             await _add_column("books", "hidden", "INTEGER DEFAULT 0")
             await _add_column("files", "hidden", "INTEGER DEFAULT 0")
 
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS pages (
-                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title      TEXT NOT NULL,
-                    sort_order INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                )
-            """)
-
             await db.commit()
             logger.info("도서관 DB 초기화 완료")
+
+    # ── 카탈로그 메타 ─────────────────────────────────────
+
+    async def touch_catalog(self, db=None):
+        """카탈로그 변경 시각 업데이트. 기존 db 연결 재사용 가능."""
+        if db:
+            await db.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('catalog_updated_at', datetime('now'))")
+        else:
+            async with aiosqlite.connect(self.path) as db:
+                await db.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('catalog_updated_at', datetime('now'))")
+                await db.commit()
+
+    async def get_catalog_updated_at(self) -> str:
+        """카탈로그 마지막 변경 시각 반환"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT value FROM meta WHERE key = 'catalog_updated_at'")
+            row = await cursor.fetchone()
+            return row[0] if row else ""
 
     # ── 엔트리 ────────────────────────────────────────────
 
@@ -91,6 +124,7 @@ class LibraryDB:
                                    author, author_alias, description, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (creator_id, creator_name, title, alias, author, author_alias, description, now))
+            await self.touch_catalog(db)
             await db.commit()
             return cursor.lastrowid
 
@@ -113,7 +147,9 @@ class LibraryDB:
                 FROM books b
                 LEFT JOIN files f ON f.book_id = b.id
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC,
+                         CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC,
+                         b.created_at ASC
                 LIMIT ? OFFSET ?
             """, (per_page, offset))
             rows = await cursor.fetchall()
@@ -129,7 +165,9 @@ class LibraryDB:
                 LEFT JOIN files f ON f.book_id = b.id
                 {where}
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC,
+                         CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC,
+                         b.created_at ASC
             """)
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -143,7 +181,9 @@ class LibraryDB:
                 LEFT JOIN files f ON f.book_id = b.id
                 WHERE b.creator_id = ? AND (b.hidden IS NULL OR b.hidden = 0)
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC,
+                         CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC,
+                         b.created_at ASC
                 LIMIT 25
             """, (creator_id,))
             rows = await cursor.fetchall()
@@ -152,6 +192,7 @@ class LibraryDB:
     async def update_book_alias(self, book_id: int, alias: str):
         async with aiosqlite.connect(self.path) as db:
             await db.execute("UPDATE books SET alias = ? WHERE id = ?", (alias, book_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def update_book(self, book_id: int, title: str, alias: str | None,
@@ -163,12 +204,14 @@ class LibraryDB:
                        author_alias = ?, description = ?
                 WHERE id = ?
             """, (title, alias, author, author_alias, description, book_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def delete_book(self, book_id: int) -> bool:
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute("DELETE FROM books WHERE id = ?", (book_id,))
             await db.execute("DELETE FROM files WHERE book_id = ?", (book_id,))
+            await self.touch_catalog(db)
             await db.commit()
             return cursor.rowcount > 0
 
@@ -186,6 +229,7 @@ class LibraryDB:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (book_id, uploader_id, uploader_name, title, description,
                   filename, stored_name, file_size, mime_type, now))
+            await self.touch_catalog(db)
             await db.commit()
             return cursor.lastrowid
 
@@ -194,7 +238,8 @@ class LibraryDB:
             db.row_factory = aiosqlite.Row
             hidden_filter = "" if include_hidden else "AND (hidden IS NULL OR hidden = 0)"
             cursor = await db.execute(
-                f"SELECT * FROM files WHERE book_id = ? {hidden_filter} ORDER BY uploaded_at DESC", (book_id,))
+                f"SELECT * FROM files WHERE book_id = ? {hidden_filter} ORDER BY uploaded_at DESC",
+                (book_id,))
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
@@ -232,11 +277,13 @@ class LibraryDB:
                 UPDATE files SET title = ?, description = ?, filename = ?
                 WHERE id = ?
             """, (title, description, filename, file_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def delete_file(self, file_id: int) -> bool:
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            await self.touch_catalog(db)
             await db.commit()
             return cursor.rowcount > 0
 
@@ -256,7 +303,9 @@ class LibraryDB:
                    OR b.author_alias LIKE ?
                    OR b.description LIKE ?
                 GROUP BY b.id
-                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC, CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC, b.created_at ASC
+                ORDER BY CASE WHEN b.page_id = 0 THEN 9999 ELSE b.page_id END ASC,
+                         CASE WHEN b.sort_order = 0 THEN 9999 ELSE b.sort_order END ASC,
+                         b.created_at ASC
                 LIMIT 10
             """, (like, like, like, like, like))
             rows = await cursor.fetchall()
@@ -282,23 +331,30 @@ class LibraryDB:
 
     async def set_hidden(self, book_id: int, hidden: bool):
         async with aiosqlite.connect(self.path) as db:
-            await db.execute("UPDATE books SET hidden = ? WHERE id = ?", (1 if hidden else 0, book_id))
+            await db.execute(
+                "UPDATE books SET hidden = ? WHERE id = ?", (1 if hidden else 0, book_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def set_file_hidden(self, file_id: int, hidden: bool):
         async with aiosqlite.connect(self.path) as db:
-            await db.execute("UPDATE files SET hidden = ? WHERE id = ?", (1 if hidden else 0, file_id))
+            await db.execute(
+                "UPDATE files SET hidden = ? WHERE id = ?", (1 if hidden else 0, file_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def unassign_page_books(self, page_id: int):
         """페이지의 엔트리들을 미배정(0)으로"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("UPDATE books SET page_id = 0 WHERE page_id = ?", (page_id,))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def set_page_hidden(self, page_id: int, hidden: bool):
         async with aiosqlite.connect(self.path) as db:
-            await db.execute("UPDATE pages SET hidden = ? WHERE id = ?", (1 if hidden else 0, page_id))
+            await db.execute(
+                "UPDATE pages SET hidden = ? WHERE id = ?", (1 if hidden else 0, page_id))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def list_pages(self, include_hidden=False) -> list[dict]:
@@ -327,9 +383,9 @@ class LibraryDB:
 
     async def delete_page(self, page_id: int):
         async with aiosqlite.connect(self.path) as db:
-            # 해당 페이지의 엔트리들은 미배정(0)으로
             await db.execute("UPDATE books SET page_id = 0 WHERE page_id = ?", (page_id,))
             await db.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+            await self.touch_catalog(db)
             await db.commit()
 
     async def assign_book_page(self, book_id: int, page_id: int, sort_order: int = 0):
@@ -337,4 +393,5 @@ class LibraryDB:
             await db.execute(
                 "UPDATE books SET page_id = ?, sort_order = ? WHERE id = ?",
                 (page_id, sort_order, book_id))
+            await self.touch_catalog(db)
             await db.commit()

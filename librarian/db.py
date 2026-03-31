@@ -58,13 +58,27 @@ class LibrarianDB:
                 )
             """)
 
-            # 웹 검색 결과 캐시
+            # 웹 검색 결과 캐시 (키워드 검색)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS web_results (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
                     query      TEXT NOT NULL,
                     result     TEXT NOT NULL,
+                    user_name  TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            # URL 인식 결과 캐시
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS url_results (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    normalized   TEXT NOT NULL,
+                    original_url TEXT NOT NULL,
+                    result       TEXT NOT NULL,
+                    user_name    TEXT,
+                    status       TEXT NOT NULL DEFAULT 'done',
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
 
@@ -117,6 +131,19 @@ class LibrarianDB:
                     pass
 
             await _add_column("knowledge_base", "alias", "TEXT")
+            await _add_column("knowledge_base", "priority", "INTEGER DEFAULT 50")
+            await _add_column("learned", "author", "TEXT")
+            await _add_column("learned", "forgotten", "INTEGER DEFAULT 0")
+            await _add_column("web_results", "user_name", "TEXT")
+            await _add_column("media_results", "user_name", "TEXT")
+            await _add_column("media_results", "uploader", "TEXT")
+            await _add_column("media_results", "stored_name", "TEXT")
+            await _add_column("media_results", "file_hash", "TEXT")
+
+            # 인덱스
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_media_hash ON media_results(file_hash)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_web_query ON web_results(query)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_url_normalized ON url_results(normalized)")
 
             # alias_groups → aliases 마이그레이션
             try:
@@ -182,6 +209,7 @@ class LibrarianDB:
                             fc += 1
                 logger.info(f"지식 로드: {category} ({fc}건)")
                 total += fc
+
             # 별칭 등록
             await db.execute("DELETE FROM aliases")
             cursor = await db.execute("SELECT content, alias FROM knowledge_base WHERE alias IS NOT NULL")
@@ -212,9 +240,10 @@ class LibrarianDB:
     async def search_all(self, keyword: str, limit: int = 10,
                          exclude_memory_ids: list[int] = None,
                          exclude_web_ids: list[int] = None,
+                         exclude_url_ids: list[int] = None,
                          exclude_media_ids: list[int] = None,
                          user_name: str = None) -> dict:
-        """5개 카테고리 검색. 각 카테고리별 limit건."""
+        """7개 카테고리 검색. 각 카테고리별 limit건."""
         like = f"%{keyword}%"
         like_nospace = f"%{keyword.replace(' ', '')}%"
 
@@ -224,16 +253,35 @@ class LibrarianDB:
         web_exclude = ""
         if exclude_web_ids:
             web_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_web_ids)})"
+        url_exclude = ""
+        if exclude_url_ids:
+            url_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_url_ids)})"
         media_exclude = ""
         if exclude_media_ids:
             media_exclude = f"AND id NOT IN ({','.join(str(i) for i in exclude_media_ids)})"
+
+        def _snippet(text: str) -> str:
+            """키워드 주변 200자 추출. 없으면 앞 200자."""
+            lower = text.lower()
+            lower_kw = keyword.lower()
+            idx = lower.find(lower_kw)
+            if idx >= 0:
+                start = max(0, idx - 100)
+                end = min(len(text), idx + len(keyword) + 100)
+                s = text[start:end]
+                if start > 0:
+                    s = "..." + s
+                if end < len(text):
+                    s = s + "..."
+                return s
+            return text[:200]
 
         result = {}
 
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
 
-            # 1. 기억 (유저 10건 + 나머지 10건)
+            # 1. 기억 (유저 limit건 + 나머지 limit건)
             memory_items = []
             if user_name:
                 cursor = await db.execute(f"""
@@ -245,19 +293,30 @@ class LibrarianDB:
                     LIMIT ?
                 """, (f"{user_name}%", like, like_nospace, limit))
                 for r in await cursor.fetchall():
-                    memory_items.append(f"{r['author']}: {r['content']}" if r["author"] else r["content"])
+                    item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
+                    memory_items.append(_snippet(item))
 
-            user_exclude = f"AND (author IS NULL OR author NOT LIKE '{user_name}%')" if user_name else ""
-            cursor = await db.execute(f"""
-                SELECT author, content FROM learned
-                WHERE (forgotten IS NULL OR forgotten = 0)
-                  AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
-                  {mem_exclude} {user_exclude}
-                LIMIT ?
-            """, (like, like_nospace, like, limit))
+            if user_name:
+                cursor = await db.execute(f"""
+                    SELECT author, content FROM learned
+                    WHERE (forgotten IS NULL OR forgotten = 0)
+                      AND (author IS NULL OR author NOT LIKE ?)
+                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
+                      {mem_exclude}
+                    LIMIT ?
+                """, (f"{user_name}%", like, like_nospace, like, limit))
+            else:
+                cursor = await db.execute(f"""
+                    SELECT author, content FROM learned
+                    WHERE (forgotten IS NULL OR forgotten = 0)
+                      AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ? OR author LIKE ?)
+                      {mem_exclude}
+                    LIMIT ?
+                """, (like, like_nospace, like, limit))
             seen = set(memory_items)
             for r in await cursor.fetchall():
                 item = f"{r['author']}: {r['content']}" if r["author"] else r["content"]
+                item = _snippet(item)
                 if item not in seen:
                     memory_items.append(item)
             if memory_items:
@@ -271,11 +330,11 @@ class LibrarianDB:
                 ORDER BY COALESCE(priority, 50) DESC, RANDOM()
                 LIMIT ?
             """, (like, like_nospace, like, like_nospace, limit))
-            rows = [r["content"] for r in await cursor.fetchall()]
+            rows = [_snippet(r["content"]) for r in await cursor.fetchall()]
             if rows:
                 result["지식"] = rows
 
-            # 3. 커스텀 (priority 높은 순 → 같으면 랜덤)
+            # 3. 커스텀
             cursor = await db.execute("""
                 SELECT content FROM customs
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
@@ -283,22 +342,34 @@ class LibrarianDB:
                 ORDER BY COALESCE(priority, 50) DESC, RANDOM()
                 LIMIT ?
             """, (like, like_nospace, like, like_nospace, limit))
-            rows = [r["content"] for r in await cursor.fetchall()]
+            rows = [_snippet(r["content"]) for r in await cursor.fetchall()]
             if rows:
                 result["커스텀"] = rows
 
-            # 4. 웹 캐시
+            # 4. 웹 검색 캐시
             cursor = await db.execute(f"""
                 SELECT query, result FROM web_results
                 WHERE (query LIKE ? OR result LIKE ?)
                   {web_exclude}
                 ORDER BY id DESC LIMIT ?
             """, (like, like, limit))
-            rows = [f"[{r['query']}] {r['result']}" for r in await cursor.fetchall()]
+            rows = [f"[{r['query']}] {_snippet(r['result'])}" for r in await cursor.fetchall()]
             if rows:
                 result["웹"] = rows
 
-            # 5. 미디어 캐시
+            # 5. URL 인식 캐시
+            cursor = await db.execute(f"""
+                SELECT normalized, original_url, result FROM url_results
+                WHERE (result LIKE ? OR original_url LIKE ? OR normalized LIKE ?)
+                  AND status = 'done'
+                  {url_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (like, like, like, limit))
+            rows = [f"[{r['original_url']}] {_snippet(r['result'])}" for r in await cursor.fetchall()]
+            if rows:
+                result["URL"] = rows
+
+            # 6. 미디어 캐시
             cursor = await db.execute(f"""
                 SELECT id, filename, result, stored_name FROM media_results
                 WHERE (filename LIKE ? OR result LIKE ?)
@@ -307,14 +378,14 @@ class LibrarianDB:
             """, (like, like, limit))
             rows = []
             for r in await cursor.fetchall():
-                line = f"[media_id:{r['id']}] [{r['filename']}] {r['result']}"
+                line = f"[media_id:{r['id']}] [{r['filename']}] {_snippet(r['result'])}"
                 if r["stored_name"]:
                     line += " (첨부 가능)"
                 rows.append(line)
             if rows:
                 result["미디어"] = rows
 
-            # 6. 도서 지식 (제목 + 키워드 주변 200자)
+            # 7. 도서 지식 (키워드 주변 200자)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
@@ -323,23 +394,8 @@ class LibrarianDB:
             """, (like, like_nospace, like, limit))
             rows = []
             for r in await cursor.fetchall():
-                content = r["content"]
-                # 키워드 주변 200자 추출
-                lower_content = content.lower()
-                lower_kw = keyword.lower()
-                idx = lower_content.find(lower_kw)
-                if idx >= 0:
-                    start = max(0, idx - 100)
-                    end = min(len(content), idx + len(keyword) + 100)
-                    snippet = content[start:end]
-                    if start > 0:
-                        snippet = "..." + snippet
-                    if end < len(content):
-                        snippet = snippet + "..."
-                else:
-                    snippet = content[:200]
                 prefix = f"《{r['source']}》: " if r["source"] else ""
-                rows.append(prefix + snippet)
+                rows.append(prefix + _snippet(r["content"]))
             if rows:
                 result["도서"] = rows
 
@@ -410,17 +466,32 @@ class LibrarianDB:
             await db.commit()
             return cursor.lastrowid
 
-    # ── 웹 검색 / 미디어 인식 캐시 ────────────────────────
+    # ── 웹 검색 캐시 ──────────────────────────────────────
 
-    async def save_web_result(self, query: str, result: str, user_name: str = None, original_url: str = None):
+    async def save_web_result(self, query: str, result: str, user_name: str = None) -> int:
         async with aiosqlite.connect(self.path) as db:
-            await db.execute(
-                "INSERT INTO web_results (query, result, user_name, original_url) VALUES (?, ?, ?, ?)",
-                (query, result, user_name, original_url))
+            cursor = await db.execute(
+                "SELECT id FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1", (query,))
+            existing = await cursor.fetchone()
+            if existing:
+                return existing[0]
+            cursor = await db.execute(
+                "INSERT INTO web_results (query, result, user_name) VALUES (?, ?, ?)",
+                (query, result, user_name))
             await db.commit()
+            return cursor.lastrowid
 
-    async def get_recent_web_results(self, limit: int = 10, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
-        """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
+    async def get_web_by_query(self, query: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, query, result FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1",
+                (query,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_recent_web_results(self, limit: int = 5, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
+        """유저 것 + 타인 것 분리 반환."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             user_results = []
@@ -430,21 +501,155 @@ class LibrarianDB:
                     (user_name, limit))
                 user_results = [dict(r) for r in await cursor.fetchall()]
             user_queries = {r["query"] for r in user_results}
-            exclude = f"AND user_name != '{user_name}'" if user_name else ""
-            cursor = await db.execute(f"""
-                SELECT id, query, result FROM web_results WHERE 1=1 {exclude} ORDER BY id DESC LIMIT ?
-            """, (limit,))
+            if user_name:
+                cursor = await db.execute(
+                    "SELECT id, query, result FROM web_results WHERE (user_name IS NULL OR user_name != ?) ORDER BY id DESC LIMIT ?",
+                    (user_name, limit))
+            else:
+                cursor = await db.execute(
+                    "SELECT id, query, result FROM web_results ORDER BY id DESC LIMIT ?", (limit,))
             other_results = [dict(r) for r in await cursor.fetchall() if r["query"] not in user_queries]
             all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
             return user_results, other_results, all_ids
 
-    async def save_media_result(self, filename: str, result: str, user_name: str = None, uploader: str = None, stored_name: str = None) -> int:
+    # ── URL 인식 캐시 ──────────────────────────────────────
+
+    async def save_url_result(self, normalized: str, original_url: str, result: str = "",
+                              user_name: str = None, status: str = "done") -> int:
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
-                "INSERT INTO media_results (filename, result, user_name, uploader, stored_name) VALUES (?, ?, ?, ?, ?)",
-                (filename, result, user_name, uploader, stored_name))
+                "SELECT id, status FROM url_results WHERE normalized = ? ORDER BY id DESC LIMIT 1",
+                (normalized,))
+            existing = await cursor.fetchone()
+            if existing and existing[1] != "failed":
+                return existing[0]
+            cursor = await db.execute(
+                "INSERT INTO url_results (normalized, original_url, result, user_name, status) VALUES (?, ?, ?, ?, ?)",
+                (normalized, original_url, result, user_name, status))
             await db.commit()
             return cursor.lastrowid
+
+    async def update_url_result(self, normalized: str, result: str, status: str = "done"):
+        """pending/failed 상태 레코드를 업데이트"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE url_results SET result = ?, status = ? WHERE normalized = ? AND status IN ('pending', 'failed')",
+                (result, status, normalized))
+            await db.commit()
+
+    async def get_url_by_normalized(self, normalized: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, normalized, original_url, result, status FROM url_results WHERE normalized = ? ORDER BY id DESC LIMIT 1",
+                (normalized,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_recent_url_results(self, limit: int = 5, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
+        """done인 것만. 유저 것 + 타인 것 분리 반환."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            user_results = []
+            if user_name:
+                cursor = await db.execute(
+                    "SELECT id, normalized, original_url, result FROM url_results WHERE user_name = ? AND status = 'done' ORDER BY id DESC LIMIT ?",
+                    (user_name, limit))
+                user_results = [dict(r) for r in await cursor.fetchall()]
+            user_urls = {r["normalized"] for r in user_results}
+            if user_name:
+                cursor = await db.execute(
+                    "SELECT id, normalized, original_url, result FROM url_results WHERE (user_name IS NULL OR user_name != ?) AND status = 'done' ORDER BY id DESC LIMIT ?",
+                    (user_name, limit))
+            else:
+                cursor = await db.execute(
+                    "SELECT id, normalized, original_url, result FROM url_results WHERE status = 'done' ORDER BY id DESC LIMIT ?",
+                    (limit,))
+            other_results = [dict(r) for r in await cursor.fetchall() if r["normalized"] not in user_urls]
+            all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
+            return user_results, other_results, all_ids
+
+    async def reset_stale_url_results(self):
+        """시작 시 failed/pending 삭제"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "DELETE FROM url_results WHERE status IN ('failed', 'pending')")
+            await db.commit()
+            if cursor.rowcount > 0:
+                logger.info(f"stale URL 결과 초기화: {cursor.rowcount}건 삭제")
+
+    # ── 미디어 인식 캐시 ──────────────────────────────────
+
+    async def save_media_result(self, filename: str, result: str, user_name: str = None,
+                                uploader: str = None, stored_name: str = None,
+                                file_hash: str = None) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "INSERT INTO media_results (filename, result, user_name, uploader, stored_name, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                (filename, result, user_name, uploader, stored_name, file_hash))
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_media_by_filename(self, filename: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, filename, result, stored_name FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                (filename,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_media_by_hash(self, file_hash: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, filename, result, stored_name FROM media_results WHERE file_hash = ? ORDER BY id DESC LIMIT 1",
+                (file_hash,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_media_by_id(self, media_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, filename, result, stored_name FROM media_results WHERE id = ?",
+                (media_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None,
+                                       user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
+        """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            exclude_clause = ""
+            exclude_params = []
+            if exclude_filenames:
+                placeholders = ",".join("?" for _ in exclude_filenames)
+                exclude_clause = f"AND filename NOT IN ({placeholders})"
+                exclude_params = list(exclude_filenames)
+
+            user_results = []
+            if user_name:
+                cursor = await db.execute(
+                    f"SELECT id, filename, result FROM media_results WHERE user_name = ? {exclude_clause} ORDER BY id DESC LIMIT ?",
+                    (user_name, *exclude_params, limit))
+                user_results = [dict(r) for r in await cursor.fetchall()]
+            user_files = {r["filename"] for r in user_results}
+
+            if user_name:
+                cursor = await db.execute(
+                    f"SELECT id, filename, result FROM media_results WHERE (user_name IS NULL OR user_name != ?) {exclude_clause} ORDER BY id DESC LIMIT ?",
+                    (user_name, *exclude_params, limit))
+            else:
+                cursor = await db.execute(
+                    f"SELECT id, filename, result FROM media_results WHERE 1=1 {exclude_clause} ORDER BY id DESC LIMIT ?",
+                    (*exclude_params, limit))
+            other_results = [dict(r) for r in await cursor.fetchall() if r["filename"] not in user_files]
+            all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
+            return user_results, other_results, all_ids
+
+    # ── 도서 지식 ─────────────────────────────────────────
 
     async def save_book_knowledge(self, book_id: int, content: str, source: str = None):
         async with aiosqlite.connect(self.path) as db:
@@ -460,59 +665,3 @@ class LibrarianDB:
                 (book_id,))
             row = await cursor.fetchone()
             return row[0] > 0
-
-    async def get_media_by_filename(self, filename: str) -> dict | None:
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT id, filename, result, stored_name FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
-                (filename,))
-            row = await cursor.fetchone()
-            return dict(row) if row else None
-
-    async def get_web_by_query(self, query: str) -> dict | None:
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT id, query, result FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1",
-                (query,))
-            row = await cursor.fetchone()
-            return dict(row) if row else None
-
-    async def get_media_by_id(self, media_id: int) -> dict | None:
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT id, filename, result, stored_name FROM media_results WHERE id = ?",
-                (media_id,))
-            row = await cursor.fetchone()
-            return dict(row) if row else None
-
-    async def get_recent_media_results(self, limit: int = 10, exclude_filenames: list[str] = None, user_name: str = None) -> tuple[list[dict], list[dict], list[int]]:
-        """유저 것 limit건 + 나머지 limit건 분리 반환 + ID 목록"""
-        async with aiosqlite.connect(self.path) as db:
-            db.row_factory = aiosqlite.Row
-            exclude_clause = ""
-            if exclude_filenames:
-                placeholders = ",".join("?" for _ in exclude_filenames)
-                exclude_clause = f"AND filename NOT IN ({placeholders})"
-            exclude_params = list(exclude_filenames) if exclude_filenames else []
-
-            user_results = []
-            if user_name:
-                cursor = await db.execute(f"""
-                    SELECT id, filename, result FROM media_results
-                    WHERE user_name = ? {exclude_clause}
-                    ORDER BY id DESC LIMIT ?
-                """, (user_name, *exclude_params, limit))
-                user_results = [dict(r) for r in await cursor.fetchall()]
-            user_files = {r["filename"] for r in user_results}
-            user_exclude = f"AND user_name != '{user_name}'" if user_name else ""
-            cursor = await db.execute(f"""
-                SELECT id, filename, result FROM media_results
-                WHERE 1=1 {exclude_clause} {user_exclude}
-                ORDER BY id DESC LIMIT ?
-            """, (*exclude_params, limit))
-            other_results = [dict(r) for r in await cursor.fetchall() if r["filename"] not in user_files]
-            all_ids = [r["id"] for r in user_results] + [r["id"] for r in other_results]
-            return user_results, other_results, all_ids

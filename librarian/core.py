@@ -13,9 +13,9 @@ from google.genai.errors import ClientError
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
-from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS
+from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR
 from librarian.persona import Persona
-from librarian.tools import library_tools, execute_tool
+from librarian.tools import library_tools, execute_tool, normalize_url, parse_url
 from librarian import server_log
 from librarian import bitcoin_data
 from librarian.mood import MoodSystem
@@ -40,37 +40,13 @@ class AILibrarianBot(discord.Client):
         self._channel_locks: dict[int, asyncio.Lock] = {}
         self._mood = MoodSystem()
         self._ready = False
+        self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
+        self._catalog_cache: str = ""
+        self._catalog_built_at: str = ""
 
         self._error_messages = set(
             persona._messages
         )
-
-    @staticmethod
-    def _normalize_url(url: str) -> str:
-        """URL 정규화"""
-        from urllib.parse import urlparse, parse_qs, urlencode
-        url = url.strip()
-        # 프로토콜 통일
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
-        parsed = urlparse(url)
-        # 호스트: www. m. 제거, 소문자
-        host = parsed.hostname or ""
-        host = host.removeprefix("www.").removeprefix("m.")
-        # 경로: 끝슬래시, index.html 제거
-        path = parsed.path.rstrip("/")
-        if path.endswith(("/index.html", "/index.htm")):
-            path = path.rsplit("/", 1)[0]
-        # 쿼리: 추적 파라미터 제거
-        _tracking = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-                      "fbclid", "gclid", "si", "ref", "source", "feature"}
-        params = {k: v for k, v in parse_qs(parsed.query).items() if k not in _tracking}
-        query = urlencode(params, doseq=True) if params else ""
-        # 프래그먼트 제거
-        result = host + path
-        if query:
-            result += "?" + query
-        return result.lower()
 
     async def _extract_extras(self, msg) -> str:
         """메시지에서 임베드/첨부 정보 추출 (미디어 캐시 포함)"""
@@ -84,48 +60,34 @@ class AILibrarianBot(discord.Client):
             if parts:
                 extras.append(f"[임베드: {' - '.join(parts)}]")
         for att in msg.attachments:
-            # media_results에서 캐시된 설명 조회
-            import aiosqlite
-            from config import LIBRARIAN_DB_PATH
+            cached = await self.librarian_db.get_media_by_filename(att.filename)
             desc = ""
             media_id = None
-            try:
-                async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
-                    db.row_factory = aiosqlite.Row
-                    cursor = await db.execute(
-                        "SELECT id, result, stored_name FROM media_results WHERE filename = ? ORDER BY id DESC LIMIT 1",
-                        (att.filename,))
-                    row = await cursor.fetchone()
-                    if row:
-                        desc = row["result"][:100]
-                        if row["stored_name"]:
-                            media_id = row["id"]
-            except Exception as e:
-                logger.warning(f"미디어 캐시 조회 실패: {att.filename}: {e}")
+            if cached:
+                desc = cached["result"][:200]
+                if cached.get("stored_name"):
+                    media_id = cached["id"]
             if desc and media_id:
                 extras.append(f"[첨부: {att.filename} | media_id:{media_id} | {desc}]")
             elif desc:
                 extras.append(f"[첨부: {att.filename} | {desc}]")
             else:
                 extras.append(f"[첨부: {att.filename}]")
+
         # 메시지 텍스트에서 URL 감지 → web_results 캐시 조회
         import re as _re
-        import aiosqlite as _aiosqlite
-        from config import LIBRARIAN_DB_PATH as _DB_PATH
         urls = _re.findall(r'https?://[^\s<>\"]+', msg.content or "")
         for url in urls:
-            normalized = self._normalize_url(url)
-            try:
-                async with _aiosqlite.connect(_DB_PATH) as db:
-                    db.row_factory = _aiosqlite.Row
-                    cursor = await db.execute(
-                        "SELECT result FROM web_results WHERE query = ? ORDER BY id DESC LIMIT 1",
-                        (normalized,))
-                    row = await cursor.fetchone()
-                    if row:
-                        extras.append(f"[링크: {url} | {row['result'][:100]}]")
-            except Exception as e:
-                logger.warning(f"링크 캐시 조회 실패: {url}: {e}")
+            parsed = parse_url(url)
+            normalized = parsed["normalized"]
+            cached = await self.librarian_db.get_url_by_normalized(normalized)
+            if cached:
+                if cached.get("status") == "done":
+                    extras.append(f"[링크: {url} | {cached['result'][:200]}]")
+                elif cached.get("status") == "pending":
+                    extras.append(f"[링크: {url} | 읽는 중]")
+                elif cached.get("status") == "failed":
+                    extras.append(f"[링크: {url} | 읽기 실패]")
 
         if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
             for snap in msg.message_snapshots:
@@ -140,8 +102,20 @@ class AILibrarianBot(discord.Client):
         knowledge_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
         await self.librarian_db.load_knowledge_from_files(knowledge_dir)
         await self.librarian_db.cleanup_learned()
+        await self.librarian_db.reset_stale_url_results()
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
+
+        # ERROR 이상 로그를 어드민 DM으로 전달
+        _bot = self
+        class _AdminErrorHandler(logging.Handler):
+            def emit(self, record):
+                if record.levelno >= logging.ERROR:
+                    asyncio.create_task(_bot._notify_admins_log(record))
+
+        _handler = _AdminErrorHandler()
+        _handler.setLevel(logging.ERROR)
+        logging.getLogger().addHandler(_handler)
 
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=self.persona.status_text
@@ -149,6 +123,140 @@ class AILibrarianBot(discord.Client):
         asyncio.create_task(bitcoin_data.start_background_update())
         asyncio.create_task(self._learn_all_books())
         self._ready = True
+
+    async def _notify_admins_log(self, record: logging.LogRecord):
+        """ERROR 이상 로그 발생 시 어드민에게 DM"""
+        from datetime import datetime as dt
+        import zoneinfo
+        try:
+            tz = zoneinfo.ZoneInfo(os.getenv("TZ", "Asia/Seoul"))
+            today = dt.now(tz).strftime("%Y-%m-%d")
+        except Exception:
+            today = dt.now().strftime("%Y-%m-%d")
+
+        log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
+
+        tail_lines = []
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                tail_lines = f.readlines()[-30:]
+        except Exception:
+            pass
+
+        level = record.levelname
+        location = f"{record.pathname.split('/')[-1]}:{record.lineno}"
+        summary = (
+            f"**{level}** — `{location}`\n"
+            f"```\n{record.getMessage()[:500]}\n```"
+        )
+        log_text = "".join(tail_lines) if tail_lines else "(로그 없음)"
+        content = f"{summary}\n**최근 로그**\n```\n{log_text[-1500:]}\n```"
+
+        for admin_id in ADMIN_IDS:
+            try:
+                user = await self.fetch_user(int(admin_id))
+                if not user:
+                    continue
+                await user.send(content)
+                if os.path.exists(log_path):
+                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.log"))
+            except Exception as e:
+                print(f"어드민 DM 실패 ({admin_id}): {e}")  # logger 쓰면 무한루프
+
+    async def _notify_admins_error(self, message: discord.Message, meta: dict):
+        """에러 발생 시 어드민에게 로그 DM 전송"""
+        from datetime import datetime as dt
+        import zoneinfo
+        try:
+            tz_name = os.getenv("TZ", "Asia/Seoul")
+            tz = zoneinfo.ZoneInfo(tz_name)
+            today = dt.now(tz).strftime("%Y-%m-%d")
+        except Exception:
+            today = dt.now().strftime("%Y-%m-%d")
+
+        log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
+
+        # 로그 마지막 30줄
+        tail_lines = []
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                tail_lines = f.readlines()[-30:]
+        except Exception:
+            pass
+
+        error_type = meta.get("error", "unknown")
+        guild_name = message.guild.name if message.guild else "DM"
+        channel_name = getattr(message.channel, "name", "DM")
+        summary = (
+            f"**에러 발생**\n"
+            f"위치: `{guild_name}/#{channel_name}`\n"
+            f"유저: `{message.author.display_name}`\n"
+            f"에러: `{error_type}`\n"
+            f"메시지: `{message.content[:100]}`"
+        )
+
+        for admin_id in ADMIN_IDS:
+            try:
+                user = await self.fetch_user(int(admin_id))
+                if not user:
+                    continue
+                # 요약 + 코드블락
+                log_text = "".join(tail_lines) if tail_lines else "(로그 없음)"
+                content = f"{summary}\n\n```\n{log_text[-1800:]}\n```"
+                await user.send(content)
+                # 로그 파일
+                if os.path.exists(log_path):
+                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.log"))
+            except Exception as e:
+                logger.warning(f"어드민 DM 실패 ({admin_id}): {e}")
+
+    async def _recognize_url_background(self, parsed: dict, user_name: str):
+        """모든 URL 백그라운드 인식. 유튜브 영상이면 자막 → FileData, 일반이면 FileData 바로."""
+        async with self._bg_semaphore:
+            url = parsed["original_url"]
+            normalized = parsed["normalized"]
+            content_id = parsed.get("content_id")
+            result = ""
+            loop = asyncio.get_event_loop()
+
+            # 유튜브 영상: 자막 먼저
+            if content_id:
+                try:
+                    from youtube_transcript_api import YouTubeTranscriptApi
+                    transcript_list = await loop.run_in_executor(
+                        None, lambda: YouTubeTranscriptApi.get_transcript(content_id, languages=["ko", "en"]))
+                    text = " ".join(t["text"] for t in transcript_list)[:8000]
+                    if text:
+                        prompt = f"다음은 유튜브 영상 자막이야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                        config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                        response = await loop.run_in_executor(
+                            None, lambda: self._call_gemini(
+                                [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config))
+                        result = self._extract_reply(response)
+                        logger.info(f"유튜브 자막 인식 완료: {content_id}")
+                except Exception as e:
+                    logger.info(f"유튜브 자막 없음 ({content_id}): {e}")
+
+            # 자막 실패 또는 일반 URL: FileData
+            if not result:
+                try:
+                    link_parts = [
+                        types.Part(file_data=types.FileData(file_uri=url)),
+                        types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                    ]
+                    config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                    response = await loop.run_in_executor(
+                        None, lambda: self._call_gemini(
+                            [types.Content(role="user", parts=link_parts)], config))
+                    result = self._extract_reply(response)
+                    logger.info(f"URL FileData 인식 완료: {url}")
+                except Exception as e:
+                    logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
+
+            if result:
+                await self.librarian_db.update_url_result(normalized, result, status="done")
+            else:
+                await self.librarian_db.update_url_result(normalized, "", status="failed")
 
     async def _learn_all_books(self):
         """미학습 도서 일괄 학습"""
@@ -240,6 +348,14 @@ class AILibrarianBot(discord.Client):
             logger.warning("응답 없음 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
+        # 에러 메시지면 어드민에게 DM
+        if reply_text in self._error_messages:
+            asyncio.create_task(self._notify_admins_error(message, _meta))
+
+        # 에러 메시지거나 빈 응답이면 어드민에게 알림
+        if reply_text in self._error_messages:
+            asyncio.create_task(self._notify_admins(message, _meta))
+
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
@@ -261,11 +377,10 @@ class AILibrarianBot(discord.Client):
             self.chat_histories[channel_id] = []
         history = self.chat_histories[channel_id]
 
-        # 프롬프트 조립: 페르소나 → 규칙(도서관+기억 포함) → 상황 → 리마인더 → 페르소나
+        # 프롬프트 조립
         parts = []
         parts.append(self.persona.persona_text)
 
-        # 도서관 목록 + 기억을 prompt에 삽입
         catalog = await self._build_catalog()
         memories_text, memory_ids = await self._build_memories(user_name)
         prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
@@ -280,7 +395,9 @@ class AILibrarianBot(discord.Client):
                 if member:
                     admin_names.append(member.display_name)
         role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role}")
+        _user_score, _user_emotion = self._mood.get_user(user_name)
+        _global_score, _global_emotion = self._mood.get_global()
+        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | 개인={_user_score:.0f}({_user_emotion}) 서버={_global_score:.0f}({_global_emotion})")
 
         from datetime import datetime as dt
         import zoneinfo
@@ -303,34 +420,33 @@ class AILibrarianBot(discord.Client):
             info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
         parts.append(info_block)
 
-        # 비트코인 실시간 데이터
         btc_block = bitcoin_data.get_prompt_block()
         if btc_block:
             parts.append(btc_block)
 
-        # 감정 상태
         parts.append(self._mood.get_prompt_block(user_name))
 
-        # 채널 맥락 (답글 체인 시작점 직전 또는 멘션 직전)
         if pre_context:
             parts.append("## 직전 대화\n" + "\n".join(pre_context))
             logger.info(f"직전 대화: {len(pre_context)}건")
 
-        # 답글 체인
         if reply_chain:
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
             logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # 웹/미디어 캐시 (프롬프트 + search 중복 제거용)
         web_user, web_other, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
         media_user, media_other, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
+        url_user, url_other, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
         cache_lines = []
         web_all = web_user + web_other
         if web_all:
-            cache_lines.append("[웹] " + " | ".join(f"{w['query']}: {w['result'][:80]}" for w in web_all))
+            cache_lines.append("[웹] " + " | ".join(f"{w['query']}: {w['result'][:200]}" for w in web_all))
+        url_all = url_user + url_other
+        if url_all:
+            cache_lines.append("[URL] " + " | ".join(f"{u['original_url']}: {u['result'][:200]}" for u in url_all))
         media_all = media_user + media_other
         if media_all:
-            cache_lines.append("[미디어] " + " | ".join(f"media_id:{m['id']} {m['filename']}: {m['result'][:80]}" for m in media_all))
+            cache_lines.append("[미디어] " + " | ".join(f"media_id:{m['id']} {m['filename']}: {m['result'][:200]}" for m in media_all))
         if cache_lines:
             parts.append("## 최근 인식\n" + "\n".join(cache_lines))
 
@@ -340,17 +456,14 @@ class AILibrarianBot(discord.Client):
         dynamic_prompt = "\n\n".join(p for p in parts if p)
         logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
 
-        # 2차용 클린 프롬프트 (직전 대화/답글 체인 제외, 기억은 유지)
         clean_parts = [p for p in parts
                        if not p.startswith("## 직전 대화") and not p.startswith("## 답글 흐름")]
         clean_prompt = "\n\n".join(p for p in clean_parts if p)
 
-        # 3차용 프롬프트 (직전 대화/답글 체인/기억 모두 제외)
         bare_parts = [self.persona.persona_text, prompt_no_memories, info_block,
                       self.persona.reminder_text, self.persona.persona_text]
         bare_prompt = "\n\n".join(p for p in bare_parts if p)
 
-        # 유저 메시지
         if user_text:
             user_content = f"{user_name}: {user_text}"
         else:
@@ -358,7 +471,7 @@ class AILibrarianBot(discord.Client):
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         history_snapshot = len(history)
-        self._current_attachments = attachments or []  # 롤백 지점
+        self._current_attachments = attachments or []
 
         file_to_send = None
 
@@ -374,7 +487,6 @@ class AILibrarianBot(discord.Client):
             response = self._call_gemini(history, config)
             logger.info("[1차] API 응답 수신")
 
-            # function call 루프 (최대 10회)
             for loop_i in range(10):
                 if not response.candidates or not response.candidates[0].content.parts:
                     logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
@@ -392,10 +504,32 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
 
-                # web_search 도구: Google Search grounding으로 검색 → 결과를 저장 + AI에 돌려줌
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
                     logger.info(f"AI 판단 웹 검색: {query}")
+
+                    # 캐시 확인 — 히트면 바로 반환
+                    cached = await self.librarian_db.get_web_by_query(query)
+                    if cached:
+                        logger.info(f"웹 캐시 히트: {query}")
+                        web_ids.append(cached["id"])
+                        tool_data = {"result": cached["result"]}
+                        _meta["tool_results"].append(f"web_cache:{cached['result']}")
+                        history.append(response.candidates[0].content)
+                        history.append(types.Content(
+                            role="user",
+                            parts=[types.Part.from_function_response(
+                                name="web_search",
+                                response=tool_data,
+                            )],
+                        ))
+                        try:
+                            response = self._call_gemini(history, config)
+                        except Exception as e:
+                            logger.warning(f"[1차] 웹 캐시 후 API 에러: {e}")
+                            break
+                        continue
+
                     from librarian.tools import google_search_tool
                     web_config = types.GenerateContentConfig(
                         system_instruction=dynamic_prompt,
@@ -413,7 +547,9 @@ class AILibrarianBot(discord.Client):
 
                     if web_result:
                         logger.info(f"웹 검색 결과: {web_result}")
-                        await self.librarian_db.save_web_result(query, web_result, user_name)
+                        saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
+                        if saved_id:
+                            web_ids.append(saved_id)
                         tool_data = {"result": web_result}
                     else:
                         tool_data = {"result": f"'{query}' 검색 결과 없음"}
@@ -434,7 +570,6 @@ class AILibrarianBot(discord.Client):
                         break
                     continue
 
-                # recognize_media 도구: 첨부파일 이미지/PDF 인식
                 if fc.name == "recognize_media":
                     att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
                     media_result = ""
@@ -444,8 +579,18 @@ class AILibrarianBot(discord.Client):
                         att = self._current_attachments[att_idx]
                         ct = att.content_type or ""
 
-                        # 캐시 확인: 같은 파일명이면 재인식 안 함
-                        cached = await self.librarian_db.get_media_by_filename(att.filename)
+                        cached = None
+                        data = None
+                        file_hash = None
+                        if ct.startswith("image/") or ct == "application/pdf":
+                            data = await att.read()
+                            import hashlib
+                            file_hash = hashlib.sha256(data).hexdigest()
+                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                                  or await self.librarian_db.get_media_by_filename(att.filename)
+                        else:
+                            cached = await self.librarian_db.get_media_by_filename(att.filename)
+
                         if cached:
                             logger.info(f"미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
                             media_result = cached["result"]
@@ -454,7 +599,6 @@ class AILibrarianBot(discord.Client):
                         elif ct.startswith("image/") or ct == "application/pdf":
                             logger.info(f"미디어 인식: {att.filename} ({ct})")
                             try:
-                                data = await att.read()
                                 media_parts = [
                                     types.Part.from_bytes(data=data, mime_type=ct),
                                     types.Part.from_text(text="3-4줄로 핵심만 설명해."),
@@ -469,7 +613,6 @@ class AILibrarianBot(discord.Client):
                                 )
                                 media_result = self._extract_reply(media_response)
                                 if media_result:
-                                    # 미디어 파일 로컬 저장
                                     stored_name = None
                                     try:
                                         os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -484,7 +627,10 @@ class AILibrarianBot(discord.Client):
                                         stored_name = None
                                     saved_media_id = await self.librarian_db.save_media_result(
                                         att.filename, media_result, user_name=user_name,
-                                        uploader=user_name, stored_name=stored_name)
+                                        uploader=user_name, stored_name=stored_name,
+                                        file_hash=file_hash)
+                                    if saved_media_id:
+                                        media_ids.append(saved_media_id)
                             except Exception as e:
                                 logger.warning(f"미디어 인식 실패: {e}")
                         else:
@@ -512,38 +658,32 @@ class AILibrarianBot(discord.Client):
                         break
                     continue
 
-                # recognize_link 도구: 웹페이지/영상 인식
                 if fc.name == "recognize_link":
                     url = (dict(fc.args) if fc.args else {}).get("url", "")
                     link_result = ""
-                    normalized = self._normalize_url(url)
+                    parsed = parse_url(url)
+                    normalized = parsed["normalized"]
 
-                    # 캐시 확인: 같은 URL이면 재인식 안 함
-                    cached = await self.librarian_db.get_web_by_query(normalized)
+                    cached = await self.librarian_db.get_url_by_normalized(normalized)
                     if cached:
-                        logger.info(f"링크 캐시 히트: {url}")
-                        link_result = cached["result"]
-                    else:
-                        try:
-                            logger.info(f"링크 인식: {url}")
-                            link_parts = [
-                                types.Part.from_uri(file_uri=url, mime_type="text/html"),
-                                types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                            ]
-                            link_config = types.GenerateContentConfig(
-                                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                                temperature=0.5,
-                            )
-                            link_response = self._call_gemini(
-                                [types.Content(role="user", parts=link_parts)],
-                                link_config,
-                            )
-                            link_result = self._extract_reply(link_response)
-                            if link_result:
-                                await self.librarian_db.save_web_result(normalized, link_result, user_name=user_name, original_url=url)
-                        except Exception as e:
-                            logger.warning(f"링크 인식 실패: {e}")
-                            link_result = f"페이지를 열 수 없었어."
+                        if cached.get("status") == "pending":
+                            logger.info(f"링크 인식 중: {url}")
+                            link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
+                        elif cached.get("status") == "failed":
+                            await self.librarian_db.update_url_result(normalized, "", status="pending")
+                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                            link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                            logger.info(f"링크 재시도: {url}")
+                        else:
+                            logger.info(f"링크 캐시 히트: {url}")
+                            link_result = cached["result"]
+
+                    if not cached:
+                        await self.librarian_db.save_url_result(
+                            normalized, url, "", user_name=user_name, status="pending")
+                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                        link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                        logger.info(f"링크 인식 백그라운드 시작: {url}")
 
                     tool_data = {"result": link_result if link_result else "인식 실패"}
                     logger.info(f"링크 인식 결과: {link_result}")
@@ -571,20 +711,19 @@ class AILibrarianBot(discord.Client):
                 if fc.name == "search":
                     tool_args["_exclude_memory_ids"] = memory_ids
                     tool_args["_exclude_web_ids"] = web_ids
+                    tool_args["_exclude_url_ids"] = url_ids
                     tool_args["_exclude_media_ids"] = media_ids
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
                 logger.info(f"도구 결과: {tool_result}")
                 _meta["tool_results"].append(tool_result)
 
-                # deliver 액션
                 if tool_data.get("_action") == "deliver":
                     save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
                         await self.library_db.increment_download(tool_data["file_id"])
 
-                # attach 액션
                 if tool_data.get("_action") == "attach":
                     save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
                     if os.path.exists(save_path):
@@ -605,10 +744,8 @@ class AILibrarianBot(discord.Client):
                     logger.warning(f"[1차] 도구 후 API 에러: {e}")
                     break
 
-            # 최종 응답 추출 (루프 실패 시 히스토리 롤백)
             reply = self._extract_reply(response)
 
-            # [mood:XX] 태그 파싱 + 제거
             import re
             mood_match = re.search(r'\[mood:(\d+)\]', reply) if reply else None
             if mood_match:
@@ -616,10 +753,81 @@ class AILibrarianBot(discord.Client):
                 self._mood.update(user_name, mood_score)
                 reply = reply.replace(mood_match.group(0), '').strip()
 
-                # 감정 상태 로그
                 global_score, global_emotion = self._mood.get_global()
                 user_score, user_emotion = self._mood.get_user(user_name)
                 logger.info(f"감정: AI 요청=[mood:{mood_score}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
+
+            # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
+            _TOOL_NAMES = {
+                "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
+                "web_search", "add_alias", "forget_alias", "forget_memory", "modify_memory",
+                "recognize_media", "recognize_link", "attach",
+            }
+            if reply:
+                _inline_pattern = re.compile(
+                    r'(' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(([^)]*)\)',
+                    re.DOTALL
+                )
+                _inline_match = _inline_pattern.search(reply)
+                if _inline_match:
+                    _before = reply[:_inline_match.start()].strip()
+                    _tool_name = _inline_match.group(1)
+                    _args_raw = _inline_match.group(2).strip()
+                    logger.info(f"인라인 함수 감지: {_tool_name}({_args_raw[:80]})")
+
+                    # args 파싱: key: value 또는 key=value 형태
+                    _tool_args = {}
+                    for _m in re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw, re.DOTALL):
+                        _k = _m.group(1).strip()
+                        _v = _m.group(2).strip().strip('"\'')
+                        _tool_args[_k] = _v
+
+                    if _tool_name in ("search", "save_memory", "modify_memory"):
+                        _tool_args["_user_id"] = user_id
+                        _tool_args["_user_name"] = user_name
+                    if _tool_name == "search":
+                        _tool_args["_exclude_memory_ids"] = memory_ids
+                        _tool_args["_exclude_web_ids"] = web_ids
+                        _tool_args["_exclude_url_ids"] = url_ids
+                        _tool_args["_exclude_media_ids"] = media_ids
+
+                    try:
+                        _tool_result = await execute_tool(self.library_db, self.librarian_db, _tool_name, _tool_args)
+                        _tool_data = json.loads(_tool_result)
+                        logger.info(f"인라인 함수 실행 결과: {_tool_result[:100]}")
+
+                        # history에 function call/response 추가
+                        history.append(types.Content(role="model", parts=[
+                            types.Part.from_text(text=reply),
+                        ]))
+                        history.append(types.Content(role="user", parts=[
+                            types.Part.from_function_response(name=_tool_name, response=_tool_data),
+                        ]))
+
+                        if _before:
+                            # 앞부분 텍스트 있으면 reply로 쓰고 함수 결과로 재응답
+                            try:
+                                _follow_response = self._call_gemini(history, config)
+                                _follow_reply = self._extract_reply(_follow_response)
+                                if _follow_reply:
+                                    reply = _before + "\n" + _follow_reply
+                                else:
+                                    reply = _before
+                            except Exception as _e:
+                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
+                                reply = _before
+                        else:
+                            # 앞부분 없으면 함수 결과로만 재응답
+                            try:
+                                _follow_response = self._call_gemini(history, config)
+                                _follow_reply = self._extract_reply(_follow_response)
+                                if _follow_reply:
+                                    reply = _follow_reply
+                            except Exception as _e:
+                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
+                                reply = ""
+                    except Exception as _e:
+                        logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
             if not reply:
                 self.chat_histories[channel_id] = history[:history_snapshot]
@@ -629,7 +837,6 @@ class AILibrarianBot(discord.Client):
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
-            # ── 반복 감지 시에만 재시도 ──────────
             def _is_repeat_reply(r):
                 is_rep = self._is_repeat(history, r)
                 if is_rep:
@@ -638,7 +845,6 @@ class AILibrarianBot(discord.Client):
 
             clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-            # 2차: 반복일 때만. 클린 프롬프트 + 히스토리 없이 + temperature 0.9
             if _is_repeat_reply(reply):
                 logger.warning(f"[2차] 시도 (클린, 0.9)")
                 try:
@@ -656,7 +862,6 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[2차] 실패: {e}")
 
-            # 3차: 아직 반복이면. bare + 웹 검색 + temperature 1.0
             if _is_repeat_reply(reply):
                 logger.warning(f"[3차] 시도 (bare+웹, 1.0)")
                 try:
@@ -675,7 +880,6 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[3차] 실패: {e}")
 
-            # 포기
             if _is_repeat_reply(reply):
                 logger.warning("[포기] 반복 해소 실패")
                 reply = ""
@@ -706,7 +910,6 @@ class AILibrarianBot(discord.Client):
                     logger.warning("분당 한도 초과")
                     _meta["error"] = "rate_limit"
                     return self.persona.error_message, None, _meta
-            # INVALID_ARGUMENT (히스토리 꼬임 등): 히스토리 초기화 후 클린 재시도
             if e.status == "INVALID_ARGUMENT":
                 logger.warning("INVALID_ARGUMENT → 히스토리 초기화 후 클린 재시도")
                 try:
@@ -738,7 +941,7 @@ class AILibrarianBot(discord.Client):
             return self.persona.error_message, None, _meta
 
     def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
-        """API 호출. 실패 시 재시도 (ServerError 등 대응)"""
+        """API 호출. 실패 시 재시도"""
         import time
         last_err = None
         for attempt in range(max_retries):
@@ -763,7 +966,7 @@ class AILibrarianBot(discord.Client):
         raise ClientError("API 호출 실패")
 
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. 첨부파일명+객체도 수집."""
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""
         chain = []
         seen_filenames = []
         chain_attachments = []
@@ -792,7 +995,6 @@ class AILibrarianBot(discord.Client):
             current = ref
         chain.reverse()
 
-        # 10건 초과 시 앞5 + 뒤5
         if len(chain) > 10:
             head = chain[:5]
             tail = chain[-5:]
@@ -802,7 +1004,6 @@ class AILibrarianBot(discord.Client):
 
     async def _build_pre_context(self, message, limit=10) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
-        # 답글 체인이 있으면 체인 시작점(맨 처음)을 찾음
         anchor = message
         while anchor.reference:
             ref = anchor.reference.resolved
@@ -815,7 +1016,6 @@ class AILibrarianBot(discord.Client):
                 break
             anchor = ref
 
-        # anchor 직전 메시지들 가져오기
         lines = []
         async for msg in anchor.channel.history(limit=limit, before=anchor):
             if self.user and msg.author.id == self.user.id:
@@ -844,15 +1044,10 @@ class AILibrarianBot(discord.Client):
     def _normalize_for_compare(text: str) -> str:
         """비교용 정규화: 이모지, 공백, 줄바꿈 정리"""
         import re
-        # 이모지 variation selector 제거
         text = text.replace("\ufe0f", "")
-        # 모든 이모지 제거 (유니코드 이모지 범위)
         text = re.sub(r'[\U0001f300-\U0001f9ff\u2600-\u27bf\u200d\ufe0f]', '', text)
-        # 커스텀 디스코드 이모지 제거 <:name:id>
         text = re.sub(r'<:\w+:\d+>', '', text)
-        # 구두점 제거
         text = re.sub(r'[!?.,~…·\-–—:;\'\"(){}[\]<>]', '', text)
-        # 연속 공백/줄바꿈 정리
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
@@ -870,7 +1065,6 @@ class AILibrarianBot(discord.Client):
                 prev_words = set(prev.split())
                 if not prev_words:
                     continue
-                # 교집합 / 합집합 (Jaccard 유사도)
                 overlap = len(curr_words & prev_words)
                 total = len(curr_words | prev_words)
                 if total > 0 and overlap / total >= threshold:
@@ -878,10 +1072,17 @@ class AILibrarianBot(discord.Client):
         return False
 
     async def _build_catalog(self) -> str:
-        """도서관 목록을 프롬프트용 텍스트로"""
+        """도서관 목록을 프롬프트용 텍스트로. 변경 시에만 다시 빌드."""
+        updated_at = await self.library_db.get_catalog_updated_at()
+        if updated_at == self._catalog_built_at and self._catalog_cache:
+            return self._catalog_cache
+
         books = await self.library_db.list_all_books()
         if not books:
-            return "(도서관이 비어있음)"
+            self._catalog_cache = "(도서관이 비어있음)"
+            self._catalog_built_at = updated_at
+            return self._catalog_cache
+
         lines = []
         for b in books:
             detail = await self.library_db.get_book_detail(b["id"])
@@ -892,11 +1093,14 @@ class AILibrarianBot(discord.Client):
                 line += f"\n  {b['description']}"
             files = detail.get("files", [])
             if not files:
-                continue  # 파일 없는 엔트리는 프롬프트에 안 넣음
+                continue
             for f in files:
                 line += f"\n  file_id:{f['id']} {f['filename']}"
             lines.append(line)
-        return "\n".join(lines)
+
+        self._catalog_cache = "\n".join(lines)
+        self._catalog_built_at = updated_at
+        return self._catalog_cache
 
     async def _build_memories(self, user_name: str) -> tuple[str, list[int]]:
         """기억(learned)을 프롬프트용 텍스트로 + 포함된 ID 반환"""
@@ -904,18 +1108,16 @@ class AILibrarianBot(discord.Client):
         from config import LIBRARIAN_DB_PATH
 
         def _fmt(r):
-            return f"- {r['author']}: {r['content'][:150]}" if r["author"] else f"- {r['content'][:150]}"
+            return f"- {r['author']}: {r['content'][:200]}" if r["author"] else f"- {r['content'][:200]}"
 
         async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
             db.row_factory = aiosqlite.Row
 
-            # 현재 대화 상대가 가르쳐준 것 (최근 10건, forgotten 제외)
             cursor = await db.execute(
                 "SELECT id, author, content FROM learned WHERE author LIKE ? AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
             user_rows = await cursor.fetchall()
 
-            # 나머지 최근 10건 (발화자 제외, forgotten 제외)
             cursor = await db.execute(
                 "SELECT id, author, content FROM learned WHERE (author IS NULL OR author NOT LIKE ?) AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
                 (f"{user_name}%",))
@@ -924,11 +1126,9 @@ class AILibrarianBot(discord.Client):
         memory_ids = [r["id"] for r in user_rows] + [r["id"] for r in other_rows]
 
         sections = []
-
         if user_rows:
             lines = [_fmt(r) for r in reversed(user_rows)]
             sections.append(f"[{user_name}의 기억]\n" + "\n".join(lines))
-
         if other_rows:
             lines = [_fmt(r) for r in reversed(other_rows)]
             sections.append("[최근 기억]\n" + "\n".join(lines))
@@ -941,7 +1141,6 @@ class AILibrarianBot(discord.Client):
         history = self.chat_histories.get(channel_id)
         if history and len(history) > MAX_HISTORY:
             trimmed = history[-MAX_HISTORY:]
-            # 첫 항목이 function_response(고아)면 제거
             while trimmed and trimmed[0].role == "user" and trimmed[0].parts:
                 has_fn_response = any(hasattr(p, 'function_response') and p.function_response for p in trimmed[0].parts)
                 if has_fn_response:

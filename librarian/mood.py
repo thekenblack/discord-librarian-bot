@@ -12,20 +12,20 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("Mood")
 
-ALPHA = 0.05       # EMA 계수 (낮을수록 느림)
-TAU = 3600         # 시간 감쇠 반감기 (초). 1시간
+ALPHA = 0.08       # EMA 계수 (낮을수록 느림)
+TAU = 21600        # 시간 감쇠 반감기 (초). 6시간
 BASELINE = 50      # 기본값
-Z_SCALE = 15       # z-score → 0-100 변환 계수
+Z_SCALE = 22       # z-score → 0-100 변환 계수
 
 # 감정 이름 매핑
 EMOTIONS = [
-    (0, 5, "분노"),
-    (5, 15, "짜증"),
-    (15, 30, "귀찮음"),
-    (30, 70, "보통"),
-    (70, 85, "기분좋음"),
-    (85, 95, "즐거움"),
-    (95, 100, "다정함"),
+    (0,   8,  "분노"),
+    (8,   20, "짜증"),
+    (20,  35, "귀찮음"),
+    (35,  65, "보통"),
+    (65,  80, "기분좋음"),
+    (80,  92, "즐거움"),
+    (92, 100, "다정함"),
 ]
 
 
@@ -52,7 +52,7 @@ class MoodSystem:
         active = {}
         for user, data in self._users.items():
             elapsed = (now - data["updated"]).total_seconds()
-            if elapsed < TAU * 3:  # 3시간 이내만 활성
+            if elapsed < TAU * 3:  # 18시간 이내만 활성
                 active[user] = self._decay(data["raw"], data["updated"])
         return active
 
@@ -83,11 +83,9 @@ class MoodSystem:
         active = self._get_active()
 
         if user_name not in active:
-            # 신규 유저
             return BASELINE, _emotion_name(BASELINE)
 
         if len(active) < 2:
-            # 혼자면 원점수 그대로
             return active[user_name], _emotion_name(active[user_name])
 
         scores = list(active.values())

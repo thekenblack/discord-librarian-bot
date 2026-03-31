@@ -147,7 +147,6 @@ class AdminCog(commands.Cog):
         e.set_footer(text=f"조회: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
         await interaction.followup.send(embed=e, ephemeral=True)
 
-
     # ── /admin log ──────────────────────────────────────────
     @admin.command(name="log", description="AI 봇 로그 파일 전송")
     async def admin_log(self, interaction: discord.Interaction):
@@ -156,21 +155,33 @@ class AdminCog(commands.Cog):
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
-        # 오늘 날짜 로그 파일 (DailyFileHandler)
+
         from datetime import datetime as dt
         today = dt.now().strftime("%Y-%m-%d")
         log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
+
         if not os.path.exists(log_path):
             return await interaction.followup.send(
                 embed=error_embed("로그 없음", "로그 파일이 없습니다."), ephemeral=True
             )
+
+        # 마지막 30줄 코드블락
         try:
+            with open(log_path, encoding="utf-8") as f:
+                tail_lines = f.readlines()[-30:]
+            log_text = "".join(tail_lines)
+            code_block = f"```\n{log_text[-1800:]}\n```"
+        except Exception:
+            code_block = "(로그 읽기 실패)"
+
+        try:
+            await interaction.user.send(content=code_block)
             await interaction.user.send(
-                content="봇 로그",
-                file=discord.File(log_path, filename="bot.log")
+                content="봇 로그 파일",
+                file=discord.File(log_path, filename=f"bot.{today}.log")
             )
             await interaction.followup.send(
-                embed=success_embed("로그 전송", "DM으로 로그 파일을 전송했습니다."), ephemeral=True
+                embed=success_embed("로그 전송", "DM으로 로그를 전송했습니다."), ephemeral=True
             )
         except discord.Forbidden:
             await interaction.followup.send(
@@ -452,14 +463,12 @@ class AdminPageActionView(BotView):
     async def hide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_hidden = self.page.get("hidden", 0)
         if is_hidden:
-            # 보이기로 바꾸기 — 바로 실행
             await self.bot.db.set_page_hidden(self.page["id"], False)
             await interaction.response.edit_message(
                 embed=success_embed("변경 완료", f"**{self.page['title']}** → 공개"),
                 view=None)
             self.stop()
             return
-        # 숨기기 — 엔트리 확인
         books = await self.bot.db.list_all_books(include_hidden=True)
         page_books = [b for b in books if b.get("page_id") == self.page["id"]]
         if page_books:
@@ -487,7 +496,6 @@ class AdminPageActionView(BotView):
 # ── 페이지 배정 뷰 ──────────────────────────────────
 
 class AdminPageAssignView(BotView):
-    """1단계: 엔트리 선택"""
     def __init__(self, bot, books: list[dict], pages: list[dict]):
         super().__init__(timeout=120)
         self.bot = bot
@@ -512,7 +520,6 @@ class AdminPageAssignView(BotView):
 
 
 class AdminPageSelectView(BotView):
-    """2단계: 페이지 선택 → 순서 입력"""
     def __init__(self, bot, book_id: int, pages: list[dict]):
         super().__init__(timeout=120)
         self.bot = bot
@@ -638,7 +645,6 @@ class AdminEntryActionView(BotView):
 
 
 class AdminFileEntryView(BotView):
-    """먼저 엔트리를 선택"""
     def __init__(self, bot, books: list[dict]):
         super().__init__(timeout=120)
         self.bot = bot
