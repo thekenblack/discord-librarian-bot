@@ -729,7 +729,7 @@ class LibraryCog(commands.Cog):
             if label:
                 title = f"{label} ({len(page_books)}개)"
             else:
-                title = f"도서관 ({len(books)}개)"
+                title = f"도서 목록 ({len(books)}개)"
 
             e = info_embed(title, "\n\n".join(lines))
             e.set_footer(text="/library info로 상세 조회 및 다운로드")
