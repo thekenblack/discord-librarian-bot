@@ -222,6 +222,7 @@ library_tools = [
                     "formality": types.Schema(type="INTEGER", description="격식 변화 (-1~+1). 더 풀어지면 -, 진지해지면 +"),
                     "patience": types.Schema(type="INTEGER", description="인내 변화 (-3~+1). 도발/반복이면 -, 시간 지나면 +"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
+                    "response": types.Schema(type="STRING", description="응답 모드: normal(기본), short(이모지/한마디), ignore(무시)"),
                 },
                 required=["reason"],
             ),

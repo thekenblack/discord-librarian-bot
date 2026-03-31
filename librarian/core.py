@@ -326,6 +326,9 @@ class AILibrarianBot(discord.Client):
                 )
 
         if not reply_text and not file_to_send:
+            if _meta.get("intentional_silence"):
+                logger.info("의도적 무응답 → 메시지 안 보냄")
+                return
             logger.warning("응답 없음 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
@@ -512,6 +515,7 @@ class AILibrarianBot(discord.Client):
                 if fc.name == "feel":
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
+                    response_mode = feel_args.pop("response", "normal")
                     changes = {}
                     for axis in ["mood", "fondness", "respect", "formality", "patience"]:
                         if axis in feel_args:
@@ -523,8 +527,14 @@ class AILibrarianBot(discord.Client):
                     changes["familiarity"] = changes.get("familiarity", 0) + 0.2
 
                     current = await self.librarian_db.update_emotion(user_id, user_name, changes, reason)
-                    logger.info(f"감정: {user_name} | {changes} | {reason} → {current}")
+                    logger.info(f"감정: {user_name} | {changes} | {reason} | response={response_mode} → {current}")
                     _mood_applied = True
+
+                    # 의도적 무응답/짧은 응답
+                    if response_mode == "ignore":
+                        _meta["intentional_silence"] = True
+                        logger.info(f"의도적 무응답: {reason}")
+                        return "", None, _meta
 
                     tool_data = {"result": current}
                     history.append(response.candidates[0].content)
