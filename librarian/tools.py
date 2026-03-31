@@ -201,13 +201,13 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="attach",
-            description="이전에 인식한 미디어를 첨부한다. media_id는 반드시 recognize_media 결과 또는 search 결과에서 확인한 값만 사용. 추측 금지.",
+            description="이전에 인식한 미디어 또는 URL을 공유한다. search 결과의 media_id 또는 url_id를 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "media_id": types.Schema(type="INTEGER", description="미디어 ID (search 결과에서 확인)"),
+                    "media_id": types.Schema(type="INTEGER", description="미디어 ID"),
+                    "url_id": types.Schema(type="INTEGER", description="URL ID"),
                 },
-                required=["media_id"],
             ),
         ),
         types.FunctionDeclaration(
@@ -355,17 +355,30 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
 
     elif name == "attach":
         media_id = args.get("media_id")
-        media = await librarian_db.get_media_by_id(media_id)
-        if not media:
-            return json.dumps({"result": f"미디어 ID {media_id}을 찾을 수 없습니다."}, ensure_ascii=False)
-        if not media.get("stored_name"):
-            return json.dumps({"result": f"미디어 ID {media_id}의 파일이 저장되어 있지 않습니다."}, ensure_ascii=False)
-        return json.dumps({
-            "_action": "attach",
-            "media_id": media["id"],
-            "filename": media["filename"],
-            "stored_name": media["stored_name"],
-            "description": media["result"][:200],
-        }, ensure_ascii=False)
+        url_id = args.get("url_id")
+        if media_id:
+            media = await librarian_db.get_media_by_id(media_id)
+            if not media:
+                return json.dumps({"result": f"미디어 ID {media_id}을 찾을 수 없습니다."}, ensure_ascii=False)
+            if not media.get("stored_name"):
+                return json.dumps({"result": f"미디어 ID {media_id}의 파일이 저장되어 있지 않습니다."}, ensure_ascii=False)
+            return json.dumps({
+                "_action": "attach",
+                "media_id": media["id"],
+                "filename": media["filename"],
+                "stored_name": media["stored_name"],
+                "description": media["result"][:200],
+            }, ensure_ascii=False)
+        if url_id:
+            url = await librarian_db.get_url_by_id(url_id)
+            if not url:
+                return json.dumps({"result": f"URL ID {url_id}을 찾을 수 없습니다."}, ensure_ascii=False)
+            return json.dumps({
+                "_action": "share_url",
+                "url_id": url["id"],
+                "url": url.get("original_url", ""),
+                "description": url["result"][:200],
+            }, ensure_ascii=False)
+        return json.dumps({"result": "media_id 또는 url_id를 지정해주세요."}, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)

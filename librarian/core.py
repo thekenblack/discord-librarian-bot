@@ -886,6 +886,8 @@ class AILibrarianBot(discord.Client):
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
+                # share_url은 도구 결과에 URL이 포함돼서 AI가 답변에 자연스럽게 포함
+
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
                     role="user",

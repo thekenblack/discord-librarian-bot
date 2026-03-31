@@ -424,7 +424,22 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-            # 7. 도서 지식 (키워드 주변 200자, done만)
+            # 7. URL 캐시
+            cursor = await db.execute(f"""
+                SELECT id, normalized, original_url, result FROM url_results
+                WHERE status = 'done'
+                  AND (original_url LIKE ? OR result LIKE ? OR normalized LIKE ?)
+                  {url_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (like, like, like, limit))
+            rows = []
+            for r in await cursor.fetchall():
+                line = f"[url_id:{r['id']}] [{r['original_url']}] {_snippet(r['result'])}"
+                rows.append(line)
+            if rows:
+                result["URL"] = rows
+
+            # 8. 도서 지식 (키워드 주변 200자, done만)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
                 WHERE status = 'done'
@@ -576,6 +591,15 @@ class LibrarianDB:
                 "UPDATE url_results SET result = ?, status = ? WHERE normalized = ? AND status IN ('pending', 'failed')",
                 (result, status, normalized))
             await db.commit()
+
+    async def get_url_by_id(self, url_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, normalized, original_url, result, status FROM url_results WHERE id = ?",
+                (url_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 
     async def get_url_by_normalized(self, normalized: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
