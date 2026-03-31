@@ -11,3 +11,4 @@ uploads/
 backups/
 *.log
 *.db
+*.epub
