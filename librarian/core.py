@@ -539,8 +539,20 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
 
-                # feel 도구: 감정 변화 기록
+                # feel 도구: 감정 변화 기록 (1요청당 1회만)
                 if fc.name == "feel":
+                    if _mood_applied:
+                        # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
+                        loop_contents.append(response.candidates[0].content)
+                        loop_contents.append(types.Content(
+                            role="user",
+                            parts=[types.Part.from_function_response(name="feel", response={"result": "ok"})],
+                        ))
+                        try:
+                            response = await self._call_gemini(loop_contents, config)
+                        except Exception:
+                            break
+                        continue
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
