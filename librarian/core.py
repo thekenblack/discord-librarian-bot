@@ -356,11 +356,22 @@ class AILibrarianBot(discord.Client):
                 )
 
         if not reply_text and not file_to_send:
+            # 이모지 리액션
+            if _meta.get("reaction"):
+                try:
+                    await message.add_reaction(_meta["reaction"])
+                    logger.info(f"이모지 리액션: {_meta['reaction']}")
+                except Exception as e:
+                    logger.warning(f"리액션 실패: {e}")
+                return
             if _meta.get("intentional_silence"):
                 logger.info("의도적 무응답 → 메시지 안 보냄")
                 return
-            logger.warning("응답 없음 - 에러 메시지 출력")
-            reply_text = self.persona.error_message
+            # 에러 메시지 (비어있으면 무응답)
+            error_msg = self.persona.error_message
+            if not error_msg:
+                return
+            reply_text = error_msg
 
         # 에러 메시지면 어드민 알림 대기열에 추가
         if reply_text in self._error_messages:
@@ -617,10 +628,12 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    # response에 이모지/텍스트가 있으면 그걸 바로 답변으로
+                    # response에 이모지가 있으면 리액션으로
                     if response_mode and response_mode not in ("normal", "ignore"):
-                        logger.info(f"이모지 응답: {response_mode}")
-                        return response_mode, file_to_send, _meta
+                        _meta["reaction"] = response_mode
+                        logger.info(f"이모지 리액션: {response_mode}")
+                        _meta["intentional_silence"] = True
+                        return "", None, _meta
 
                     result_parts = []
                     for k, v in current.items():
