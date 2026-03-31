@@ -93,6 +93,34 @@ class LibrarianDB:
                 )
             """)
 
+            # 유저별 감정 상태 (영구)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_emotion (
+                    user_id    TEXT PRIMARY KEY,
+                    user_name  TEXT,
+                    familiarity REAL NOT NULL DEFAULT 0,
+                    fondness   REAL NOT NULL DEFAULT 0,
+                    respect    REAL NOT NULL DEFAULT 0,
+                    formality  REAL NOT NULL DEFAULT 0,
+                    patience   REAL NOT NULL DEFAULT 0,
+                    mood       REAL NOT NULL DEFAULT 0,
+                    interaction_count INTEGER NOT NULL DEFAULT 0,
+                    last_interaction TEXT
+                )
+            """)
+
+            # 감정 변동 기록
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS emotion_log (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    TEXT NOT NULL,
+                    user_name  TEXT,
+                    changes    TEXT NOT NULL,
+                    reason     TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # 별칭 (검색 확장용, 쌍 기반)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS aliases (
@@ -682,3 +710,82 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM book_knowledge WHERE status IN ('pending', 'failed')")
             await db.commit()
+
+    # ── 감정 시스템 ──────────────────────────────────────────
+
+    EMOTION_AXES = ["familiarity", "fondness", "respect", "formality", "patience", "mood"]
+    EMOTION_RANGE = (-10, 10)
+
+    async def get_user_emotion(self, user_id: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM user_emotion WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def update_emotion(self, user_id: str, user_name: str, changes: dict, reason: str = None) -> dict:
+        """감정 변화 적용 + 로그 저장. 현재 상태 반환."""
+        lo, hi = self.EMOTION_RANGE
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM user_emotion WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+
+            if row:
+                current = dict(row)
+            else:
+                current = {axis: 0 for axis in self.EMOTION_AXES}
+                current["user_id"] = user_id
+                current["user_name"] = user_name
+                current["interaction_count"] = 0
+
+            # 변화 적용 (클램핑)
+            for axis, delta in changes.items():
+                if axis in self.EMOTION_AXES:
+                    val = current.get(axis, 0) + delta
+                    current[axis] = max(lo, min(hi, val))
+
+            current["interaction_count"] = current.get("interaction_count", 0) + 1
+            current["last_interaction"] = datetime.now(timezone.utc).isoformat()
+            current["user_name"] = user_name
+
+            # upsert
+            await db.execute("""
+                INSERT INTO user_emotion (user_id, user_name, familiarity, fondness, respect, formality, patience, mood, interaction_count, last_interaction)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    user_name=excluded.user_name,
+                    familiarity=excluded.familiarity, fondness=excluded.fondness,
+                    respect=excluded.respect, formality=excluded.formality,
+                    patience=excluded.patience, mood=excluded.mood,
+                    interaction_count=excluded.interaction_count,
+                    last_interaction=excluded.last_interaction
+            """, (user_id, user_name, current["familiarity"], current["fondness"],
+                  current["respect"], current["formality"], current["patience"],
+                  current["mood"], current["interaction_count"], current["last_interaction"]))
+
+            # 변동 로그 저장
+            import json
+            changes_str = json.dumps(changes, ensure_ascii=False)
+            await db.execute(
+                "INSERT INTO emotion_log (user_id, user_name, changes, reason) VALUES (?, ?, ?, ?)",
+                (user_id, user_name, changes_str, reason))
+
+            await db.commit()
+            return {axis: current[axis] for axis in self.EMOTION_AXES}
+
+    async def get_emotion_log(self, user_id: str = None, limit: int = 5) -> list[dict]:
+        """감정 변동 기록 조회. user_id 있으면 해당 유저, 없으면 전체."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            if user_id:
+                cursor = await db.execute(
+                    "SELECT user_name, changes, reason, created_at FROM emotion_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                    (user_id, limit))
+            else:
+                cursor = await db.execute(
+                    "SELECT user_name, changes, reason, created_at FROM emotion_log ORDER BY id DESC LIMIT ?",
+                    (limit,))
+            return [dict(r) for r in await cursor.fetchall()]

@@ -18,7 +18,7 @@ from librarian.persona import Persona
 from librarian.tools import library_tools, execute_tool, normalize_url, parse_url
 from librarian import server_log
 from librarian import bitcoin_data
-from librarian.mood import MoodSystem
+# from librarian.mood import MoodSystem  # v4: feel 도구 + DB로 대체
 
 logger = logging.getLogger("AILibrarian")
 
@@ -38,7 +38,7 @@ class AILibrarianBot(discord.Client):
         self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[str, list] = {}  # user_id → history
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
-        self._mood = MoodSystem()
+        # self._mood = MoodSystem()  # v4: feel 도구 + DB로 대체
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
         self._catalog_cache: str = ""
@@ -376,9 +376,9 @@ class AILibrarianBot(discord.Client):
                 if member:
                     admin_names.append(member.display_name)
         role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-        _user_score, _user_emotion = self._mood.get_user(user_name)
-        _global_score, _global_emotion = self._mood.get_global()
-        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | 개인={_user_score:.0f}({_user_emotion}) 서버={_global_score:.0f}({_global_emotion})")
+        _emo = await self.librarian_db.get_user_emotion(user_id)
+        _emo_summary = " ".join(f"{k}:{_emo[k]:+.0f}" for k in self.librarian_db.EMOTION_AXES) if _emo else "첫 방문"
+        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | {_emo_summary}")
 
         from datetime import datetime as dt
         import zoneinfo
@@ -405,7 +405,30 @@ class AILibrarianBot(discord.Client):
         if btc_block:
             parts.append(btc_block)
 
-        parts.append(self._mood.get_prompt_block(user_name))
+        # 감정 상태 (DB 기반)
+        emotion = await self.librarian_db.get_user_emotion(user_id)
+        if emotion:
+            emo_line = " ".join(f"{k}:{emotion[k]:+.0f}" for k in self.librarian_db.EMOTION_AXES)
+            emo_block = f"## 이 유저에 대한 감정\n{emo_line}\n대화 {emotion['interaction_count']}회"
+        else:
+            emo_block = "## 이 유저에 대한 감정\n첫 방문자. 모든 감정 0."
+
+        # 최근 감정 기록 (유저 5건 + 나머지 5건)
+        user_logs = await self.librarian_db.get_emotion_log(user_id=user_id, limit=5)
+        other_logs = await self.librarian_db.get_emotion_log(user_id=None, limit=10)
+        other_logs = [l for l in other_logs if l not in user_logs][:5]
+
+        log_lines = []
+        import json as _json
+        for l in user_logs + other_logs:
+            changes = _json.loads(l["changes"]) if isinstance(l["changes"], str) else l["changes"]
+            ch_str = " ".join(f"{k}:{v:+d}" for k, v in changes.items() if isinstance(v, (int, float)) and v != 0)
+            reason = l.get("reason") or ""
+            log_lines.append(f"{l['user_name']}: {ch_str} -- {reason[:20]}")
+        if log_lines:
+            emo_block += "\n\n최근 감정 변동:\n" + "\n".join(log_lines)
+
+        parts.append(emo_block)
 
         if pre_context:
             parts.append("## 직전 대화\n" + "\n".join(pre_context))
@@ -484,6 +507,40 @@ class AILibrarianBot(discord.Client):
 
                 logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
+
+                # feel 도구: 감정 변화 기록
+                if fc.name == "feel":
+                    feel_args = dict(fc.args) if fc.args else {}
+                    reason = feel_args.pop("reason", "")
+                    changes = {}
+                    for axis in ["mood", "fondness", "respect", "formality", "patience"]:
+                        if axis in feel_args:
+                            try:
+                                changes[axis] = int(feel_args[axis])
+                            except (ValueError, TypeError):
+                                pass
+                    # 친밀도는 대화할 때마다 자동 +0.2
+                    changes["familiarity"] = changes.get("familiarity", 0) + 0.2
+
+                    current = await self.librarian_db.update_emotion(user_id, user_name, changes, reason)
+                    logger.info(f"감정: {user_name} | {changes} | {reason} → {current}")
+                    _mood_applied = True
+
+                    tool_data = {"result": current}
+                    history.append(response.candidates[0].content)
+                    history.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(
+                            name="feel",
+                            response=tool_data,
+                        )],
+                    ))
+                    try:
+                        response = await self._call_gemini(history, config)
+                    except Exception as e:
+                        logger.warning(f"[1차] feel 후 API 에러: {e}")
+                        break
+                    continue
 
                 if fc.name == "web_search":
                     query = (dict(fc.args) if fc.args else {}).get("query", user_text)
@@ -730,33 +787,35 @@ class AILibrarianBot(discord.Client):
             import re
             _mood_applied = False
 
-            def _apply_mood(text):
-                """[mood:XX] 또는 [mood:+X]/[mood:-X] 태그 파싱 + 제거. 첫 1회만 update."""
+            def _strip_mood(text):
+                """[mood:XX] 태그 제거 + feel 미호출 시 폴백으로 DB 반영."""
                 nonlocal _mood_applied
                 m = re.search(r'\[mood:([+-]?\d+)\]', text) if text else None
-                if m:
-                    text = text.replace(m.group(0), '').strip()
-                    if not _mood_applied:
-                        raw = m.group(1)
-                        try:
-                            val = int(raw)
-                            relative = raw.startswith("+") or raw.startswith("-")
-                            self._mood.update(user_name, val, relative=relative)
-                            _mood_applied = True
-                            global_score, global_emotion = self._mood.get_global()
-                            user_score, user_emotion = self._mood.get_user(user_name)
-                            logger.info(f"감정: AI 요청=[mood:{raw}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
-                        except ValueError:
-                            logger.warning(f"mood 파싱 실패: {m.group(0)}")
+                if not m:
+                    # feel(...) 인라인도 제거
+                    m2 = re.search(r'feel\s*\([^)]*\)', text) if text else None
+                    if m2:
+                        text = text[:m2.start()].strip()
+                    return text
+                text = text.replace(m.group(0), '').strip()
+                if not _mood_applied:
+                    try:
+                        val = int(m.group(1))
+                        asyncio.create_task(
+                            self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
+                        _mood_applied = True
+                        logger.info(f"감정(폴백): mood={m.group(1)} → DB")
+                    except (ValueError, Exception) as e:
+                        logger.warning(f"mood 폴백 실패: {e}")
                 return text
 
-            reply = _apply_mood(reply)
+            reply = _strip_mood(reply)
 
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
             _TOOL_NAMES = {
                 "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
                 "web_search", "add_alias", "forget_alias", "forget_memory", "modify_memory",
-                "recognize_media", "recognize_link", "attach",
+                "recognize_media", "recognize_link", "attach", "feel",
             }
             if reply:
                 _inline_pattern = re.compile(
@@ -848,7 +907,7 @@ class AILibrarianBot(discord.Client):
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
                     # 인라인 함수 재응답에서 mood 태그 제거
-                    reply = _apply_mood(reply)
+                    reply = _strip_mood(reply)
 
             if not reply:
                 self.chat_histories[user_id] = history[:history_snapshot]
@@ -990,7 +1049,7 @@ class AILibrarianBot(discord.Client):
                     response = await self._call_gemini(clean_message, retry_config)
                     reply = self._extract_reply(response)
                     if reply:
-                        reply = _apply_mood(reply)
+                        reply = _strip_mood(reply)
                         logger.info(f"[클린 재시도] 응답: {reply}")
                         return reply, None, _meta
                 except Exception as retry_e:

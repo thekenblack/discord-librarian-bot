@@ -210,6 +210,22 @@ library_tools = [
                 required=["media_id"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="feel",
+            description="상대에 대한 감정 변화를 기록한다. 대화하면서 느낀 감정을 솔직하게. 매 답변마다 호출해.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "mood": types.Schema(type="INTEGER", description="기분 변화 (-5~+5). 지금 이 순간의 기분"),
+                    "fondness": types.Schema(type="INTEGER", description="호감 변화 (-2~+2). 이 사람이 좋아졌으면 +"),
+                    "respect": types.Schema(type="INTEGER", description="존중 변화 (-1~+1). 똑똑하거나 진지하면 +"),
+                    "formality": types.Schema(type="INTEGER", description="격식 변화 (-1~+1). 더 풀어지면 -, 진지해지면 +"),
+                    "patience": types.Schema(type="INTEGER", description="인내 변화 (-3~+1). 도발/반복이면 -, 시간 지나면 +"),
+                    "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
+                },
+                required=["reason"],
+            ),
+        ),
     ]),
 ]
 
