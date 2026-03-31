@@ -573,7 +573,11 @@ class AILibrarianBot(discord.Client):
                     current = await self.librarian_db.update_emotion(
                         changes, target_user_id=target_id,
                         target_user_name=target_name, reason=reason)
-                    logger.info(f"감정: {target_name} | {changes} | {reason} | response={response_mode} → {current}")
+                    def _fmt_val(v):
+                        return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
+                    changes_str = " ".join(f"{k}:{_fmt_val(v)}" for k, v in changes.items())
+                    current_str = " ".join(f"{k}:{_fmt_val(v)}" for k, v in current.items())
+                    logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
                     _mood_applied = True
 
                     # 의도적 무응답
@@ -584,7 +588,8 @@ class AILibrarianBot(discord.Client):
 
                     result_parts = []
                     for k, v in current.items():
-                        result_parts.append(f"{k} {v:+.1f} (-10 ~ +10)")
+                        v_str = "0" if v == 0 else f"{v:+.1f}"
+                        result_parts.append(f"{k} {v_str} (-10 ~ +10)")
                     result_str = " | ".join(result_parts)
                     if response_mode in ("emoji", "unicode_emoji", "discord_emoji"):
                         result_str += f" | response: {response_mode}"
