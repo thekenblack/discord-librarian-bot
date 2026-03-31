@@ -248,6 +248,27 @@ class AILibrarianBot(discord.Client):
         except Exception as e:
             logger.error(f"도서 일괄 학습 실패: {e}")
 
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """자기 메시지에 리액션이 달리면 같은 이모지로 리액션"""
+        if not self._bot_ready or not self.user:
+            return
+        if payload.user_id == self.user.id:
+            return
+        try:
+            channel = self.get_channel(payload.channel_id)
+            if not channel:
+                return
+            message = await channel.fetch_message(payload.message_id)
+            if message.author.id != self.user.id:
+                return
+            # 이미 같은 이모지로 리액션했는지 확인
+            for reaction in message.reactions:
+                if str(reaction.emoji) == str(payload.emoji) and reaction.me:
+                    return
+            await message.add_reaction(payload.emoji)
+        except Exception:
+            pass
+
     async def on_message(self, message: discord.Message):
         if not self._bot_ready:
             return
