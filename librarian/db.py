@@ -314,14 +314,14 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-            # 6. 도서 지식
+            # 6. 도서 지식 (제목 + 200자 요약)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
                    OR source LIKE ?
                 LIMIT ?
             """, (like, like_nospace, like, limit))
-            rows = [f"《{r['source']}》: {r['content']}" if r["source"] else r["content"] for r in await cursor.fetchall()]
+            rows = [f"《{r['source']}》: {r['content'][:200]}" if r["source"] else r["content"][:200] for r in await cursor.fetchall()]
             if rows:
                 result["도서"] = rows
 
