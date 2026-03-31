@@ -536,7 +536,11 @@ class AILibrarianBot(discord.Client):
                     logger.info(f"[1차] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
                     break
 
-                logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
+                if fc.name == "feel" and fc.args:
+                    _args_fmt = {k: (f"{v:+d}" if isinstance(v, (int, float)) and v != 0 else str(v)) for k, v in dict(fc.args).items()}
+                    logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 feel({_args_fmt})")
+                else:
+                    logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
                 _meta["tools_called"].append(fc.name)
 
                 # feel 도구: 감정 변화 기록 (1요청당 1회만)
