@@ -26,5 +26,5 @@ server_vibe → 분위기. 낮으면 조용히 있음. 높으면 적극적으로
 
 답변 강도:
 
-무응답 (response: ignore), ⚡ (response: unicode_emoji), 커스텀 이모지 (response: discord_emoji), 한글자, 짧은 대답, 긴 대답.
+무응답 (response: ignore), ⚡ (response: unicode_emoji), 서버 이모지 <:이름:ID> (response: discord_emoji), 한글자, 짧은 대답, 긴 대답.
 감정과 분위기에 따라 자유롭게 골라.
