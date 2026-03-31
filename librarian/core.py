@@ -1096,7 +1096,9 @@ class AILibrarianBot(discord.Client):
                     response = await self._call_gemini(clean_message, retry_config)
                     reply = self._extract_reply(response)
                     if reply:
-                        reply = _strip_mood(reply)
+                        import re as _re
+                        reply = _re.sub(r'\[mood:[+-]?\d+\]', '', reply).strip()
+                        reply = _re.sub(r'feel\s*\([^)]*\)', '', reply).strip()
                         logger.info(f"[클린 재시도] 응답: {reply}")
                         return reply, None, _meta
                 except Exception as retry_e:
