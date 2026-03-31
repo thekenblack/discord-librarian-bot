@@ -30,7 +30,7 @@ def _extract_epub_text(file_path: str) -> str:
         def get_text(self):
             return "".join(self.parts)
 
-    book = epub.read_epub(file_path)
+    book = epub.read_epub(file_path, options={"ignore_ncx": True})
     texts = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         html = item.get_content().decode("utf-8", errors="replace")
