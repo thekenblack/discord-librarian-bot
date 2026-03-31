@@ -786,11 +786,11 @@ class LibrarianDB:
                     hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
                     delta = max(lo, min(hi, delta))
                     val = current.get(axis, 0) + delta
-                    # lovely는 trust 이하로만
-                    if axis == "lovely":
-                        trust_val = current.get("trust", 0) + user_changes.get("trust", 0)
-                        val = min(val, trust_val)
                     current[axis] = max(0, min(10, val))
+
+                # lovely는 항상 trust 이하
+                if current["lovely"] > current["trust"]:
+                    current["lovely"] = current["trust"]
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
