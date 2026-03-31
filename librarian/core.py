@@ -898,14 +898,22 @@ class AILibrarianBot(discord.Client):
                 # 빈 JSON 잔여물 제거 ([], {})
                 text = re.sub(r'\[\s*\]', '', text).strip()
                 text = re.sub(r'\{\s*\}', '', text).strip()
-                # JSON 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
-                json_match = re.search(r'\{[^}]*"reason"[^}]*\}', text, flags=re.DOTALL)
+                # JSON/감정 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
+                # "감정:" 라벨 포함, 따옴표 없는 키도 매칭
+                json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
                 if json_match:
                     _had_inline_function = True
                 if json_match and not _mood_applied:
                     try:
                         import json as _json
-                        feel_json = _json.loads(json_match.group())
+                        raw = json_match.group()
+                        # "감정:" 라벨 제거
+                        raw = re.sub(r'^감정\s*:\s*', '', raw)
+                        # 따옴표 없는 키를 따옴표로 감싸기
+                        raw = re.sub(r'(\w+)\s*:', r'"\1":', raw)
+                        # +숫자를 숫자로 (JSON은 +를 안 받음)
+                        raw = re.sub(r':\s*\+(\d)', r': \1', raw)
+                        feel_json = _json.loads(raw)
                         reason = feel_json.pop("reason", "")
                         changes = {}
                         for axis in self.librarian_db.ALL_AXES:
