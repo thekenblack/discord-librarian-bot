@@ -749,15 +749,24 @@ class AILibrarianBot(discord.Client):
             reply = self._extract_reply(response)
 
             import re
-            mood_match = re.search(r'\[mood:(\d+)\]', reply) if reply else None
-            if mood_match:
-                mood_score = int(mood_match.group(1))
-                self._mood.update(user_name, mood_score)
-                reply = reply.replace(mood_match.group(0), '').strip()
+            _mood_applied = False
 
-                global_score, global_emotion = self._mood.get_global()
-                user_score, user_emotion = self._mood.get_user(user_name)
-                logger.info(f"감정: AI 요청=[mood:{mood_score}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
+            def _apply_mood(text):
+                """[mood:XX] 태그 파싱 + 제거. 첫 1회만 update."""
+                nonlocal _mood_applied
+                m = re.search(r'\[mood:[+-]?\d+\]', text) if text else None
+                if m:
+                    text = text.replace(m.group(0), '').strip()
+                    if not _mood_applied:
+                        val = int(re.search(r'[+-]?\d+', m.group(0)).group())
+                        self._mood.update(user_name, val)
+                        _mood_applied = True
+                        global_score, global_emotion = self._mood.get_global()
+                        user_score, user_emotion = self._mood.get_user(user_name)
+                        logger.info(f"감정: AI 요청=[mood:{val}] → 서버 분위기={global_score:.0f}({global_emotion}), {user_name}={user_score:.0f}({user_emotion})")
+                return text
+
+            reply = _apply_mood(reply)
 
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
             _TOOL_NAMES = {
@@ -854,12 +863,8 @@ class AILibrarianBot(discord.Client):
                     except Exception as _e:
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
-                    # 인라인 함수 재응답에서 mood 태그 재파싱
-                    if reply:
-                        _mood_retry = re.search(r'\[mood:(\d+)\]', reply)
-                        if _mood_retry:
-                            self._mood.update(user_name, int(_mood_retry.group(1)))
-                            reply = reply.replace(_mood_retry.group(0), '').strip()
+                    # 인라인 함수 재응답에서 mood 태그 제거
+                    reply = _apply_mood(reply)
 
             if not reply:
                 self.chat_histories[channel_id] = history[:history_snapshot]
@@ -1001,11 +1006,7 @@ class AILibrarianBot(discord.Client):
                     response = await self._call_gemini(clean_message, retry_config)
                     reply = self._extract_reply(response)
                     if reply:
-                        import re
-                        mood_match = re.search(r'\[mood:(\d+)\]', reply)
-                        if mood_match:
-                            self._mood.update(user_name, int(mood_match.group(1)))
-                            reply = reply.replace(mood_match.group(0), '').strip()
+                        reply = _apply_mood(reply)
                         logger.info(f"[클린 재시도] 응답: {reply}")
                         return reply, None, _meta
                 except Exception as retry_e:
