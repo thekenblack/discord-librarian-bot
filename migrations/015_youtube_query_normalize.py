@@ -1,15 +1,28 @@
 """
-web_results 중 유튜브 URL인 것의 query를 youtube:VIDEO_ID 형식으로 정규화
-original_url 기준으로 영상 ID 추출 후 query 업데이트
+web_results 중 유튜브 URL의 query를 youtube:VIDEO_ID 형식으로 정규화
 """
 
-import re
-import aiosqlite
+import os
+import json
+import sqlite3
 from urllib.parse import urlparse, parse_qs
-from config import LIBRARIAN_DB_PATH
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
+    conf = json.load(f)
+
+data_dir = os.path.join(BASE_DIR, conf["paths"]["data_dir"])
+db_path = os.path.join(data_dir, conf["db"]["librarian"])
+
+if not os.path.exists(db_path):
+    print(f"  DB 없음: {db_path}")
+    exit(0)
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
 
 
-def _extract_youtube_id(url: str):
+def _extract_youtube_id(url):
     try:
         parsed = urlparse(url)
         host = (parsed.hostname or "").removeprefix("www.").removeprefix("m.")
@@ -27,35 +40,35 @@ def _extract_youtube_id(url: str):
     return None
 
 
-async def run():
-    async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT id, query, original_url FROM web_results WHERE original_url IS NOT NULL")
-        rows = await cursor.fetchall()
+# original_url 컬럼 있는지 확인
+try:
+    rows = conn.execute(
+        "SELECT id, query, original_url FROM web_results WHERE original_url IS NOT NULL").fetchall()
+except sqlite3.OperationalError:
+    print("  original_url 컬럼 없음, 건너뜀")
+    conn.close()
+    exit(0)
 
-        count = 0
-        for row in rows:
-            url = row["original_url"]
-            content_id = _extract_youtube_id(url)
-            if not content_id:
-                continue
-            new_query = f"youtube:{content_id}"
-            if row["query"] == new_query:
-                continue
-            # 이미 같은 youtube: 키가 있으면 중복 방지
-            existing = await db.execute(
-                "SELECT id FROM web_results WHERE query = ? AND id != ?",
-                (new_query, row["id"]))
-            if await existing.fetchone():
-                # 중복이면 기존 것 삭제
-                await db.execute("DELETE FROM web_results WHERE id = ?", (row["id"],))
-            else:
-                await db.execute(
-                    "UPDATE web_results SET query = ? WHERE id = ?",
-                    (new_query, row["id"]))
-            count += 1
+count = 0
+for row in rows:
+    content_id = _extract_youtube_id(row["original_url"])
+    if not content_id:
+        continue
+    new_query = f"youtube:{content_id}"
+    if row["query"] == new_query:
+        continue
+    existing = conn.execute(
+        "SELECT id FROM web_results WHERE query = ? AND id != ?",
+        (new_query, row["id"])).fetchone()
+    if existing:
+        conn.execute("DELETE FROM web_results WHERE id = ?", (row["id"],))
+    else:
+        conn.execute("UPDATE web_results SET query = ? WHERE id = ?", (new_query, row["id"]))
+    count += 1
 
-        await db.commit()
-        if count:
-            print(f"유튜브 query 정규화: {count}건")
+conn.commit()
+conn.close()
+if count:
+    print(f"  유튜브 query 정규화: {count}건")
+else:
+    print("  정규화 대상 없음")

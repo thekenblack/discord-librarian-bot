@@ -1,23 +1,30 @@
 """
 web_results 테이블에 status 컬럼 추가
-- pending: URL만 저장, 인식 중
-- done: 인식 완료
-- failed: 인식 실패
-기존 레코드는 모두 done으로 설정
 """
 
-import aiosqlite
-from config import LIBRARIAN_DB_PATH
+import os
+import json
+import sqlite3
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
+    conf = json.load(f)
 
-async def run():
-    async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
-        try:
-            await db.execute("ALTER TABLE web_results ADD COLUMN status TEXT NOT NULL DEFAULT 'done'")
-            await db.execute("UPDATE web_results SET status = 'done' WHERE status IS NULL")
-            await db.commit()
-        except Exception as e:
-            if "duplicate column" in str(e).lower():
-                pass
-            else:
-                raise
+data_dir = os.path.join(BASE_DIR, conf["paths"]["data_dir"])
+db_path = os.path.join(data_dir, conf["db"]["librarian"])
+
+if not os.path.exists(db_path):
+    print(f"  DB 없음: {db_path}")
+    exit(0)
+
+conn = sqlite3.connect(db_path)
+
+try:
+    conn.execute("ALTER TABLE web_results ADD COLUMN status TEXT NOT NULL DEFAULT 'done'")
+    conn.execute("UPDATE web_results SET status = 'done' WHERE status IS NULL")
+    print("  web_results.status 컬럼 추가 완료")
+except sqlite3.OperationalError:
+    print("  web_results.status 컬럼 이미 존재")
+
+conn.commit()
+conn.close()
