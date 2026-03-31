@@ -1317,12 +1317,36 @@ class AILibrarianBot(discord.Client):
     def _trim_history(self, user_id: str):
         """히스토리를 MAX_HISTORY 턴으로 제한. function_call/response 쌍 보장."""
         history = self.chat_histories.get(user_id)
-        if history and len(history) > MAX_HISTORY:
-            trimmed = history[-MAX_HISTORY:]
-            while trimmed and trimmed[0].role == "user" and trimmed[0].parts:
-                has_fn_response = any(hasattr(p, 'function_response') and p.function_response for p in trimmed[0].parts)
-                if has_fn_response:
-                    trimmed.pop(0)
-                else:
-                    break
-            self.chat_histories[user_id] = trimmed
+        if not history or len(history) <= MAX_HISTORY:
+            return
+
+        trimmed = history[-MAX_HISTORY:]
+
+        # 검증: function_call/response 쌍이 깨진 턴 제거
+        clean = []
+        i = 0
+        while i < len(trimmed):
+            entry = trimmed[i]
+            has_fc = any(hasattr(p, 'function_call') and p.function_call for p in entry.parts) if entry.parts else False
+            has_fr = any(hasattr(p, 'function_response') and p.function_response for p in entry.parts) if entry.parts else False
+
+            if has_fc and entry.role == "model":
+                # function_call은 다음에 function_response가 와야 함
+                if i + 1 < len(trimmed):
+                    next_entry = trimmed[i + 1]
+                    next_has_fr = any(hasattr(p, 'function_response') and p.function_response for p in next_entry.parts) if next_entry.parts else False
+                    if next_has_fr:
+                        clean.append(entry)
+                        clean.append(next_entry)
+                        i += 2
+                        continue
+                # 쌍 없으면 건너뜀
+                i += 1
+            elif has_fr and entry.role == "user":
+                # 고아 function_response → 건너뜀
+                i += 1
+            else:
+                clean.append(entry)
+                i += 1
+
+        self.chat_histories[user_id] = clean
