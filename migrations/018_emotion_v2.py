@@ -58,7 +58,7 @@ conn.execute("""
         updated_at TEXT
     )
 """)
-for key in ("self_mood", "self_tired", "server_vibe"):
+for key in ("self_mood", "self_energy", "server_vibe"):
     conn.execute("INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 0)", (key,))
 
 # emotion_log에 target 컬럼 추가 (기존 user_id → target)

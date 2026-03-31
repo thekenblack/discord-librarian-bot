@@ -15,7 +15,7 @@ user_friendly → 친밀도
 user_lovely → 애정도
 user_trust → 신뢰도
 self_mood → 적극성
-self_tired → 피로도
+self_energy → 기력
 server_vibe → 분위기
 
 기본 성격:

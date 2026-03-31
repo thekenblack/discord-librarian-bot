@@ -221,7 +221,7 @@ library_tools = [
                     "user_lovely": types.Schema(type="INTEGER", description="애정/설렘 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "user_trust": types.Schema(type="INTEGER", description="신뢰 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "self_mood": types.Schema(type="INTEGER", description="내 기분 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
-                    "self_tired": types.Schema(type="INTEGER", description="피로 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
+                    "self_energy": types.Schema(type="INTEGER", description="기력 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                     "response": types.Schema(type="STRING", description="응답 모드: normal(기본), short(이모지/한마디), ignore(무시)"),

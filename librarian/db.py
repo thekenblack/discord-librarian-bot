@@ -106,7 +106,7 @@ class LibrarianDB:
                 )
             """)
 
-            # 공통/전역 감정 (self_mood, self_tired, server_vibe)
+            # 공통/전역 감정 (self_mood, self_energy, server_vibe)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS bot_emotion (
                     key   TEXT PRIMARY KEY,
@@ -114,7 +114,7 @@ class LibrarianDB:
                     updated_at TEXT
                 )
             """)
-            for key in ("self_mood", "self_tired", "server_vibe"):
+            for key in ("self_mood", "self_energy", "server_vibe"):
                 await db.execute(
                     "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 5)", (key,))
 
@@ -723,7 +723,7 @@ class LibrarianDB:
     # ── 감정 시스템 v2 ─────────────────────────────────────
 
     USER_AXES = ["friendly", "lovely", "trust"]
-    SELF_AXES = ["self_mood", "self_tired"]
+    SELF_AXES = ["self_mood", "self_energy"]
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
@@ -733,7 +733,7 @@ class LibrarianDB:
         "lovely":      (+1, -3),
         "trust":       (+1, -3),
         "self_mood":   (+3, -3),
-        "self_tired":  (+1, -3),
+        "self_energy":  (+3, -3),
         "server_vibe": (+3, -3),
     }
 
@@ -758,7 +758,7 @@ class LibrarianDB:
             return {row["user_id"]: dict(row) for row in await cursor.fetchall()}
 
     async def get_bot_emotion(self) -> dict:
-        """self_mood, self_tired, server_vibe 조회"""
+        """self_mood, self_energy, server_vibe 조회"""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT key, value FROM bot_emotion")
