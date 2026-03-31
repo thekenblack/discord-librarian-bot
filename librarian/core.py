@@ -502,8 +502,6 @@ class AILibrarianBot(discord.Client):
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
-        self._trim_history(user_id)
-        history = self.chat_histories[user_id]
         history_snapshot = len(history)
         self._current_attachments = attachments or []
         _mood_applied = False
@@ -523,6 +521,8 @@ class AILibrarianBot(discord.Client):
             logger.info("[1차] API 응답 수신")
 
             for loop_i in range(10):
+                self._trim_history(user_id)
+                history = self.chat_histories[user_id]
                 if not response.candidates or not response.candidates[0].content.parts:
                     logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
                     break
