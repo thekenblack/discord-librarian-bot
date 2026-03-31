@@ -571,7 +571,10 @@ class AILibrarianBot(discord.Client):
                     result_parts = []
                     for k, v in current.items():
                         result_parts.append(f"{k} {v:+.1f} (-10 ~ +10)")
-                    tool_data = {"result": " | ".join(result_parts)}
+                    result_str = " | ".join(result_parts)
+                    if response_mode == "emoji":
+                        result_str += " | response: emoji only"
+                    tool_data = {"result": result_str}
                     history.append(response.candidates[0].content)
                     history.append(types.Content(
                         role="user",
