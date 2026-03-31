@@ -775,12 +775,35 @@ class AILibrarianBot(discord.Client):
                     _args_raw = _inline_match.group(2).strip()
                     logger.info(f"인라인 함수 감지: {_tool_name}({_args_raw[:80]})")
 
-                    # args 파싱: key: value 또는 key=value 형태
+                    # args 파싱
+                    _POSITIONAL_MAP = {
+                        "deliver": "file_id",
+                        "attach": "media_id",
+                        "recognize_media": "attachment_index",
+                        "recognize_link": "url",
+                        "search": "keyword",
+                        "web_search": "query",
+                        "save_memory": "content",
+                        "add_knowledge": "content",
+                        "forget_memory": "keyword",
+                        "forget_alias": "alias_id",
+                    }
                     _tool_args = {}
-                    for _m in re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw, re.DOTALL):
-                        _k = _m.group(1).strip()
-                        _v = _m.group(2).strip().strip('"\'')
-                        _tool_args[_k] = _v
+                    # key: value 또는 key=value 형태
+                    _kv_matches = list(re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw, re.DOTALL))
+                    if _kv_matches:
+                        for _m in _kv_matches:
+                            _k = _m.group(1).strip()
+                            _v = _m.group(2).strip().strip('"\'')
+                            _tool_args[_k] = _v
+                    elif _args_raw and _tool_name in _POSITIONAL_MAP:
+                        # positional: deliver(5) → {"file_id": 5}
+                        _val = _args_raw.strip().strip('"\'')
+                        try:
+                            _val = int(_val)
+                        except ValueError:
+                            pass
+                        _tool_args[_POSITIONAL_MAP[_tool_name]] = _val
 
                     if _tool_name in ("search", "save_memory", "modify_memory"):
                         _tool_args["_user_id"] = user_id
