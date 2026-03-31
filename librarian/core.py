@@ -107,12 +107,20 @@ class AILibrarianBot(discord.Client):
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
 
-        # ERROR 이상 로그를 어드민 DM으로 전달
+        # 어드민 알림 대기열 (일정 시간 내 에러를 모아서 1회 전송)
+        self._admin_notify_queue: list[str] = []
+        self._admin_notify_task: asyncio.Task | None = None
+
         _bot = self
         class _AdminErrorHandler(logging.Handler):
             def emit(self, record):
                 if record.levelno >= logging.ERROR:
-                    asyncio.create_task(_bot._notify_admins_log(record))
+                    level = record.levelname
+                    location = f"{record.pathname.split('/')[-1]}:{record.lineno}"
+                    msg = f"**{level}** `{location}` — {record.getMessage()[:300]}"
+                    _bot._admin_notify_queue.append(msg)
+                    if not _bot._admin_notify_task or _bot._admin_notify_task.done():
+                        _bot._admin_notify_task = asyncio.create_task(_bot._flush_admin_notify())
 
         _handler = _AdminErrorHandler()
         _handler.setLevel(logging.ERROR)
@@ -125,10 +133,19 @@ class AILibrarianBot(discord.Client):
         asyncio.create_task(self._learn_all_books())
         self._bot_ready = True
 
-    async def _notify_admins_log(self, record: logging.LogRecord):
-        """ERROR 이상 로그 발생 시 어드민에게 DM"""
+    async def _flush_admin_notify(self, delay: float = 10.0):
+        """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
+        await asyncio.sleep(delay)
+
+        if not self._admin_notify_queue:
+            return
+
+        # 대기열 비우기
+        items = list(self._admin_notify_queue)
+        self._admin_notify_queue.clear()
+
         from datetime import datetime as dt
-        import zoneinfo
+        import zoneinfo, io
         try:
             tz = zoneinfo.ZoneInfo(os.getenv("TZ", "Asia/Seoul"))
             today = dt.now(tz).strftime("%Y-%m-%d")
@@ -137,79 +154,41 @@ class AILibrarianBot(discord.Client):
 
         log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
 
-        tail_lines = []
+        # 요약
+        summary = f"**에러 {len(items)}건**\n" + "\n".join(items[:10])
+        if len(items) > 10:
+            summary += f"\n... 외 {len(items) - 10}건"
+
+        # 로그 꼬리
+        tail = ""
         try:
             with open(log_path, encoding="utf-8") as f:
-                tail_lines = f.readlines()[-30:]
+                tail = "".join(f.readlines()[-30:])
         except Exception:
             pass
 
-        level = record.levelname
-        location = f"{record.pathname.split('/')[-1]}:{record.lineno}"
-        summary = (
-            f"**{level}** — `{location}`\n"
-            f"```\n{record.getMessage()[:500]}\n```"
-        )
-        log_text = "".join(tail_lines) if tail_lines else "(로그 없음)"
-        content = f"{summary}\n**최근 로그**\n```\n{log_text[-1500:]}\n```"
+        content = summary
+        if tail:
+            content += f"\n```\n{tail[-1500:]}\n```"
 
         for admin_id in ADMIN_IDS:
             try:
                 user = await self.fetch_user(int(admin_id))
                 if not user:
                     continue
-                await user.send(content)
+                await user.send(content[:2000])
                 if os.path.exists(log_path):
-                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.txt"))
+                    with open(log_path, encoding="utf-8") as f:
+                        buf = io.BytesIO(("\ufeff" + f.read()).encode("utf-8"))
+                    await user.send(file=discord.File(buf, filename=f"bot.{today}.txt"))
             except Exception as e:
-                print(f"어드민 DM 실패 ({admin_id}): {e}")  # logger 쓰면 무한루프
+                print(f"어드민 DM 실패 ({admin_id}): {e}")
 
-    async def _notify_admins_error(self, message: discord.Message, meta: dict):
-        """에러 발생 시 어드민에게 로그 DM 전송"""
-        from datetime import datetime as dt
-        import zoneinfo
-        try:
-            tz_name = os.getenv("TZ", "Asia/Seoul")
-            tz = zoneinfo.ZoneInfo(tz_name)
-            today = dt.now(tz).strftime("%Y-%m-%d")
-        except Exception:
-            today = dt.now().strftime("%Y-%m-%d")
-
-        log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
-
-        # 로그 마지막 30줄
-        tail_lines = []
-        try:
-            with open(log_path, encoding="utf-8") as f:
-                tail_lines = f.readlines()[-30:]
-        except Exception:
-            pass
-
-        error_type = meta.get("error", "unknown")
-        guild_name = message.guild.name if message.guild else "DM"
-        channel_name = getattr(message.channel, "name", "DM")
-        summary = (
-            f"**에러 발생**\n"
-            f"위치: `{guild_name}/#{channel_name}`\n"
-            f"유저: `{message.author.display_name}`\n"
-            f"에러: `{error_type}`\n"
-            f"메시지: `{message.content[:100]}`"
-        )
-
-        for admin_id in ADMIN_IDS:
-            try:
-                user = await self.fetch_user(int(admin_id))
-                if not user:
-                    continue
-                # 요약 + 코드블락
-                log_text = "".join(tail_lines) if tail_lines else "(로그 없음)"
-                content = f"{summary}\n\n```\n{log_text[-1800:]}\n```"
-                await user.send(content)
-                # 로그 파일
-                if os.path.exists(log_path):
-                    await user.send(file=discord.File(log_path, filename=f"bot.{today}.txt"))
-            except Exception as e:
-                logger.warning(f"어드민 DM 실패 ({admin_id}): {e}")
+    def _queue_admin_notify(self, msg: str):
+        """대기열에 알림 추가"""
+        self._admin_notify_queue.append(msg)
+        if not self._admin_notify_task or self._admin_notify_task.done():
+            self._admin_notify_task = asyncio.create_task(self._flush_admin_notify())
 
     async def _recognize_url_background(self, parsed: dict, user_name: str):
         """모든 URL 백그라운드 인식. 유튜브 영상이면 자막 → FileData, 일반이면 FileData 바로."""
@@ -352,13 +331,13 @@ class AILibrarianBot(discord.Client):
             logger.warning("응답 없음 - 에러 메시지 출력")
             reply_text = self.persona.error_message
 
-        # 에러 메시지면 어드민에게 DM
+        # 에러 메시지면 어드민 알림 대기열에 추가
         if reply_text in self._error_messages:
-            asyncio.create_task(self._notify_admins_error(message, _meta))
-
-        # 에러 메시지거나 빈 응답이면 어드민에게 알림
-        if reply_text in self._error_messages:
-            asyncio.create_task(self._notify_admins(message, _meta))
+            error_type = _meta.get("error", "unknown")
+            channel_name_short = getattr(message.channel, "name", "DM")
+            self._queue_admin_notify(
+                f"에러 `{error_type}` — {message.author.display_name}(#{channel_name_short}): {message.content[:80]}"
+            )
 
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
