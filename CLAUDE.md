@@ -73,10 +73,10 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 ### 마이그레이션 vs 패치
 
-**마이그레이션** (`migrations/`, 커밋됨) — 스키마 변경. 모든 서버에 적용.
+마이그레이션 (`migrations/`, 커밋됨) — 스키마 변경. 모든 서버에 적용.
 - startup.py가 `data/migrations_applied.json`으로 추적
 
-**패치** (`patches/`, 커밋됨) — 데이터 수정. git pull로 전달됨.
+패치 (`patches/`, 커밋됨) — 데이터 수정. git pull로 전달됨.
 - `.py` 파일: 조건 검사 후 실행 (다른 유저 DB 보호)
 - startup.py가 `data/patches_applied.json`으로 추적
 - soft delete (forgotten) 사용, 실제 삭제 없음
@@ -100,9 +100,9 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 ### 히스토리
 
-- **유저별** 관리 (user_id → history). 채널별 아님.
-- **유저 락** (asyncio.Lock)으로 같은 유저 동시 요청 직렬화
-- **MAX_HISTORY = 10** (5왕복)
+- 유저별 관리 (user_id → history). 채널별 아님.
+- 유저 락 (asyncio.Lock)으로 같은 유저 동시 요청 직렬화
+- MAX_HISTORY = 10 (5왕복)
 - trim 시 function_call/response 쌍 보장
 
 ### 도서 학습
@@ -229,3 +229,4 @@ INVALID_ARGUMENT: 히스토리 초기화 + 도구 없이 1회 재시도
 - 커밋된 파일에 유저 닉네임, ID, 대화 내용 등 개인 정보를 직접 포함하지 않는다
 - FEEDBACKS.md 등에 피드백을 기록할 때는 추상적으로 작성한다 (예: "에러 노출에 대한 불만 다수")
 - 구체적인 유저 데이터는 DB와 로그에만 존재한다 (gitignore)
+- 마크다운에 볼드체(**) 사용하지 않는다. 로우 텍스트로 읽을 것을 전제한다
