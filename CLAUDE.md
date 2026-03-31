@@ -75,6 +75,7 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 마이그레이션 (`migrations/`, 커밋됨) — 스키마 변경. 모든 서버에 적용.
 - startup.py가 `data/migrations_applied.json`으로 추적
+- 반드시 동기 sqlite3 + config.json 직접 읽기 패턴으로 작성 (async/aiosqlite/from config import 사용 금지 — startup.py가 subprocess로 실행하기 때문)
 
 패치 (`patches/`, 커밋됨) — 데이터 수정. git pull로 전달됨.
 - `.py` 파일: 조건 검사 후 실행 (다른 유저 DB 보호)
