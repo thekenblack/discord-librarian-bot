@@ -855,8 +855,32 @@ class AILibrarianBot(discord.Client):
                     return text
                 # feel(...) 인라인 제거
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
-                # JSON 블록 제거 (feel을 텍스트로 출력한 경우)
-                text = re.sub(r'\{[^}]*"reason"[^}]*\}', '', text, flags=re.DOTALL).strip()
+                # JSON 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
+                json_match = re.search(r'\{[^}]*"reason"[^}]*\}', text, flags=re.DOTALL)
+                if json_match and not _mood_applied:
+                    try:
+                        import json as _json
+                        feel_json = _json.loads(json_match.group())
+                        reason = feel_json.pop("reason", "")
+                        changes = {}
+                        for axis in self.librarian_db.ALL_AXES:
+                            prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
+                            if prefixed in feel_json:
+                                try:
+                                    changes[axis] = int(feel_json[prefixed])
+                                except (ValueError, TypeError):
+                                    pass
+                        if changes:
+                            asyncio.create_task(
+                                self.librarian_db.update_emotion(
+                                    changes, target_user_id=user_id,
+                                    target_user_name=user_name, reason=reason or "json fallback"))
+                            _mood_applied = True
+                            logger.info(f"감정(JSON 폴백): {changes} | {reason}")
+                    except Exception as e:
+                        logger.warning(f"feel JSON 파싱 실패: {e}")
+                if json_match:
+                    text = text[:json_match.start()].strip()
                 # [mood:XX] 태그 처리
                 m = re.search(r'\[mood:([+-]?\d+)\]', text)
                 if not m:
