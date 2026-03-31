@@ -314,14 +314,32 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-            # 6. 도서 지식 (제목 + 200자 요약)
+            # 6. 도서 지식 (제목 + 키워드 주변 200자)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
                 WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
                    OR source LIKE ?
                 LIMIT ?
             """, (like, like_nospace, like, limit))
-            rows = [f"《{r['source']}》: {r['content'][:200]}" if r["source"] else r["content"][:200] for r in await cursor.fetchall()]
+            rows = []
+            for r in await cursor.fetchall():
+                content = r["content"]
+                # 키워드 주변 200자 추출
+                lower_content = content.lower()
+                lower_kw = keyword.lower()
+                idx = lower_content.find(lower_kw)
+                if idx >= 0:
+                    start = max(0, idx - 100)
+                    end = min(len(content), idx + len(keyword) + 100)
+                    snippet = content[start:end]
+                    if start > 0:
+                        snippet = "..." + snippet
+                    if end < len(content):
+                        snippet = snippet + "..."
+                else:
+                    snippet = content[:200]
+                prefix = f"《{r['source']}》: " if r["source"] else ""
+                rows.append(prefix + snippet)
             if rows:
                 result["도서"] = rows
 
