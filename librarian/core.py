@@ -39,7 +39,7 @@ class AILibrarianBot(discord.Client):
         self.chat_histories: dict[int, list] = {}
         self._channel_locks: dict[int, asyncio.Lock] = {}
         self._mood = MoodSystem()
-        self._ready = False
+        self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
         self._catalog_cache: str = ""
         self._catalog_built_at: str = ""
@@ -122,7 +122,7 @@ class AILibrarianBot(discord.Client):
         ))
         asyncio.create_task(bitcoin_data.start_background_update())
         asyncio.create_task(self._learn_all_books())
-        self._ready = True
+        self._bot_ready = True
 
     async def _notify_admins_log(self, record: logging.LogRecord):
         """ERROR 이상 로그 발생 시 어드민에게 DM"""
@@ -271,7 +271,7 @@ class AILibrarianBot(discord.Client):
             logger.error(f"도서 일괄 학습 실패: {e}")
 
     async def on_message(self, message: discord.Message):
-        if not self._ready:
+        if not self._bot_ready:
             return
 
         channel_name = getattr(message.channel, "name", "DM")
@@ -331,8 +331,11 @@ class AILibrarianBot(discord.Client):
             self._channel_locks[ch_id] = asyncio.Lock()
 
         async with self._channel_locks[ch_id]:
-            async with message.channel.typing():
-                reply_text, file_to_send, _meta = await self._ask_gemini(
+            try:
+                await message.channel.typing()
+            except Exception:
+                pass
+            reply_text, file_to_send, _meta = await self._ask_gemini(
                     channel_id=ch_id,
                     user_id=str(message.author.id),
                     user_name=message.author.display_name,
