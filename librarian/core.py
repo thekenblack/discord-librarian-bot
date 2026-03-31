@@ -848,7 +848,7 @@ class AILibrarianBot(discord.Client):
 
             import re
 
-            def _strip_mood(text):
+            def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
                 nonlocal _mood_applied
                 if not text:
@@ -900,7 +900,7 @@ class AILibrarianBot(discord.Client):
                         logger.warning(f"mood 폴백 실패: {e}")
                 return text
 
-            reply = _strip_mood(reply)
+            reply = _strip_feeling(reply)
 
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
             _TOOL_NAMES = {
@@ -998,7 +998,7 @@ class AILibrarianBot(discord.Client):
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
                     # 인라인 함수 재응답에서 mood 태그 제거
-                    reply = _strip_mood(reply)
+                    reply = _strip_feeling(reply)
 
             if not reply:
                 # 빈 응답 → 유저 메시지도 히스토리에서 제거
