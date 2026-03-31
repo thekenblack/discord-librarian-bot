@@ -458,7 +458,7 @@ class LibrarianDB:
 
     # ── 별칭 ──────────────────────────────────────────────
 
-    async def add_alias(self, name: str, alias: str):
+    async def save_alias(self, name: str, alias: str):
         """쌍으로 별칭 등록 (양방향, 중복 방지)"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(

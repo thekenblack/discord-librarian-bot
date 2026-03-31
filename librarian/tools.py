@@ -132,7 +132,7 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="add_alias",
+            name="save_alias",
             description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
             parameters=types.Schema(
                 type="OBJECT",
@@ -340,10 +340,10 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         await library_db.update_book_alias(entry_id, new_alias)
         return json.dumps({"result": f"'{book['title']}' 엔트리에 별칭 '{alias}' 추가 완료"}, ensure_ascii=False)
 
-    elif name == "add_alias":
+    elif name == "save_alias":
         aname = args.get("name", "")
         alias = args.get("alias", "")
-        await librarian_db.add_alias(aname, alias)
+        await librarian_db.save_alias(aname, alias)
         return json.dumps({"result": f"별칭 등록: {aname} = {alias}"}, ensure_ascii=False)
 
     elif name == "forget_alias":

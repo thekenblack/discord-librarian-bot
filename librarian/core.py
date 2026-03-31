@@ -985,7 +985,7 @@ class AILibrarianBot(discord.Client):
             _had_inline_function = False
             _TOOL_NAMES = {
                 "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
-                "web_search", "add_alias", "forget_alias", "forget_memory", "modify_memory",
+                "web_search", "save_alias", "forget_alias", "forget_memory", "modify_memory",
                 "recognize_media", "recognize_link", "attach", "feel",
             }
             _POSITIONAL_MAP = {
