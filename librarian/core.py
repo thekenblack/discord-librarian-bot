@@ -229,9 +229,8 @@ class AILibrarianBot(discord.Client):
                     if text:
                         prompt = f"다음은 유튜브 영상 자막이야. 3-4줄로 핵심만 설명해.\n\n{text}"
                         config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
-                        response = await loop.run_in_executor(
-                            None, lambda: self._call_gemini(
-                                [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config))
+                        response = await self._call_gemini(
+                            [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
                         result = self._extract_reply(response)
                         logger.info(f"유튜브 자막 인식 완료: {content_id}")
                 except Exception as e:
@@ -245,9 +244,8 @@ class AILibrarianBot(discord.Client):
                         types.Part.from_text(text="3-4줄로 핵심만 설명해."),
                     ]
                     config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
-                    response = await loop.run_in_executor(
-                        None, lambda: self._call_gemini(
-                            [types.Content(role="user", parts=link_parts)], config))
+                    response = await self._call_gemini(
+                        [types.Content(role="user", parts=link_parts)], config)
                     result = self._extract_reply(response)
                     logger.info(f"URL FileData 인식 완료: {url}")
                 except Exception as e:
@@ -487,7 +485,7 @@ class AILibrarianBot(discord.Client):
 
         try:
             logger.info(f"[1차] API 호출 (temperature=0.8, 히스토리={len(history)}턴)")
-            response = self._call_gemini(history, config)
+            response = await self._call_gemini(history, config)
             logger.info("[1차] API 응답 수신")
 
             for loop_i in range(10):
@@ -527,7 +525,7 @@ class AILibrarianBot(discord.Client):
                             )],
                         ))
                         try:
-                            response = self._call_gemini(history, config)
+                            response = await self._call_gemini(history, config)
                         except Exception as e:
                             logger.warning(f"[1차] 웹 캐시 후 API 에러: {e}")
                             break
@@ -543,7 +541,7 @@ class AILibrarianBot(discord.Client):
                     web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
                     web_result = ""
                     try:
-                        web_response = self._call_gemini(web_query, web_config)
+                        web_response = await self._call_gemini(web_query, web_config)
                         web_result = self._extract_reply(web_response)
                     except Exception as e:
                         logger.warning(f"웹 검색 실패: {e}")
@@ -567,7 +565,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = self._call_gemini(history, config)
+                        response = await self._call_gemini(history, config)
                     except Exception as e:
                         logger.warning(f"[1차] 웹 검색 후 API 에러: {e}")
                         break
@@ -610,7 +608,7 @@ class AILibrarianBot(discord.Client):
                                     max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                                     temperature=0.5,
                                 )
-                                media_response = self._call_gemini(
+                                media_response = await self._call_gemini(
                                     [types.Content(role="user", parts=media_parts)],
                                     media_config,
                                 )
@@ -655,7 +653,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = self._call_gemini(history, config)
+                        response = await self._call_gemini(history, config)
                     except Exception as e:
                         logger.warning(f"[1차] 미디어 인식 후 API 에러: {e}")
                         break
@@ -700,7 +698,7 @@ class AILibrarianBot(discord.Client):
                         )],
                     ))
                     try:
-                        response = self._call_gemini(history, config)
+                        response = await self._call_gemini(history, config)
                     except Exception as e:
                         logger.warning(f"[1차] 링크 인식 후 API 에러: {e}")
                         break
@@ -742,7 +740,7 @@ class AILibrarianBot(discord.Client):
                 ))
 
                 try:
-                    response = self._call_gemini(history, config)
+                    response = await self._call_gemini(history, config)
                 except Exception as e:
                     logger.warning(f"[1차] 도구 후 API 에러: {e}")
                     break
@@ -833,7 +831,7 @@ class AILibrarianBot(discord.Client):
                         if _before:
                             # 앞부분 텍스트 있으면 reply로 쓰고 함수 결과로 재응답
                             try:
-                                _follow_response = self._call_gemini(history, config)
+                                _follow_response = await self._call_gemini(history, config)
                                 _follow_reply = self._extract_reply(_follow_response)
                                 if _follow_reply:
                                     reply = _before + "\n" + _follow_reply
@@ -845,7 +843,7 @@ class AILibrarianBot(discord.Client):
                         else:
                             # 앞부분 없으면 함수 결과로만 재응답
                             try:
-                                _follow_response = self._call_gemini(history, config)
+                                _follow_response = await self._call_gemini(history, config)
                                 _follow_reply = self._extract_reply(_follow_response)
                                 if _follow_reply:
                                     reply = _follow_reply
@@ -888,7 +886,7 @@ class AILibrarianBot(discord.Client):
                         temperature=0.9,
                     )
                     logger.info("[2차] API 호출")
-                    r = self._extract_reply(self._call_gemini(clean_message, retry_config))
+                    r = self._extract_reply(await self._call_gemini(clean_message, retry_config))
                     logger.info(f"[2차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -906,7 +904,7 @@ class AILibrarianBot(discord.Client):
                         temperature=1.0,
                     )
                     logger.info("[3차] API 호출")
-                    r = self._extract_reply(self._call_gemini(clean_message, web_config))
+                    r = self._extract_reply(await self._call_gemini(clean_message, web_config))
                     logger.info(f"[3차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -999,7 +997,7 @@ class AILibrarianBot(discord.Client):
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
                         temperature=0.8,
                     )
-                    response = self._call_gemini(clean_message, retry_config)
+                    response = await self._call_gemini(clean_message, retry_config)
                     reply = self._extract_reply(response)
                     if reply:
                         import re
@@ -1020,14 +1018,17 @@ class AILibrarianBot(discord.Client):
             _meta["error"] = f"{type(e).__name__}"
             return self.persona.error_message, None, _meta
 
-    def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
-        """API 호출. 실패 시 재시도"""
-        import time
+    async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
+        """API 호출 (비동기). 실패 시 재시도."""
         last_err = None
+        loop = asyncio.get_event_loop()
         for attempt in range(max_retries):
             try:
-                return self._gemini_client.models.generate_content(
-                    model=MODEL, contents=contents, config=config,
+                return await loop.run_in_executor(
+                    None,
+                    lambda: self._gemini_client.models.generate_content(
+                        model=MODEL, contents=contents, config=config,
+                    ),
                 )
             except ClientError as e:
                 if e.status == "INVALID_ARGUMENT":
@@ -1035,12 +1036,12 @@ class AILibrarianBot(discord.Client):
                 logger.warning(f"API 에러({e.status}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
                 last_err = e
                 if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(retry_delay)
             except Exception as e:
                 logger.warning(f"API 에러({type(e).__name__}), {retry_delay}초 후 재시도 ({attempt+1}/{max_retries})...")
                 last_err = e
                 if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(retry_delay)
         if last_err:
             raise last_err
         raise ClientError("API 호출 실패")
