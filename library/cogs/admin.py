@@ -156,7 +156,10 @@ class AdminCog(commands.Cog):
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
-        log_path = os.path.join(LOG_DIR, "bot.log")
+        # 오늘 날짜 로그 파일 (DailyFileHandler)
+        from datetime import datetime as dt
+        today = dt.now().strftime("%Y-%m-%d")
+        log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
         if not os.path.exists(log_path):
             return await interaction.followup.send(
                 embed=error_embed("로그 없음", "로그 파일이 없습니다."), ephemeral=True
