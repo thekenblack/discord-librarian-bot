@@ -711,7 +711,7 @@ class LibraryCog(commands.Cog):
             page_labels = {}
             for p in sorted_pages:
                 if p == 0:
-                    page_labels[p] = "기타"
+                    page_labels[p] = "커뮤니티 추천도서"
                 else:
                     page_labels[p] = page_titles.get(p, f"페이지 {p}")
 
@@ -719,7 +719,7 @@ class LibraryCog(commands.Cog):
             page_books = page_groups[page_key]
             lines = []
             for b in page_books:
-                line = f"📕 **{b['title']}** ({b['file_count']}개 파일)"
+                line = f"📕 {b['title']} ({b['file_count']}개 파일)"
                 if b.get("description"):
                     first_line = b["description"].split("\n")[0]
                     line += f"\n> {first_line}"
@@ -727,9 +727,9 @@ class LibraryCog(commands.Cog):
 
             label = page_labels[page_key]
             if label:
-                title = f"라이브러리 - {label} ({len(books)}개)"
+                title = f"{label} ({len(page_books)}개)"
             else:
-                title = f"라이브러리 ({len(books)}개)"
+                title = f"도서관 ({len(books)}개)"
 
             e = info_embed(title, "\n\n".join(lines))
             e.set_footer(text="/library info로 상세 조회 및 다운로드")
