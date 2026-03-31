@@ -98,9 +98,9 @@ class LibrarianDB:
                 CREATE TABLE IF NOT EXISTS user_emotion (
                     user_id    TEXT PRIMARY KEY,
                     user_name  TEXT,
-                    friendly   REAL NOT NULL DEFAULT 0,
-                    lovely     REAL NOT NULL DEFAULT 0,
-                    trust      REAL NOT NULL DEFAULT 0,
+                    friendly   REAL NOT NULL DEFAULT 5,
+                    lovely     REAL NOT NULL DEFAULT 5,
+                    trust      REAL NOT NULL DEFAULT 5,
                     interaction_count INTEGER NOT NULL DEFAULT 0,
                     last_interaction TEXT
                 )
@@ -110,13 +110,13 @@ class LibrarianDB:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS bot_emotion (
                     key   TEXT PRIMARY KEY,
-                    value REAL NOT NULL DEFAULT 0,
+                    value REAL NOT NULL DEFAULT 5,
                     updated_at TEXT
                 )
             """)
             for key in ("self_mood", "self_tired", "server_vibe"):
                 await db.execute(
-                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 0)", (key,))
+                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 5)", (key,))
 
             # 감정 변동 기록
             await db.execute("""
@@ -779,7 +779,7 @@ class LibrarianDB:
                 cursor = await db.execute(
                     "SELECT * FROM user_emotion WHERE user_id = ?", (target_user_id,))
                 row = await cursor.fetchone()
-                current = dict(row) if row else {"friendly": 0, "lovely": 0, "trust": 0,
+                current = dict(row) if row else {"friendly": 5, "lovely": 5, "trust": 5,
                                                   "interaction_count": 0}
 
                 for axis, delta in user_changes.items():
@@ -790,7 +790,7 @@ class LibrarianDB:
                     if axis == "lovely":
                         trust_val = current.get("trust", 0) + user_changes.get("trust", 0)
                         val = min(val, trust_val)
-                    current[axis] = max(-10, min(10, val))
+                    current[axis] = max(0, min(10, val))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
@@ -820,7 +820,7 @@ class LibrarianDB:
                     "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
                 row = await cursor.fetchone()
                 old_val = row["value"] if row else 0
-                new_val = max(-10, min(10, old_val + delta))
+                new_val = max(0, min(10, old_val + delta))
                 await db.execute(
                     "UPDATE bot_emotion SET value = ?, updated_at = ? WHERE key = ?",
                     (new_val, datetime.now(timezone.utc).isoformat(), axis))

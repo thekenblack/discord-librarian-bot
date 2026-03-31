@@ -398,8 +398,8 @@ class AILibrarianBot(discord.Client):
         _bot_emo = await self.librarian_db.get_bot_emotion()
         _emo_parts = []
         if _emo:
-            _emo_parts.append(" ".join(f"{k}:{_emo[k]:+.1f}" for k in self.librarian_db.USER_AXES))
-        _emo_parts.append(" ".join(f"{k}:{v:+.1f}" for k, v in _bot_emo.items()))
+            _emo_parts.append(" ".join(f"{k}:{_emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
+        _emo_parts.append(" ".join(f"{k}:{v:.1f}" for k, v in _bot_emo.items()))
         logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | {' | '.join(_emo_parts) or '첫 방문'}")
 
         from datetime import datetime as dt
@@ -434,12 +434,12 @@ class AILibrarianBot(discord.Client):
 
         # 공통/전역 감정
         bot_emo = await self.librarian_db.get_bot_emotion()
-        emo_lines.append("자체: " + " ".join(f"{k}:{v:+.1f}" for k, v in bot_emo.items()))
+        emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
 
         # 현재 유저 감정
         user_emo = await self.librarian_db.get_user_emotion(user_id)
         if user_emo:
-            emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:+.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
+            emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
         else:
             emo_lines.append(f"{user_name}: 첫 방문")
 
@@ -455,7 +455,7 @@ class AILibrarianBot(discord.Client):
             chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
             for uid, emo in chain_emos.items():
                 name = emo.get("user_name", uid)
-                emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:+.1f}" for k in self.librarian_db.USER_AXES))
+                emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
 
         # 최근 감정 변동 (유저 5건 + 전체 5건)
         user_logs = await self.librarian_db.get_emotion_log(target=user_id, limit=5)
@@ -606,10 +606,12 @@ class AILibrarianBot(discord.Client):
                     current = await self.librarian_db.update_emotion(
                         changes, target_user_id=target_id,
                         target_user_name=target_name, reason=reason)
-                    def _fmt_val(v):
+                    def _fmt_delta(v):
                         return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
-                    changes_str = " ".join(f"{k}:{_fmt_val(v)}" for k, v in changes.items())
-                    current_str = " ".join(f"{k}:{_fmt_val(v)}" for k, v in current.items())
+                    def _fmt_cur(v):
+                        return f"{v:.1f}" if isinstance(v, float) else str(v)
+                    changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
+                    current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
                     logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
                     _mood_applied = True
 
@@ -621,8 +623,7 @@ class AILibrarianBot(discord.Client):
 
                     result_parts = []
                     for k, v in current.items():
-                        v_str = "0" if v == 0 else f"{v:+.1f}"
-                        result_parts.append(f"{k} {v_str} (-10 ~ +10)")
+                        result_parts.append(f"{k} {v:.1f} (0 ~ 10)")
                     result_str = " | ".join(result_parts)
                     if response_mode in ("emoji", "unicode_emoji", "discord_emoji"):
                         result_str += f" | response: {response_mode}"
