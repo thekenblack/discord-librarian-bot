@@ -1121,7 +1121,7 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
-    def _is_repeat(self, history: list, reply: str, threshold: float = 0.8) -> bool:
+    def _is_repeat(self, history: list, reply: str, threshold: float = 0.9) -> bool:
         """히스토리 내 봇 답변과 유사한 게 있는지 확인 (단어 기반 유사도)"""
         curr = self._normalize_for_compare(reply)
         if not curr:
