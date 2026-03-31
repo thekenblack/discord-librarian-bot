@@ -212,15 +212,17 @@ library_tools = [
         ),
         types.FunctionDeclaration(
             name="feel",
-            description="상대에 대한 감정 변화를 기록한다. 대화하면서 느낀 감정을 솔직하게. 매 답변마다 호출해.",
+            description="감정 변화를 기록한다. 매 답변마다 호출해.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "mood": types.Schema(type="INTEGER", description="기분 변화 (-5~+5). 지금 이 순간의 기분"),
-                    "fondness": types.Schema(type="INTEGER", description="호감 변화 (-2~+2). 이 사람이 좋아졌으면 +"),
-                    "respect": types.Schema(type="INTEGER", description="존중 변화 (-1~+1). 똑똑하거나 진지하면 +"),
-                    "formality": types.Schema(type="INTEGER", description="격식 변화 (-1~+1). 더 풀어지면 -, 진지해지면 +"),
-                    "patience": types.Schema(type="INTEGER", description="인내 변화 (-3~+1). 도발/반복이면 -, 시간 지나면 +"),
+                    "target": types.Schema(type="STRING", description="대상 유저 이름. 생략하면 현재 대화 상대"),
+                    "user_friendly": types.Schema(type="INTEGER", description="호감/우정 변화"),
+                    "user_lovely": types.Schema(type="INTEGER", description="애정/설렘 변화"),
+                    "user_trust": types.Schema(type="INTEGER", description="신뢰 변화"),
+                    "self_mood": types.Schema(type="INTEGER", description="내 기분 변화"),
+                    "self_tired": types.Schema(type="INTEGER", description="피로 변화"),
+                    "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                     "response": types.Schema(type="STRING", description="응답 모드: normal(기본), short(이모지/한마디), ignore(무시)"),
                 },

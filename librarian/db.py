@@ -93,27 +93,36 @@ class LibrarianDB:
                 )
             """)
 
-            # 유저별 감정 상태 (영구)
+            # 유저별 감정 (user_friendly, user_lovely, user_trust)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_emotion (
                     user_id    TEXT PRIMARY KEY,
                     user_name  TEXT,
-                    familiarity REAL NOT NULL DEFAULT 0,
-                    fondness   REAL NOT NULL DEFAULT 0,
-                    respect    REAL NOT NULL DEFAULT 0,
-                    formality  REAL NOT NULL DEFAULT 0,
-                    patience   REAL NOT NULL DEFAULT 0,
-                    mood       REAL NOT NULL DEFAULT 0,
+                    friendly   REAL NOT NULL DEFAULT 0,
+                    lovely     REAL NOT NULL DEFAULT 0,
+                    trust      REAL NOT NULL DEFAULT 0,
                     interaction_count INTEGER NOT NULL DEFAULT 0,
                     last_interaction TEXT
                 )
             """)
 
+            # 공통/전역 감정 (self_mood, self_tired, server_vibe)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS bot_emotion (
+                    key   TEXT PRIMARY KEY,
+                    value REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT
+                )
+            """)
+            for key in ("self_mood", "self_tired", "server_vibe"):
+                await db.execute(
+                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 0)", (key,))
+
             # 감정 변동 기록
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS emotion_log (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id    TEXT NOT NULL,
+                    target     TEXT,
                     user_name  TEXT,
                     changes    TEXT NOT NULL,
                     reason     TEXT,
@@ -711,10 +720,22 @@ class LibrarianDB:
             await db.execute("DELETE FROM book_knowledge WHERE status IN ('pending', 'failed')")
             await db.commit()
 
-    # ── 감정 시스템 ──────────────────────────────────────────
+    # ── 감정 시스템 v2 ─────────────────────────────────────
 
-    EMOTION_AXES = ["familiarity", "fondness", "respect", "formality", "patience", "mood"]
-    EMOTION_RANGE = (-10, 10)
+    USER_AXES = ["friendly", "lovely", "trust"]
+    SELF_AXES = ["self_mood", "self_tired"]
+    SERVER_AXES = ["server_vibe"]
+    ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
+
+    # 1회 변화량 제한: (상한, 하한)
+    AXIS_LIMITS = {
+        "friendly":    (+3, -3),
+        "lovely":      (+1, -3),
+        "trust":       (+1, -3),
+        "self_mood":   (+3, -3),
+        "self_tired":  (+1, -3),
+        "server_vibe": (+3, -3),
+    }
 
     async def get_user_emotion(self, user_id: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
@@ -724,66 +745,104 @@ class LibrarianDB:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def update_emotion(self, user_id: str, user_name: str, changes: dict, reason: str = None) -> dict:
-        """감정 변화 적용 + 로그 저장. 현재 상태 반환."""
-        lo, hi = self.EMOTION_RANGE
+    async def get_user_emotions_bulk(self, user_ids: set[str]) -> dict[str, dict]:
+        """여러 유저 감정 한 번에 조회"""
+        if not user_ids:
+            return {}
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
+            placeholders = ",".join("?" for _ in user_ids)
             cursor = await db.execute(
-                "SELECT * FROM user_emotion WHERE user_id = ?", (user_id,))
-            row = await cursor.fetchone()
+                f"SELECT * FROM user_emotion WHERE user_id IN ({placeholders})",
+                tuple(user_ids))
+            return {row["user_id"]: dict(row) for row in await cursor.fetchall()}
 
-            if row:
-                current = dict(row)
-            else:
-                current = {axis: 0 for axis in self.EMOTION_AXES}
-                current["user_id"] = user_id
-                current["user_name"] = user_name
-                current["interaction_count"] = 0
+    async def get_bot_emotion(self) -> dict:
+        """self_mood, self_tired, server_vibe 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT key, value FROM bot_emotion")
+            return {row["key"]: row["value"] for row in await cursor.fetchall()}
 
-            # 변화 적용 (클램핑)
-            for axis, delta in changes.items():
-                if axis in self.EMOTION_AXES:
+    async def update_emotion(self, changes: dict, target_user_id: str = None,
+                             target_user_name: str = None, reason: str = None) -> dict:
+        """감정 변화 적용. user_ 축은 target 유저에, self_/server_ 축은 전역에."""
+        import json
+        result = {}
+
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+
+            # user_ 축 처리
+            user_changes = {k: v for k, v in changes.items() if k in self.USER_AXES}
+            if user_changes and target_user_id:
+                cursor = await db.execute(
+                    "SELECT * FROM user_emotion WHERE user_id = ?", (target_user_id,))
+                row = await cursor.fetchone()
+                current = dict(row) if row else {"friendly": 0, "lovely": 0, "trust": 0,
+                                                  "interaction_count": 0}
+
+                for axis, delta in user_changes.items():
+                    hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
+                    delta = max(lo, min(hi, delta))
                     val = current.get(axis, 0) + delta
-                    current[axis] = max(lo, min(hi, val))
+                    # lovely는 trust 이하로만
+                    if axis == "lovely":
+                        trust_val = current.get("trust", 0) + user_changes.get("trust", 0)
+                        val = min(val, trust_val)
+                    current[axis] = max(-10, min(10, val))
 
-            current["interaction_count"] = current.get("interaction_count", 0) + 1
-            current["last_interaction"] = datetime.now(timezone.utc).isoformat()
-            current["user_name"] = user_name
+                current["interaction_count"] = current.get("interaction_count", 0) + 1
+                current["last_interaction"] = datetime.now(timezone.utc).isoformat()
 
-            # upsert
-            await db.execute("""
-                INSERT INTO user_emotion (user_id, user_name, familiarity, fondness, respect, formality, patience, mood, interaction_count, last_interaction)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    user_name=excluded.user_name,
-                    familiarity=excluded.familiarity, fondness=excluded.fondness,
-                    respect=excluded.respect, formality=excluded.formality,
-                    patience=excluded.patience, mood=excluded.mood,
-                    interaction_count=excluded.interaction_count,
-                    last_interaction=excluded.last_interaction
-            """, (user_id, user_name, current["familiarity"], current["fondness"],
-                  current["respect"], current["formality"], current["patience"],
-                  current["mood"], current["interaction_count"], current["last_interaction"]))
+                await db.execute("""
+                    INSERT INTO user_emotion (user_id, user_name, friendly, lovely, trust, interaction_count, last_interaction)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        user_name=excluded.user_name,
+                        friendly=excluded.friendly, lovely=excluded.lovely, trust=excluded.trust,
+                        interaction_count=excluded.interaction_count,
+                        last_interaction=excluded.last_interaction
+                """, (target_user_id, target_user_name,
+                      current["friendly"], current["lovely"], current["trust"],
+                      current["interaction_count"], current["last_interaction"]))
 
-            # 변동 로그 저장
-            import json
+                for axis in self.USER_AXES:
+                    result[f"user_{axis}"] = current[axis]
+
+            # self_/server_ 축 처리
+            global_changes = {k: v for k, v in changes.items()
+                              if k in self.SELF_AXES + self.SERVER_AXES}
+            for axis, delta in global_changes.items():
+                hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
+                delta = max(lo, min(hi, delta))
+                cursor = await db.execute(
+                    "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
+                row = await cursor.fetchone()
+                old_val = row["value"] if row else 0
+                new_val = max(-10, min(10, old_val + delta))
+                await db.execute(
+                    "UPDATE bot_emotion SET value = ?, updated_at = ? WHERE key = ?",
+                    (new_val, datetime.now(timezone.utc).isoformat(), axis))
+                result[axis] = new_val
+
+            # 로그
             changes_str = json.dumps(changes, ensure_ascii=False)
             await db.execute(
-                "INSERT INTO emotion_log (user_id, user_name, changes, reason) VALUES (?, ?, ?, ?)",
-                (user_id, user_name, changes_str, reason))
+                "INSERT INTO emotion_log (target, user_name, changes, reason) VALUES (?, ?, ?, ?)",
+                (target_user_id or "self", target_user_name or "self", changes_str, reason))
 
             await db.commit()
-            return {axis: current[axis] for axis in self.EMOTION_AXES}
+            return result
 
-    async def get_emotion_log(self, user_id: str = None, limit: int = 5) -> list[dict]:
-        """감정 변동 기록 조회. user_id 있으면 해당 유저, 없으면 전체."""
+    async def get_emotion_log(self, target: str = None, limit: int = 5) -> list[dict]:
+        """감정 변동 기록 조회."""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            if user_id:
+            if target:
                 cursor = await db.execute(
-                    "SELECT user_name, changes, reason, created_at FROM emotion_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-                    (user_id, limit))
+                    "SELECT user_name, changes, reason, created_at FROM emotion_log WHERE target = ? ORDER BY id DESC LIMIT ?",
+                    (target, limit))
             else:
                 cursor = await db.execute(
                     "SELECT user_name, changes, reason, created_at FROM emotion_log ORDER BY id DESC LIMIT ?",

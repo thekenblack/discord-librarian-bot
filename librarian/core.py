@@ -380,8 +380,12 @@ class AILibrarianBot(discord.Client):
                     admin_names.append(member.display_name)
         role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
         _emo = await self.librarian_db.get_user_emotion(user_id)
-        _emo_summary = " ".join(f"{k}:{_emo[k]:+.0f}" for k in self.librarian_db.EMOTION_AXES) if _emo else "첫 방문"
-        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | {_emo_summary}")
+        _bot_emo = await self.librarian_db.get_bot_emotion()
+        _emo_parts = []
+        if _emo:
+            _emo_parts.append(" ".join(f"{k}:{_emo[k]:+.1f}" for k in self.librarian_db.USER_AXES))
+        _emo_parts.append(" ".join(f"{k}:{v:+.1f}" for k, v in _bot_emo.items()))
+        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | {' | '.join(_emo_parts) or '첫 방문'}")
 
         from datetime import datetime as dt
         import zoneinfo
@@ -408,29 +412,50 @@ class AILibrarianBot(discord.Client):
         if btc_block:
             parts.append(btc_block)
 
-        # 감정 상태 (DB 기반)
-        emotion = await self.librarian_db.get_user_emotion(user_id)
-        if emotion:
-            emo_line = " ".join(f"{k}:{emotion[k]:+.0f}" for k in self.librarian_db.EMOTION_AXES)
-            emo_block = f"## 이 유저에 대한 감정\n{emo_line}\n대화 {emotion['interaction_count']}회"
-        else:
-            emo_block = "## 이 유저에 대한 감정\n첫 방문자. 모든 감정 0."
-
-        # 최근 감정 기록 (유저 5건 + 나머지 5건)
-        user_logs = await self.librarian_db.get_emotion_log(user_id=user_id, limit=5)
-        other_logs = await self.librarian_db.get_emotion_log(user_id=None, limit=10)
-        other_logs = [l for l in other_logs if l not in user_logs][:5]
-
-        log_lines = []
+        # 감정 상태
         import json as _json
+        emo_lines = []
+
+        # 공통/전역 감정
+        bot_emo = await self.librarian_db.get_bot_emotion()
+        emo_lines.append("자체: " + " ".join(f"{k}:{v:+.1f}" for k, v in bot_emo.items()))
+
+        # 현재 유저 감정
+        user_emo = await self.librarian_db.get_user_emotion(user_id)
+        if user_emo:
+            emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:+.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
+        else:
+            emo_lines.append(f"{user_name}: 첫 방문")
+
+        # 답글 체인 참여 유저 감정 (bulk 조회)
+        chain_user_ids = set()
+        if reply_chain:
+            import re as _re
+            for line in reply_chain:
+                m = _re.search(r'<@(\d+)>', line)
+                if m and m.group(1) != user_id:
+                    chain_user_ids.add(m.group(1))
+        if chain_user_ids:
+            chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
+            for uid, emo in chain_emos.items():
+                name = emo.get("user_name", uid)
+                emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:+.1f}" for k in self.librarian_db.USER_AXES))
+
+        # 최근 감정 변동 (유저 5건 + 전체 5건)
+        user_logs = await self.librarian_db.get_emotion_log(target=user_id, limit=5)
+        other_logs = await self.librarian_db.get_emotion_log(target=None, limit=10)
+        other_logs = [l for l in other_logs if l not in user_logs][:5]
+        log_lines = []
         for l in user_logs + other_logs:
             changes = _json.loads(l["changes"]) if isinstance(l["changes"], str) else l["changes"]
-            ch_str = " ".join(f"{k}:{v:+d}" for k, v in changes.items() if isinstance(v, (int, float)) and v != 0)
+            ch_str = " ".join(f"{k}:{v:+.0f}" for k, v in changes.items() if isinstance(v, (int, float)) and v != 0)
             reason = l.get("reason") or ""
-            log_lines.append(f"{l['user_name']}: {ch_str} -- {reason[:20]}")
-        if log_lines:
-            emo_block += "\n\n최근 감정 변동:\n" + "\n".join(log_lines)
+            if ch_str:
+                log_lines.append(f"{l['user_name']}: {ch_str} -- {reason[:20]}")
 
+        emo_block = "## 감정 (0이 중립, +긍정 -부정)\n" + "\n".join(emo_lines)
+        if log_lines:
+            emo_block += "\n\n최근 변동:\n" + "\n".join(log_lines)
         parts.append(emo_block)
 
         if pre_context:
@@ -516,21 +541,27 @@ class AILibrarianBot(discord.Client):
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
+                    target_name = feel_args.pop("target", None) or user_name
+                    # target에서 user_id 추출 (현재 대화 상대면 그대로, 아니면 이름으로)
+                    target_id = user_id if target_name == user_name else target_name
+
                     changes = {}
-                    for axis in ["mood", "fondness", "respect", "formality", "patience"]:
-                        if axis in feel_args:
+                    for axis in self.librarian_db.ALL_AXES:
+                        # feel 파라미터는 user_friendly 등 접두사 포함
+                        prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
+                        if prefixed in feel_args:
                             try:
-                                changes[axis] = int(feel_args[axis])
+                                changes[axis] = int(feel_args[prefixed])
                             except (ValueError, TypeError):
                                 pass
-                    # 친밀도는 대화할 때마다 자동 +0.2
-                    changes["familiarity"] = changes.get("familiarity", 0) + 0.2
 
-                    current = await self.librarian_db.update_emotion(user_id, user_name, changes, reason)
-                    logger.info(f"감정: {user_name} | {changes} | {reason} | response={response_mode} → {current}")
+                    current = await self.librarian_db.update_emotion(
+                        changes, target_user_id=target_id,
+                        target_user_name=target_name, reason=reason)
+                    logger.info(f"감정: {target_name} | {changes} | {reason} | response={response_mode} → {current}")
                     _mood_applied = True
 
-                    # 의도적 무응답/짧은 응답
+                    # 의도적 무응답
                     if response_mode == "ignore":
                         _meta["intentional_silence"] = True
                         logger.info(f"의도적 무응답: {reason}")
