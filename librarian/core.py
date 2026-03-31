@@ -905,6 +905,18 @@ class AILibrarianBot(discord.Client):
                 "web_search", "add_alias", "forget_alias", "forget_memory", "modify_memory",
                 "recognize_media", "recognize_link", "attach", "feel",
             }
+            _POSITIONAL_MAP = {
+                "deliver": "file_id",
+                "attach": "media_id",
+                "recognize_media": "attachment_index",
+                "recognize_link": "url",
+                "search": "keyword",
+                "web_search": "query",
+                "save_memory": "content",
+                "add_knowledge": "content",
+                "forget_memory": "keyword",
+                "forget_alias": "alias_id",
+            }
             if reply:
                 _inline_pattern = re.compile(
                     r'(' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(([^)]*)\)',
@@ -918,18 +930,6 @@ class AILibrarianBot(discord.Client):
                     logger.info(f"인라인 함수 감지: {_tool_name}({_args_raw[:80]})")
 
                     # args 파싱
-                    _POSITIONAL_MAP = {
-                        "deliver": "file_id",
-                        "attach": "media_id",
-                        "recognize_media": "attachment_index",
-                        "recognize_link": "url",
-                        "search": "keyword",
-                        "web_search": "query",
-                        "save_memory": "content",
-                        "add_knowledge": "content",
-                        "forget_memory": "keyword",
-                        "forget_alias": "alias_id",
-                    }
                     _tool_args = {}
                     # key: value 또는 key=value 형태
                     _kv_matches = list(re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw, re.DOTALL))
