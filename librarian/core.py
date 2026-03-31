@@ -1001,7 +1001,12 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                # 빈 응답 → 유저 메시지도 히스토리에서 제거
+                if _mood_applied:
+                    # feel 호출 후 빈 응답 → AI가 말 안 하기로 한 것
+                    logger.info("[1차] 빈 응답 (feel 호출됨 → 무응답)")
+                    _meta["intentional_silence"] = True
+                    return "", file_to_send, _meta
+                # feel 없이 빈 응답 → 진짜 에러
                 if history and history[-1].role == "user":
                     history.pop()
                 logger.warning(f"[1차] 빈 응답 → 에러 처리")
