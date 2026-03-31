@@ -502,6 +502,8 @@ class AILibrarianBot(discord.Client):
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+        self._trim_history(user_id)
+        history = self.chat_histories[user_id]
         history_snapshot = len(history)
         self._current_attachments = attachments or []
         _mood_applied = False
