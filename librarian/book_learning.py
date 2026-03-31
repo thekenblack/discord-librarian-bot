@@ -83,6 +83,9 @@ async def learn_book(librarian_db, book_id: int, title: str, filename: str, stor
     try:
         logger.info(f"도서 학습 시작: 《{title}》")
 
+        # pending 상태로 먼저 저장
+        await librarian_db.save_book_knowledge(book_id, "", source=title, status="pending")
+
         prompt_text = (
             f"이 책의 제목은 《{title}》이다. "
             "사서가 이 책의 내용을 숙지할 수 있도록 상세하게 설명해. "
@@ -133,10 +136,15 @@ async def learn_book(librarian_db, book_id: int, title: str, filename: str, stor
                     result += part.text
 
         if result:
-            await librarian_db.save_book_knowledge(book_id, result, source=title)
+            await librarian_db.update_book_knowledge(book_id, result, status="done")
             logger.info(f"도서 학습 완료: 《{title}》 ({len(result):,}자)")
         else:
+            await librarian_db.update_book_knowledge(book_id, "", status="failed")
             logger.warning(f"도서 학습 실패 (빈 응답): 《{title}》")
 
     except Exception as e:
+        try:
+            await librarian_db.update_book_knowledge(book_id, "", status="failed")
+        except Exception:
+            pass
         logger.error(f"도서 학습 실패: 《{title}》 → {e}")

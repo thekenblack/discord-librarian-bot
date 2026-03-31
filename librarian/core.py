@@ -103,6 +103,7 @@ class AILibrarianBot(discord.Client):
         await self.librarian_db.load_knowledge_from_files(knowledge_dir)
         await self.librarian_db.cleanup_learned()
         await self.librarian_db.reset_stale_url_results()
+        await self.librarian_db.reset_stale_book_knowledge()
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
 

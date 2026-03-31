@@ -54,7 +54,8 @@ class LibrarianDB:
                     id       INTEGER PRIMARY KEY AUTOINCREMENT,
                     book_id  INTEGER,
                     content  TEXT NOT NULL,
-                    source   TEXT
+                    source   TEXT,
+                    status   TEXT NOT NULL DEFAULT 'done'
                 )
             """)
 
@@ -139,6 +140,7 @@ class LibrarianDB:
             await _add_column("media_results", "uploader", "TEXT")
             await _add_column("media_results", "stored_name", "TEXT")
             await _add_column("media_results", "file_hash", "TEXT")
+            await _add_column("book_knowledge", "status", "TEXT DEFAULT 'done'")
 
             # 인덱스
             await db.execute("CREATE INDEX IF NOT EXISTS idx_media_hash ON media_results(file_hash)")
@@ -385,11 +387,12 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-            # 7. 도서 지식 (키워드 주변 200자)
+            # 7. 도서 지식 (키워드 주변 200자, done만)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
-                WHERE content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
-                   OR source LIKE ?
+                WHERE status = 'done'
+                  AND (content LIKE ? OR REPLACE(content, ' ', '') LIKE ?
+                       OR source LIKE ?)
                 LIMIT ?
             """, (like, like_nospace, like, limit))
             rows = []
@@ -651,17 +654,31 @@ class LibrarianDB:
 
     # ── 도서 지식 ─────────────────────────────────────────
 
-    async def save_book_knowledge(self, book_id: int, content: str, source: str = None):
+    async def save_book_knowledge(self, book_id: int, content: str, source: str = None, status: str = "done"):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO book_knowledge (book_id, content, source) VALUES (?, ?, ?)",
-                (book_id, content, source))
+                "INSERT INTO book_knowledge (book_id, content, source, status) VALUES (?, ?, ?, ?)",
+                (book_id, content, source, status))
+            await db.commit()
+
+    async def update_book_knowledge(self, book_id: int, content: str, status: str = "done"):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE book_knowledge SET content = ?, status = ? WHERE book_id = ?",
+                (content, status, book_id))
             await db.commit()
 
     async def has_book_knowledge(self, book_id: int) -> bool:
+        """done 또는 pending 상태가 있으면 True"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM book_knowledge WHERE book_id = ?",
+                "SELECT COUNT(*) FROM book_knowledge WHERE book_id = ? AND status IN ('done', 'pending')",
                 (book_id,))
             row = await cursor.fetchone()
             return row[0] > 0
+
+    async def reset_stale_book_knowledge(self):
+        """pending/failed 상태 정리 (재시작 시)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM book_knowledge WHERE status IN ('pending', 'failed')")
+            await db.commit()
