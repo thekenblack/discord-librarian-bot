@@ -229,11 +229,13 @@ def get_prompt_block() -> str:
         supply = _get_supply(height)
         lines.append(f"채굴된 비트코인: {supply:,.2f} / 21,000,000 BTC ({supply/21000000*100:.1f}%)")
 
-        # 다음 반감기
-        next_halving = ((height // 210000) + 1) * 210000
+        # 반감기
+        era = height // 210000
+        next_halving = (era + 1) * 210000
         remaining = next_halving - height
-        days_approx = remaining * 10 / 60 / 24  # 블록당 ~10분
-        lines.append(f"다음 반감기: {remaining:,}블록 남음 (약 {days_approx:.0f}일)")
+        days_approx = remaining * 10 / 60 / 24
+        next_reward = 50 / (2 ** (era + 1))
+        lines.append(f"반감기: {era}차 완료, 다음 {remaining:,}블록 남음 (약 {days_approx:.0f}일, 보상 {reward} → {next_reward} BTC)")
 
         # 마지막 비트코인
         lines.append(f"마지막 비트코인 채굴: 약 2140년 예정")
