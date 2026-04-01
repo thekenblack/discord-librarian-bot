@@ -396,17 +396,7 @@ class LibrarianDB:
             if rows:
                 result["웹"] = rows
 
-            # 5. URL 인식 캐시
-            cursor = await db.execute(f"""
-                SELECT normalized, original_url, result FROM url_results
-                WHERE (result LIKE ? OR original_url LIKE ? OR normalized LIKE ?)
-                  AND status = 'done'
-                  {url_exclude}
-                ORDER BY id DESC LIMIT ?
-            """, (like, like, like, limit))
-            rows = [f"[{r['original_url']}] {_snippet(r['result'])}" for r in await cursor.fetchall()]
-            if rows:
-                result["URL"] = rows
+            # 5. (삭제 — 7번 URL 캐시와 중복이었음)
 
             # 6. 미디어 캐시
             cursor = await db.execute(f"""
