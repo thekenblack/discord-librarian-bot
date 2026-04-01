@@ -404,7 +404,7 @@ class AILibrarianBot(discord.Client):
             text = f"{text} {msg_extras}" if text else msg_extras
 
         if not text:
-            text = ""
+            text = "(멘션만 함 — 직전 대화 맥락에 맞게 반응해)"
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
         _t2 = _time.monotonic()
