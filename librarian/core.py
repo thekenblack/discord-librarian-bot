@@ -128,7 +128,7 @@ class AILibrarianBot(discord.Client):
 
         status_name = self.persona.status_text
         if LIGHTNING_ADDRESS:
-            status_name = f"후원: {LIGHTNING_ADDRESS}"
+            status_name = LIGHTNING_ADDRESS
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=status_name
         ))
