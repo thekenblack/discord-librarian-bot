@@ -864,15 +864,24 @@ class LibrarianDB:
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 
-    ACTIVE_MINUTES = 60  # 서버 평균 계산 대상: 최근 N분 내 활동 유저
+    ACTIVE_MINUTES = 10  # 활발할 때: 최근 N분
+    ACTIVE_MIN_USERS = 10  # 한산할 때: 최소 N명
 
     async def _get_server_avg(self, db, axis: str) -> float | None:
-        """최근 N분 내 활동 유저 기준 서버 평균."""
+        """서버 평균. 10분 내 유저가 10명 미만이면 최근 10명 기준."""
         if axis not in self.USER_AXES:
             return None
+        # 먼저 최근 10분 내 유저 수 확인
         cursor = await db.execute(
-            f"SELECT AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
+            f"SELECT COUNT(*) as cnt, AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
             (f"-{self.ACTIVE_MINUTES} minutes",))
+        row = await cursor.fetchone()
+        if row and row["cnt"] >= self.ACTIVE_MIN_USERS:
+            return row["avg"]
+        # 부족하면 최근 상호작용 10명
+        cursor = await db.execute(
+            f"SELECT AVG({axis}) as avg FROM (SELECT {axis} FROM user_emotion ORDER BY last_interaction DESC LIMIT ?)",
+            (self.ACTIVE_MIN_USERS,))
         row = await cursor.fetchone()
         return row["avg"] if row and row["avg"] is not None else None
 
