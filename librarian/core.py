@@ -916,9 +916,11 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'feel\s*\([^)]*\)', text):
                     _had_inline_function = True
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
-                # 빈 JSON 잔여물 제거 ([], {})
-                text = re.sub(r'\[\s*\]', '', text).strip()
-                text = re.sub(r'\{\s*\}', '', text).strip()
+                # 잔여물 제거
+                text = re.sub(r'\[\s*\]', '', text).strip()  # []
+                text = re.sub(r'\{\s*\}', '', text).strip()  # {}
+                text = re.sub(r'^\s*/\s*$', '', text, flags=re.MULTILINE).strip()  # 슬래시만 있는 줄
+                text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()  # 연속 빈 줄 정리
                 # JSON/감정 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
                 # "감정:" 라벨 포함, 따옴표 없는 키도 매칭
                 json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
