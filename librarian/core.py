@@ -1157,6 +1157,8 @@ class AILibrarianBot(discord.Client):
                     cleaned = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', cleaned)
                     # [mood:XX]
                     cleaned = re.sub(r'\[mood:[+-]?\d+\]', '', cleaned)
+                    # 내부 ID 제거: (file_id:9), (media_id:3), (url_id:5) 등
+                    cleaned = re.sub(r'\(?\b(?:file_id|media_id|url_id|entry_id)\s*[:=]\s*\d+\)?', '', cleaned)
                     # **** 빈 볼드
                     cleaned = re.sub(r'\*\*\*\*', '', cleaned)
                     # <br>
