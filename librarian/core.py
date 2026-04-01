@@ -1051,7 +1051,7 @@ class AILibrarianBot(discord.Client):
 
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
-                if fc.name in ("search", "save_memory", "modify_memory"):
+                if fc.name in ("search", "memorize"):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
                 if fc.name == "search":
@@ -1193,8 +1193,8 @@ class AILibrarianBot(discord.Client):
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
             _had_inline_function = False
             _TOOL_NAMES = {
-                "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
-                "web_search", "save_alias", "forget_alias", "forget_memory", "modify_memory",
+                "search", "deliver", "memorize", "forget",
+                "web_search", "memorize_alias", "forget_alias",
                 "recognize_media", "recognize_link", "attach", "feel",
             }
             _POSITIONAL_MAP = {
@@ -1204,9 +1204,8 @@ class AILibrarianBot(discord.Client):
                 "recognize_link": "url",
                 "search": "keyword",
                 "web_search": "query",
-                "save_memory": "content",
-                "add_knowledge": "content",
-                "forget_memory": "keyword",
+                "memorize": "content",
+                "forget": "keyword",
                 "forget_alias": "alias_id",
             }
             if reply:
@@ -1240,7 +1239,7 @@ class AILibrarianBot(discord.Client):
                             pass
                         _tool_args[_POSITIONAL_MAP[_tool_name]] = _val
 
-                    if _tool_name in ("search", "save_memory", "modify_memory"):
+                    if _tool_name in ("search", "memorize"):
                         _tool_args["_user_id"] = user_id
                         _tool_args["_user_name"] = user_name
                     if _tool_name == "search":

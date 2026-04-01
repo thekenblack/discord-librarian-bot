@@ -87,8 +87,8 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="save_memory",
-            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모 등.",
+            name="memorize",
+            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모, 지식 등. 수정이 필요하면 forget 후 memorize.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -98,41 +98,18 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="add_knowledge",
-            description="새로운 지식을 저장한다.",
+            name="forget",
+            description="잘못된 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "content": types.Schema(type="STRING", description="저장할 지식 내용"),
+                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
                 },
-                required=["content"],
+                required=["keyword"],
             ),
         ),
         types.FunctionDeclaration(
-            name="add_entry_alias",
-            description="도서관 엔트리에 별칭을 추가한다.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "entry_id": types.Schema(type="INTEGER", description="엔트리 ID"),
-                    "alias": types.Schema(type="STRING", description="추가할 별칭"),
-                },
-                required=["entry_id", "alias"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="web_search",
-            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "query": types.Schema(type="STRING", description="검색할 내용"),
-                },
-                required=["query"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="save_alias",
+            name="memorize_alias",
             description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
             parameters=types.Schema(
                 type="OBJECT",
@@ -155,26 +132,14 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="forget_memory",
-            description="잘못된 기억이나 더 이상 필요 없는 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
+            name="web_search",
+            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
+                    "query": types.Schema(type="STRING", description="검색할 내용"),
                 },
-                required=["keyword"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="modify_memory",
-            description="기존 기억을 수정한다. 기존 것을 잊고 새 내용으로 대체. '아니야 ~야', '그거 틀려 ~가 맞아' 같은 요청에 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "keyword": types.Schema(type="STRING", description="잊을 기존 기억의 키워드"),
-                    "new_content": types.Schema(type="STRING", description="새로 기억할 내용"),
-                },
-                required=["keyword", "new_content"],
+                required=["query"],
             ),
         ),
         types.FunctionDeclaration(
@@ -336,39 +301,20 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
             "file_size": file_info["file_size"],
         }, ensure_ascii=False)
 
-    elif name == "save_memory" or name == "add_knowledge":
+    elif name == "memorize":
         content = args.get("content", "")
         author = args.get("_user_name")
         saved_id = await librarian_db.save(content, author=author)
         return json.dumps({"result": f"저장 완료 (ID: {saved_id})"}, ensure_ascii=False)
 
-    elif name == "forget_memory":
+    elif name == "forget":
         keyword = args.get("keyword", "")
         count = await librarian_db.forget(keyword)
         if count > 0:
             return json.dumps({"result": f"'{keyword}' 관련 기억 {count}건 잊음"}, ensure_ascii=False)
         return json.dumps({"result": f"'{keyword}' 관련 기억 없음"}, ensure_ascii=False)
 
-    elif name == "modify_memory":
-        keyword = args.get("keyword", "")
-        new_content = args.get("new_content", "")
-        author = args.get("_user_name")
-        forgotten = await librarian_db.forget(keyword)
-        saved_id = await librarian_db.save(new_content, author=author)
-        return json.dumps({"result": f"기억 수정: {forgotten}건 잊고 새로 저장 (ID: {saved_id})"}, ensure_ascii=False)
-
-    elif name == "add_entry_alias":
-        entry_id = args.get("entry_id")
-        alias = args.get("alias", "")
-        book = await library_db.get_book(entry_id)
-        if not book:
-            return json.dumps({"result": f"ID {entry_id} 엔트리를 찾을 수 없습니다."}, ensure_ascii=False)
-        existing = book.get("alias") or ""
-        new_alias = f"{existing}, {alias}" if existing else alias
-        await library_db.update_book_alias(entry_id, new_alias)
-        return json.dumps({"result": f"'{book['title']}' 엔트리에 별칭 '{alias}' 추가 완료"}, ensure_ascii=False)
-
-    elif name == "save_alias":
+    elif name == "memorize_alias":
         aname = args.get("name", "")
         alias = args.get("alias", "")
         await librarian_db.save_alias(aname, alias)

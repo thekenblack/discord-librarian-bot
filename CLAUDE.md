@@ -118,18 +118,19 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 | 도구 | 용도 |
 |---|---|
-| deliver(file_id) | 파일 전송 |
 | search(keyword) | 지식+기억+도서+웹+미디어 통합 검색. 뉴스/날씨도 가능 |
-| web_search(query) | 웹 검색 + 결과 자동 저장 |
-| save_memory(content) | 기억 저장 |
-| forget_memory(keyword) | 기억 잊기 (soft delete) |
-| modify_memory(keyword, new_content) | 기억 수정 |
-| add_alias(name, alias) | 별칭 등록 |
-| add_entry_alias(entry_id, alias) | 엔트리 별칭 추가 |
+| deliver(file_id) | 파일 전송 |
+| attach(media_id 또는 url_id) | 저장된 미디어/URL 첨부 전송 |
+| memorize(content) | 기억 저장. 수정이 필요하면 forget 후 memorize |
+| forget(keyword) | 기억 잊기 (soft delete) |
+| memorize_alias(name, alias) | 별칭 등록 (검색 시 자동 확장) |
 | forget_alias(alias_id) | 별칭 삭제 |
+| web_search(query) | 웹 검색 + 결과 자동 저장 |
 | recognize_media(attachment_index) | 이미지/PDF 인식 (file_hash 중복 방지) |
-| recognize_link(url) | URL 인식 (pending → 백그라운드 처리 → done) |
-| attach(media_id) | 저장된 미디어 첨부 전송 |
+| recognize_link(url) | URL 인식 (이미지 URL은 동기, 나머지 백그라운드) |
+| feel(...) | 감정 변화 기록 |
+
+모든 도구는 1요청당 1회만 호출 가능. 사용한 도구는 다음 API 호출에서 목록에서 제거됨.
 
 ### 리트라이 구조
 
