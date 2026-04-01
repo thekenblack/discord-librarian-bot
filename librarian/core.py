@@ -497,8 +497,8 @@ class AILibrarianBot(discord.Client):
         if file_to_send:
             await _send_reply(reply_text, file=file_to_send)
         elif reply_text:
-            # 커스텀 이모지: 현재 서버에 없으면 제거
             import re as _re
+            # 커스텀 이모지: 현재 서버에 없으면 제거
             if message.guild:
                 guild_emoji_ids = {str(e.id) for e in message.guild.emojis}
                 def _check_emoji(m):
@@ -692,16 +692,23 @@ class AILibrarianBot(discord.Client):
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
-        _feeling_applied = False
+        _tool_used = set()  # 모든 도구 1회 제한 (도구 호출 + 인라인 폴백 공유)
 
         file_to_send = None
 
-        config = types.GenerateContentConfig(
-            system_instruction=dynamic_prompt,
-            tools=library_tools,
-            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-            temperature=0.8,
-        )
+        def _make_config(temp=0.8):
+            """사용한 도구를 제외한 config 생성."""
+            all_decls = library_tools[0].function_declarations
+            filtered = [d for d in all_decls if d.name not in _tool_used]
+            tools = [types.Tool(function_declarations=filtered)] if filtered else None
+            return types.GenerateContentConfig(
+                system_instruction=dynamic_prompt,
+                tools=tools,
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                temperature=temp,
+            )
+
+        config = _make_config(0.8)
 
         try:
             # 도구 루프용 로컬 리스트 (영구 히스토리 + 현재 요청)
@@ -734,7 +741,7 @@ class AILibrarianBot(discord.Client):
 
                 # feel 도구: 감정 변화 기록 (1요청당 1회만)
                 if fc.name == "feel":
-                    if _feeling_applied:
+                    if ("feel" in _tool_used):
                         # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
                         loop_contents.append(response.candidates[0].content)
                         loop_contents.append(types.Content(
@@ -749,6 +756,7 @@ class AILibrarianBot(discord.Client):
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
+                    reaction_emoji = feel_args.pop("reaction", None)
                     target_raw = feel_args.pop("target", None)
                     # target에서 user_id 추출: <@ID>, 숫자ID, 이름 대응
                     target_id = user_id
@@ -784,7 +792,7 @@ class AILibrarianBot(discord.Client):
                     changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                     current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
                     logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
-                    _feeling_applied = True
+                    _tool_used.add("feel")
 
                     # 의도적 무응답
                     if response_mode == "ignore":
@@ -792,11 +800,14 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    # response에 이모지가 있으면 리액션 예약 (답변도 계속 진행)
-                    if response_mode and response_mode not in ("normal", "ignore"):
-                        if not _meta.get("reaction"):
-                            _meta["reaction"] = response_mode
-                            logger.info(f"이모지 리액션 예약: {response_mode}")
+                    # reaction 파라미터: 이모지 리액션 예약
+                    if reaction_emoji and not _meta.get("reaction"):
+                        emojis = _extract_emojis(reaction_emoji)
+                        if emojis:
+                            _meta["reaction"] = reaction_emoji
+                            logger.info(f"이모지 리액션 예약: {reaction_emoji}")
+                        else:
+                            logger.info(f"이모지 리액션 무시 (유효하지 않음): {reaction_emoji[:30]}")
 
                     result_parts = []
                     for k, v in current.items():
@@ -1044,7 +1055,7 @@ class AILibrarianBot(discord.Client):
 
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
-                if fc.name in ("search", "save_memory", "modify_memory"):
+                if fc.name in ("search", "memorize"):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
                 if fc.name == "search":
@@ -1073,6 +1084,10 @@ class AILibrarianBot(discord.Client):
                     if shared_url:
                         _meta.setdefault("shared_urls", []).append(shared_url)
 
+                # 사용한 도구 제거 + config 갱신
+                _tool_used.add(fc.name)
+                config = _make_config(0.8)
+
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
                     role="user",
@@ -1089,12 +1104,14 @@ class AILibrarianBot(discord.Client):
                     break
 
             reply = self._extract_reply(response)
+            if reply:
+                logger.info(f"[1차] 원본: {reply}")
 
             import re
 
             def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
-                nonlocal _feeling_applied, _had_inline_function
+                nonlocal _had_inline_function
                 if not text:
                     return text
                 # feel(...) 인라인 제거
@@ -1105,24 +1122,48 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'/feel\s+\S', text):
                     _had_inline_function = True
                 text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
+                # (feel: reason=..., ...) 괄호 형태 제거
+                if re.search(r'[\(\（]\s*feel\s*:', text):
+                    _had_inline_function = True
+                text = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', text).strip()
                 # *(감정 기록: ...)* 형태 제거
                 if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
                     _had_inline_function = True
                 text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
-                # <br> 등 HTML 태그 제거
+                # <br> 태그만 제거 (디스코드 꺾쇠 보호)
                 text = re.sub(r'<br\s*/?>', '\n', text).strip()
-                text = re.sub(r'<[^>]+>', '', text).strip()
+                # --- 구분선 이후 메타데이터 제거
+                text = re.sub(r'\n---\s*\n.*', '', text, flags=re.DOTALL).strip()
+                # 줄 단위 잔여물 제거
+                _clean_lines = []
+                for _line in text.split('\n'):
+                    _stripped = _line.strip()
+                    # 빈 줄은 유지
+                    if not _stripped:
+                        _clean_lines.append(_line)
+                        continue
+                    # 메타데이터/잔여물 줄 제거
+                    if re.match(r'^[\*_]*\s*감정\s*(변화|기록|:)', _stripped):
+                        continue
+                    if re.match(r'^function_call\s*:', _stripped, re.IGNORECASE):
+                        continue
+                    if re.match(r'^---\s*$', _stripped):
+                        continue
+                    if _stripped in ('/', '\\'):
+                        continue
+                    _clean_lines.append(_line)
+                text = '\n'.join(_clean_lines).strip()
                 # 잔여물 제거
+                text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
-                text = re.sub(r'^\s*/\s*$', '', text, flags=re.MULTILINE).strip()  # 슬래시만 있는 줄
                 text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()  # 연속 빈 줄 정리
                 # JSON/감정 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
                 # "감정:" 라벨 포함, 따옴표 없는 키도 매칭
                 json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
                 if json_match:
                     _had_inline_function = True
-                if json_match and not _feeling_applied:
+                if json_match and not ("feel" in _tool_used):
                     try:
                         import json as _json
                         raw = json_match.group()
@@ -1135,6 +1176,7 @@ class AILibrarianBot(discord.Client):
                         feel_json = _json.loads(raw)
                         reason = feel_json.pop("reason", "")
                         response_val = feel_json.pop("response", None)
+                        reaction_val = feel_json.pop("reaction", None)
                         changes = {}
                         for axis in self.librarian_db.ALL_AXES:
                             prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
@@ -1148,33 +1190,23 @@ class AILibrarianBot(discord.Client):
                                 self.librarian_db.update_emotion(
                                     changes, target_user_id=user_id,
                                     target_user_name=user_name, reason=reason or "json fallback"))
-                            _feeling_applied = True
+                            _tool_used.add("feel")
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
-                        # response 처리 (이모지 리액션/무응답)
-                        if response_val and response_val not in ("normal",):
-                            if response_val == "ignore":
-                                _meta["intentional_silence"] = True
-                            elif not _meta.get("reaction"):
-                                _meta["reaction"] = response_val
-                                logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
+                        # response 처리
+                        if response_val == "ignore":
+                            _meta["intentional_silence"] = True
+                        # reaction 처리
+                        if reaction_val and not _meta.get("reaction"):
+                            _fb_emojis = _extract_emojis(reaction_val)
+                            if _fb_emojis:
+                                _meta["reaction"] = reaction_val
+                                logger.info(f"이모지 리액션(JSON 폴백): {reaction_val}")
                     except Exception as e:
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
-                    text = text[:json_match.start()].strip()
-                # [mood:XX] 태그 처리
-                m = re.search(r'\[mood:([+-]?\d+)\]', text)
-                if not m:
-                    return text
-                text = text.replace(m.group(0), '').strip()
-                if not _feeling_applied:
-                    try:
-                        val = int(m.group(1))
-                        asyncio.create_task(
-                            self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
-                        _feeling_applied = True
-                        logger.info(f"감정(폴백): mood={m.group(1)} → DB")
-                    except (ValueError, Exception) as e:
-                        logger.warning(f"mood 폴백 실패: {e}")
+                    text = (text[:json_match.start()] + text[json_match.end():]).strip()
+                # [mood:XX] 태그 제거 (v3 레거시)
+                text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
                 return text
 
             reply = _strip_feeling(reply)
@@ -1182,8 +1214,8 @@ class AILibrarianBot(discord.Client):
             # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
             _had_inline_function = False
             _TOOL_NAMES = {
-                "search", "deliver", "save_memory", "add_knowledge", "add_entry_alias",
-                "web_search", "save_alias", "forget_alias", "forget_memory", "modify_memory",
+                "search", "deliver", "memorize", "forget",
+                "web_search", "memorize_alias", "forget_alias",
                 "recognize_media", "recognize_link", "attach", "feel",
             }
             _POSITIONAL_MAP = {
@@ -1193,9 +1225,8 @@ class AILibrarianBot(discord.Client):
                 "recognize_link": "url",
                 "search": "keyword",
                 "web_search": "query",
-                "save_memory": "content",
-                "add_knowledge": "content",
-                "forget_memory": "keyword",
+                "memorize": "content",
+                "forget": "keyword",
                 "forget_alias": "alias_id",
             }
             if reply:
@@ -1229,7 +1260,7 @@ class AILibrarianBot(discord.Client):
                             pass
                         _tool_args[_POSITIONAL_MAP[_tool_name]] = _val
 
-                    if _tool_name in ("search", "save_memory", "modify_memory"):
+                    if _tool_name in ("search", "memorize"):
                         _tool_args["_user_id"] = user_id
                         _tool_args["_user_name"] = user_name
                     if _tool_name == "search":
@@ -1243,53 +1274,31 @@ class AILibrarianBot(discord.Client):
                         _tool_data = json.loads(_tool_result)
                         logger.info(f"인라인 함수 실행 결과: {_tool_result[:100]}")
 
-                        # history에 function call/response 추가
-                        loop_contents.append(types.Content(role="model", parts=[
-                            types.Part.from_text(text=reply),
-                        ]))
-                        loop_contents.append(types.Content(role="user", parts=[
-                            types.Part.from_function_response(name=_tool_name, response=_tool_data),
-                        ]))
-
-                        if _before:
-                            # 앞부분 텍스트 있으면 reply로 쓰고 함수 결과로 재응답
-                            try:
-                                _follow_response = await self._call_gemini(loop_contents, config)
-                                _follow_reply = self._extract_reply(_follow_response)
-                                if _follow_reply:
-                                    reply = _before + "\n" + _follow_reply
-                                else:
-                                    reply = _before
-                            except Exception as _e:
-                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
-                                reply = _before
-                        else:
-                            # 앞부분 없으면 함수 결과로만 재응답
-                            try:
-                                _follow_response = await self._call_gemini(loop_contents, config)
-                                _follow_reply = self._extract_reply(_follow_response)
-                                if _follow_reply:
-                                    reply = _follow_reply
-                            except Exception as _e:
-                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
-                                reply = ""
+                        if _tool_data.get("_action") == "deliver":
+                            save_path = os.path.join(FILES_DIR, _tool_data["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
+                                await self.library_db.increment_download(_tool_data["file_id"])
+                        elif _tool_data.get("_action") == "attach":
+                            save_path = os.path.join(MEDIA_DIR, _tool_data["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
+                        elif _tool_data.get("_action") == "share_url":
+                            _shared = _tool_data.get("url", "")
+                            if _shared:
+                                _meta.setdefault("shared_urls", []).append(_shared)
                     except Exception as _e:
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
-                    # 인라인 함수 재응답에서 mood 태그 제거
-                    reply = _strip_feeling(reply)
+                    # 함수 호출 제거, 남은 텍스트만 사용
+                    reply = _before
 
             if not reply:
-                if _had_inline_function or _feeling_applied:
-                    # feel 도구 호출 후 텍스트가 빈 경우 → 리트라이 필요
-                    logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
-                else:
-                    # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
-                    if history and history[-1].role == "user":
-                        history.pop()
-                    logger.info("[1차] 빈 응답 → 무응답")
-                    _meta["intentional_silence"] = True
-                    return "", file_to_send, _meta
+                if history and history[-1].role == "user":
+                    history.pop()
+                logger.info("[1차] 빈 응답 → 무응답")
+                _meta["intentional_silence"] = True
+                return "", file_to_send, _meta
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
@@ -1315,6 +1324,8 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[2차] API 호출")
                     r = self._extract_reply(await self._call_gemini(clean_message, retry_config))
+                    if r:
+                        r = _strip_feeling(r)
                     logger.info(f"[2차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -1333,6 +1344,8 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[3차] API 호출")
                     r = self._extract_reply(await self._call_gemini(clean_message, web_config))
+                    if r:
+                        r = _strip_feeling(r)
                     logger.info(f"[3차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -1435,6 +1448,9 @@ class AILibrarianBot(discord.Client):
                         import re as _re
                         reply = _re.sub(r'\[mood:[+-]?\d+\]', '', reply).strip()
                         reply = _re.sub(r'feel\s*\([^)]*\)', '', reply).strip()
+                        reply = _re.sub(r'/feel\s+[^\n]*', '', reply).strip()
+                        reply = _re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', reply).strip()
+                        reply = _re.sub(r'\*\*\*\*', '', reply).strip()
                         logger.info(f"[클린 재시도] 응답: {reply}")
                         return reply, None, _meta
                 except Exception as retry_e:
@@ -1476,6 +1492,23 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
+    @staticmethod
+    def _clean_bot_content(text: str) -> str:
+        """봇 자신의 메시지에서 유출된 메타데이터 정리 (맥락에 넣기 전)"""
+        import re
+        if not text:
+            return text
+        text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
+        text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
+        text = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', text).strip()
+        text = re.sub(r'\*\s*[\(\（]?감정\s*(변화|기록)[^*]*\*', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'\n---\s*\n.*', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'^function_call\s*:.*$', '', text, flags=re.MULTILINE | re.IGNORECASE).strip()
+        text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
+        text = re.sub(r'\*\*\*\*', '', text).strip()
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
+        return text[:150]
+
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
         """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. anchor도 반환."""
         chain = []
@@ -1504,9 +1537,10 @@ class AILibrarianBot(discord.Client):
         for ref, extras in zip(raw_msgs, extras_list):
             if self.user and ref.author.id == self.user.id:
                 name = self.persona.name
+                content = self._clean_bot_content(ref.content[:300])
             else:
                 name = f"{ref.author.display_name}(<@{ref.author.id}>)"
-            content = ref.content[:150]
+                content = ref.content[:150]
             if extras:
                 content = f"{content} {extras}" if content else extras
             for att in ref.attachments:
@@ -1537,9 +1571,10 @@ class AILibrarianBot(discord.Client):
         for msg, extras in zip(msgs, extras_list):
             if self.user and msg.author.id == self.user.id:
                 name = self.persona.name
+                content = self._clean_bot_content(msg.content[:300])
             else:
                 name = f"{msg.author.display_name}(<@{msg.author.id}>)"
-            content = msg.content[:150]
+                content = msg.content[:150]
             if extras:
                 content = f"{content} {extras}" if content else extras
             lines.append(f"{name}: {content}")

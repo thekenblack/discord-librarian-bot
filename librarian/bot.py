@@ -55,6 +55,13 @@ _formatter = _TZFormatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 file_handler = _DailyFileHandler(LOG_DIR, prefix="bot")
 file_handler.setFormatter(_formatter)
 
+# 커밋별 로그: bot.2026-04-01_f7545df.log
+from config import GIT_HASH
+_commit_log_name = f"bot.{_now().strftime('%Y-%m-%d')}_{GIT_HASH}.log"
+_commit_log_path = os.path.join(LOG_DIR, _commit_log_name)
+commit_handler = logging.FileHandler(_commit_log_path, encoding="utf-8")
+commit_handler.setFormatter(_formatter)
+
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(_formatter)
 
@@ -63,6 +70,7 @@ logging.basicConfig(
     handlers=[
         stream_handler,
         file_handler,
+        commit_handler,
     ],
 )
 logging.getLogger("discord.client").setLevel(logging.ERROR)

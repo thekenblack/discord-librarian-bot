@@ -118,18 +118,19 @@ config.json에서 봇 목록을 읽으므로 수정할 필요가 없다.
 
 | 도구 | 용도 |
 |---|---|
-| deliver(file_id) | 파일 전송 |
 | search(keyword) | 지식+기억+도서+웹+미디어 통합 검색. 뉴스/날씨도 가능 |
-| web_search(query) | 웹 검색 + 결과 자동 저장 |
-| save_memory(content) | 기억 저장 |
-| forget_memory(keyword) | 기억 잊기 (soft delete) |
-| modify_memory(keyword, new_content) | 기억 수정 |
-| add_alias(name, alias) | 별칭 등록 |
-| add_entry_alias(entry_id, alias) | 엔트리 별칭 추가 |
+| deliver(file_id) | 파일 전송 |
+| attach(media_id 또는 url_id) | 저장된 미디어/URL 첨부 전송 |
+| memorize(content) | 기억 저장. 수정이 필요하면 forget 후 memorize |
+| forget(keyword) | 기억 잊기 (soft delete) |
+| memorize_alias(name, alias) | 별칭 등록 (검색 시 자동 확장) |
 | forget_alias(alias_id) | 별칭 삭제 |
+| web_search(query) | 웹 검색 + 결과 자동 저장 |
 | recognize_media(attachment_index) | 이미지/PDF 인식 (file_hash 중복 방지) |
-| recognize_link(url) | URL 인식 (pending → 백그라운드 처리 → done) |
-| attach(media_id) | 저장된 미디어 첨부 전송 |
+| recognize_link(url) | URL 인식 (이미지 URL은 동기, 나머지 백그라운드) |
+| feel(...) | 감정 변화 기록. reason(사유), reaction(리액션 이모지), response(normal/ignore) |
+
+모든 도구는 1요청당 1회만 호출 가능. 사용한 도구는 다음 API 호출에서 목록에서 제거됨.
 
 ### 리트라이 구조
 
@@ -150,11 +151,14 @@ INVALID_ARGUMENT: 히스토리 초기화 + 도구 없이 1회 재시도
 
 ### 감정 시스템
 
-- [mood:+12] 상대값: cap=±15 → EMA(α=0.08) 적용
-- [mood:60] 절대값: EMA(α=0.08) 적용
-- 시간 감쇠 τ=21600s (6시간)
-- 한 요청당 1회만 적용 (_apply_mood)
-- 혼자일 때 원점수 그대로
+feel 도구 + DB 기반 6축 감정 (v4):
+- user_friendly, user_lovely, user_trust — 유저별 (0~10, 중립 5)
+- self_mood, self_energy — 봇 전역
+- server_vibe — 서버 전역
+- 변화량 -3 ~ +3, 범위 0 ~ 10, 전 축 동일
+- 1요청당 1회만 적용
+- reaction 파라미터로 이모지 리액션 분리, response는 모드(normal/ignore) 전용
+- emotion_log 테이블에 변경 이력 기록
 
 ### API 호출
 

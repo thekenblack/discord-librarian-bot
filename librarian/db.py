@@ -276,7 +276,7 @@ class LibrarianDB:
 
     # ── 통합 검색 ─────────────────────────────────────────
 
-    async def search_all(self, keyword: str, limit: int = 10,
+    async def search_all(self, keyword: str, limit: int = 3,
                          exclude_memory_ids: list[int] = None,
                          exclude_web_ids: list[int] = None,
                          exclude_url_ids: list[int] = None,
@@ -394,37 +394,9 @@ class LibrarianDB:
             """, (like, like, limit))
             rows = [f"[{r['query']}] {_snippet(r['result'])}" for r in await cursor.fetchall()]
             if rows:
-                result["웹"] = rows
+                result["웹검색"] = rows
 
-            # 5. URL 인식 캐시
-            cursor = await db.execute(f"""
-                SELECT normalized, original_url, result FROM url_results
-                WHERE (result LIKE ? OR original_url LIKE ? OR normalized LIKE ?)
-                  AND status = 'done'
-                  {url_exclude}
-                ORDER BY id DESC LIMIT ?
-            """, (like, like, like, limit))
-            rows = [f"[{r['original_url']}] {_snippet(r['result'])}" for r in await cursor.fetchall()]
-            if rows:
-                result["URL"] = rows
-
-            # 6. 미디어 캐시
-            cursor = await db.execute(f"""
-                SELECT id, filename, result, stored_name FROM media_results
-                WHERE (filename LIKE ? OR result LIKE ?)
-                  {media_exclude}
-                ORDER BY id DESC LIMIT ?
-            """, (like, like, limit))
-            rows = []
-            for r in await cursor.fetchall():
-                line = f"[media_id:{r['id']}] [{r['filename']}] {_snippet(r['result'])}"
-                if r["stored_name"]:
-                    line += " (첨부 가능)"
-                rows.append(line)
-            if rows:
-                result["미디어"] = rows
-
-            # 7. URL 캐시 (유튜브 영상 / 일반 URL 분리)
+            # 5. URL 인식 캐시 (유튜브 / 일반 URL 분리)
             cursor = await db.execute(f"""
                 SELECT id, normalized, original_url, result FROM url_results
                 WHERE status = 'done'
@@ -444,9 +416,25 @@ class LibrarianDB:
             if yt_rows:
                 result["유튜브"] = yt_rows
             if url_rows:
-                result["웹"] = url_rows
+                result["URL"] = url_rows
 
-            # 8. 도서 지식 (키워드 주변 200자, done만)
+            # 6. 미디어 캐시
+            cursor = await db.execute(f"""
+                SELECT id, filename, result, stored_name FROM media_results
+                WHERE (filename LIKE ? OR result LIKE ?)
+                  {media_exclude}
+                ORDER BY id DESC LIMIT ?
+            """, (like, like, limit))
+            rows = []
+            for r in await cursor.fetchall():
+                line = f"[media_id:{r['id']}] [{r['filename']}] {_snippet(r['result'])}"
+                if r["stored_name"]:
+                    line += " (첨부 가능)"
+                rows.append(line)
+            if rows:
+                result["미디어"] = rows
+
+            # 7. 도서 지식 (키워드 주변 200자, done만)
             cursor = await db.execute("""
                 SELECT source, content FROM book_knowledge
                 WHERE status = 'done'
@@ -758,15 +746,7 @@ class LibrarianDB:
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
-    # 1회 변화량 제한: (상한, 하한)
-    AXIS_LIMITS = {
-        "friendly":    (+3, -3),
-        "lovely":      (+1, -3),
-        "trust":       (+1, -3),
-        "self_mood":   (+3, -3),
-        "self_energy":  (+3, -3),
-        "server_vibe": (+3, -3),
-    }
+    AXIS_DELTA_MAX = 3  # 1회 변화량 ±3, 범위 0~10
 
     async def get_user_emotion(self, user_id: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
@@ -814,14 +794,8 @@ class LibrarianDB:
                                                   "interaction_count": 0}
 
                 for axis, delta in user_changes.items():
-                    hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
-                    delta = max(lo, min(hi, delta))
-                    val = current.get(axis, 0) + delta
-                    current[axis] = max(0, min(10, val))
-
-                # lovely는 항상 trust 이하
-                if current["lovely"] > current["trust"]:
-                    current["lovely"] = current["trust"]
+                    delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
+                    current[axis] = max(0, min(10, current.get(axis, 0) + delta))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
@@ -845,8 +819,7 @@ class LibrarianDB:
             global_changes = {k: v for k, v in changes.items()
                               if k in self.SELF_AXES + self.SERVER_AXES}
             for axis, delta in global_changes.items():
-                hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
-                delta = max(lo, min(hi, delta))
+                delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
                 cursor = await db.execute(
                     "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
                 row = await cursor.fetchone()

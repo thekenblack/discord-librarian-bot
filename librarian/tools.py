@@ -87,8 +87,8 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="save_memory",
-            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모 등.",
+            name="memorize",
+            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모, 지식 등. 수정이 필요하면 forget 후 memorize.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
@@ -98,41 +98,18 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="add_knowledge",
-            description="새로운 지식을 저장한다.",
+            name="forget",
+            description="잘못된 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "content": types.Schema(type="STRING", description="저장할 지식 내용"),
+                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
                 },
-                required=["content"],
+                required=["keyword"],
             ),
         ),
         types.FunctionDeclaration(
-            name="add_entry_alias",
-            description="도서관 엔트리에 별칭을 추가한다.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "entry_id": types.Schema(type="INTEGER", description="엔트리 ID"),
-                    "alias": types.Schema(type="STRING", description="추가할 별칭"),
-                },
-                required=["entry_id", "alias"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="web_search",
-            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "query": types.Schema(type="STRING", description="검색할 내용"),
-                },
-                required=["query"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="save_alias",
+            name="memorize_alias",
             description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
             parameters=types.Schema(
                 type="OBJECT",
@@ -155,26 +132,14 @@ library_tools = [
             ),
         ),
         types.FunctionDeclaration(
-            name="forget_memory",
-            description="잘못된 기억이나 더 이상 필요 없는 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
+            name="web_search",
+            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
-                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
+                    "query": types.Schema(type="STRING", description="검색할 내용"),
                 },
-                required=["keyword"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="modify_memory",
-            description="기존 기억을 수정한다. 기존 것을 잊고 새 내용으로 대체. '아니야 ~야', '그거 틀려 ~가 맞아' 같은 요청에 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "keyword": types.Schema(type="STRING", description="잊을 기존 기억의 키워드"),
-                    "new_content": types.Schema(type="STRING", description="새로 기억할 내용"),
-                },
-                required=["keyword", "new_content"],
+                required=["query"],
             ),
         ),
         types.FunctionDeclaration(
@@ -224,7 +189,8 @@ library_tools = [
                     "self_energy": types.Schema(type="INTEGER", description="기력 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
-                    "response": types.Schema(type="STRING", description="ignore(무시), 이모지(😊 등), 또는 생략(기본 답변)"),
+                    "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
+                    "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
                 },
                 required=["reason"],
             ),
@@ -247,30 +213,32 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         exclude_url_ids = args.get("_exclude_url_ids", [])
         exclude_media_ids = args.get("_exclude_media_ids", [])
 
-        # 키워드 확장: 별칭 + 공백 분리
+        # 키워드 확장: 별칭
         keywords, aliases_used = await librarian_db.expand_keyword(keyword)
-        if " " in keyword:
-            for part in keyword.split():
-                if part not in keywords:
-                    keywords.append(part)
 
-        # 7개 카테고리 검색
-        merged = {}
-        for kw in keywords:
-            kw_result = await librarian_db.search_all(
-                kw, exclude_memory_ids=exclude_memory_ids,
-                exclude_web_ids=exclude_web_ids,
-                exclude_url_ids=exclude_url_ids,
-                exclude_media_ids=exclude_media_ids,
-                user_name=user_name)
-            for cat, items in kw_result.items():
-                for item in items:
-                    if item not in merged.setdefault(cat, set()):
-                        merged.setdefault(cat, set()).add(item)
-
+        # 풀 키워드로 먼저 검색
+        _search_args = dict(
+            exclude_memory_ids=exclude_memory_ids,
+            exclude_web_ids=exclude_web_ids,
+            exclude_url_ids=exclude_url_ids,
+            exclude_media_ids=exclude_media_ids,
+            user_name=user_name)
         result = {}
-        for cat, items in merged.items():
-            result[cat] = list(items)[:10]
+        for kw in keywords:
+            kw_result = await librarian_db.search_all(kw, **_search_args)
+            for cat, items in kw_result.items():
+                result.setdefault(cat, []).extend(
+                    item for item in items if item not in result.get(cat, []))
+
+        # 결과 부족하면 공백 분리 서브 키워드로 보충
+        if len(result) < 2 and " " in keyword:
+            for part in keyword.split():
+                if part in keywords:
+                    continue
+                part_result = await librarian_db.search_all(part, **_search_args)
+                for cat, items in part_result.items():
+                    result.setdefault(cat, []).extend(
+                        item for item in items if item not in result.get(cat, []))
         # 뉴스 키워드 감지
         if "뉴스" in keyword or "news" in keyword.lower() or "헤드라인" in keyword:
             news = get_news()
@@ -295,18 +263,18 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         _url_kw = ["링크", "url", "유튜브", "영상", "웹"]
         if any(mk in keyword.lower() for mk in _media_kw) and "미디어" not in result:
             _m_user, _m_other, _ = await librarian_db.get_recent_media_results(
-                10, exclude_filenames=[], user_name=user_name)
+                5, exclude_filenames=[], user_name=user_name)
             _m_rows = []
-            for r in (_m_user + _m_other)[:10]:
+            for r in (_m_user + _m_other)[:5]:
                 line = f"[media_id:{r['id']}] [{r['filename']}] {r['result'][:150]}"
                 _m_rows.append(line + " (첨부 가능)")
             if _m_rows:
                 result["미디어"] = _m_rows
         if any(uk in keyword.lower() for uk in _url_kw) and "유튜브" not in result and "웹" not in result:
             _u_user, _u_other, _ = await librarian_db.get_recent_url_results(
-                10, user_name=user_name)
+                5, user_name=user_name)
             _yt, _web = [], []
-            for r in (_u_user + _u_other)[:10]:
+            for r in (_u_user + _u_other)[:5]:
                 norm = r.get("normalized", "")
                 line = f"[url_id:{r['id']}] [{r['original_url']}] {r['result'][:150]} (첨부 가능)"
                 if norm.startswith("youtu.be/") or norm.startswith("youtube:"):
@@ -336,39 +304,20 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
             "file_size": file_info["file_size"],
         }, ensure_ascii=False)
 
-    elif name == "save_memory" or name == "add_knowledge":
+    elif name == "memorize":
         content = args.get("content", "")
         author = args.get("_user_name")
         saved_id = await librarian_db.save(content, author=author)
         return json.dumps({"result": f"저장 완료 (ID: {saved_id})"}, ensure_ascii=False)
 
-    elif name == "forget_memory":
+    elif name == "forget":
         keyword = args.get("keyword", "")
         count = await librarian_db.forget(keyword)
         if count > 0:
             return json.dumps({"result": f"'{keyword}' 관련 기억 {count}건 잊음"}, ensure_ascii=False)
         return json.dumps({"result": f"'{keyword}' 관련 기억 없음"}, ensure_ascii=False)
 
-    elif name == "modify_memory":
-        keyword = args.get("keyword", "")
-        new_content = args.get("new_content", "")
-        author = args.get("_user_name")
-        forgotten = await librarian_db.forget(keyword)
-        saved_id = await librarian_db.save(new_content, author=author)
-        return json.dumps({"result": f"기억 수정: {forgotten}건 잊고 새로 저장 (ID: {saved_id})"}, ensure_ascii=False)
-
-    elif name == "add_entry_alias":
-        entry_id = args.get("entry_id")
-        alias = args.get("alias", "")
-        book = await library_db.get_book(entry_id)
-        if not book:
-            return json.dumps({"result": f"ID {entry_id} 엔트리를 찾을 수 없습니다."}, ensure_ascii=False)
-        existing = book.get("alias") or ""
-        new_alias = f"{existing}, {alias}" if existing else alias
-        await library_db.update_book_alias(entry_id, new_alias)
-        return json.dumps({"result": f"'{book['title']}' 엔트리에 별칭 '{alias}' 추가 완료"}, ensure_ascii=False)
-
-    elif name == "save_alias":
+    elif name == "memorize_alias":
         aname = args.get("name", "")
         alias = args.get("alias", "")
         await librarian_db.save_alias(aname, alias)
