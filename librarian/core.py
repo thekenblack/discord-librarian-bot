@@ -692,8 +692,7 @@ class AILibrarianBot(discord.Client):
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
-        _feeling_applied = False
-        _tool_used = set()  # 모든 도구 1회 제한
+        _tool_used = set()  # 모든 도구 1회 제한 (도구 호출 + 인라인 폴백 공유)
 
         file_to_send = None
 
@@ -742,7 +741,7 @@ class AILibrarianBot(discord.Client):
 
                 # feel 도구: 감정 변화 기록 (1요청당 1회만)
                 if fc.name == "feel":
-                    if _feeling_applied:
+                    if ("feel" in _tool_used):
                         # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
                         loop_contents.append(response.candidates[0].content)
                         loop_contents.append(types.Content(
@@ -792,7 +791,7 @@ class AILibrarianBot(discord.Client):
                     changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                     current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
                     logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
-                    _feeling_applied = True
+                    _tool_used.add("feel")
 
                     # 의도적 무응답
                     if response_mode == "ignore":
@@ -1106,7 +1105,7 @@ class AILibrarianBot(discord.Client):
 
             def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
-                nonlocal _feeling_applied, _had_inline_function
+                nonlocal _had_inline_function
                 if not text:
                     return text
                 # feel(...) 인라인 제거
@@ -1134,7 +1133,7 @@ class AILibrarianBot(discord.Client):
                 json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
                 if json_match:
                     _had_inline_function = True
-                if json_match and not _feeling_applied:
+                if json_match and not ("feel" in _tool_used):
                     try:
                         import json as _json
                         raw = json_match.group()
@@ -1160,7 +1159,7 @@ class AILibrarianBot(discord.Client):
                                 self.librarian_db.update_emotion(
                                     changes, target_user_id=user_id,
                                     target_user_name=user_name, reason=reason or "json fallback"))
-                            _feeling_applied = True
+                            _tool_used.add("feel")
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
                         # response 처리 (이모지 리액션/무응답)
                         if response_val and response_val not in ("normal",):
@@ -1178,12 +1177,12 @@ class AILibrarianBot(discord.Client):
                 if not m:
                     return text
                 text = text.replace(m.group(0), '').strip()
-                if not _feeling_applied:
+                if not ("feel" in _tool_used):
                     try:
                         val = int(m.group(1))
                         asyncio.create_task(
                             self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
-                        _feeling_applied = True
+                        _tool_used.add("feel")
                         logger.info(f"감정(폴백): mood={m.group(1)} → DB")
                     except (ValueError, Exception) as e:
                         logger.warning(f"mood 폴백 실패: {e}")
@@ -1292,7 +1291,7 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if _had_inline_function or _feeling_applied:
+                if _had_inline_function or ("feel" in _tool_used):
                     # feel 도구 호출 후 텍스트가 빈 경우 → 리트라이 필요
                     logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
                 else:
