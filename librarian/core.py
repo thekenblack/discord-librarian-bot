@@ -693,18 +693,14 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
         _feeling_applied = False
-        _tool_used = set()  # 도구별 1회 제한
-        # 1회 제한 대상 (feel, deliver, attach는 제외)
-        _once_only = {"search", "web_search", "save_memory", "forget_memory",
-                      "modify_memory", "add_alias", "add_entry_alias",
-                      "forget_alias", "recognize_media", "recognize_link"}
+        _tool_used = set()  # 도구별 1회 제한 (feel만 제외)
 
         file_to_send = None
 
         def _make_config(temp=0.8):
             """사용한 도구를 제외한 config 생성."""
             all_decls = library_tools[0].function_declarations
-            filtered = [d for d in all_decls if d.name not in (_tool_used & _once_only)]
+            filtered = [d for d in all_decls if d.name not in _tool_used]
             tools = [types.Tool(function_declarations=filtered)] if filtered else None
             return types.GenerateContentConfig(
                 system_instruction=dynamic_prompt,
@@ -1086,7 +1082,7 @@ class AILibrarianBot(discord.Client):
                         _meta.setdefault("shared_urls", []).append(shared_url)
 
                 # 1회 제한 도구 사용 기록 + config 갱신
-                if fc.name in _once_only:
+                if fc.name != "feel":
                     _tool_used.add(fc.name)
                     config = _make_config(0.8)
 
