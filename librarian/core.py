@@ -3,6 +3,7 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 """
 
 import os
+import re
 import json
 import asyncio
 import discord
@@ -24,6 +25,32 @@ logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
 MAX_HISTORY = 10
+
+# 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
+_CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
+_UNICODE_EMOJI_RE = re.compile(
+    r"[\U0001F1E0-\U0001F1FF]{2}"          # 국기 이모지
+    r"|(?:[\U0001F600-\U0001FAFF]"          # 이모지 본체
+    r"  (?:\uFE0F)?"                        # variation selector
+    r"  (?:\u200D"                           # ZWJ 시퀀스
+    r"    [\U0001F600-\U0001FAFF\u2600-\u27BF]"
+    r"    (?:\uFE0F)?"
+    r"  )*"
+    r")"
+    r"|[\u2600-\u27BF]\uFE0F?"              # 기호 이모지
+    r"|[\u231A-\u23F3]\uFE0F?"              # 시계 등 기호
+    r"|[\u2702-\u27B0]\uFE0F?"              # 가위 등 기호
+, re.VERBOSE)
+
+
+def _extract_emojis(raw: str) -> list[str]:
+    """reaction 문자열에서 유효한 이모지만 개별 추출."""
+    if not raw:
+        return []
+    custom = _CUSTOM_EMOJI_RE.findall(raw)
+    if custom:
+        return custom
+    return _UNICODE_EMOJI_RE.findall(raw)
 
 
 class AILibrarianBot(discord.Client):
@@ -361,11 +388,12 @@ class AILibrarianBot(discord.Client):
         if not reply_text and not file_to_send:
             # 이모지 리액션
             if _meta.get("reaction"):
-                try:
-                    await message.add_reaction(_meta["reaction"])
-                    logger.info(f"이모지 리액션: {_meta['reaction']}")
-                except Exception as e:
-                    logger.warning(f"리액션 실패: {e}")
+                for em in _extract_emojis(_meta["reaction"]):
+                    try:
+                        await message.add_reaction(em)
+                        logger.info(f"이모지 리액션: {em}")
+                    except Exception as e:
+                        logger.warning(f"리액션 실패: {e}")
                 return
             if _meta.get("intentional_silence"):
                 logger.info("의도적 무응답 → 메시지 안 보냄")
@@ -430,10 +458,11 @@ class AILibrarianBot(discord.Client):
 
         # 이모지 리액션
         if _meta.get("reaction"):
-            try:
-                await message.add_reaction(_meta["reaction"])
-            except Exception as e:
-                logger.warning(f"리액션 실패: {e}")
+            for em in _extract_emojis(_meta["reaction"]):
+                try:
+                    await message.add_reaction(em)
+                except Exception as e:
+                    logger.warning(f"리액션 실패: {e}")
 
     async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
