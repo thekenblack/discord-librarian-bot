@@ -276,7 +276,7 @@ class LibrarianDB:
 
     # ── 통합 검색 ─────────────────────────────────────────
 
-    async def search_all(self, keyword: str, limit: int = 10,
+    async def search_all(self, keyword: str, limit: int = 3,
                          exclude_memory_ids: list[int] = None,
                          exclude_web_ids: list[int] = None,
                          exclude_url_ids: list[int] = None,
