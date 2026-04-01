@@ -841,21 +841,26 @@ class LibrarianDB:
             except Exception:
                 pass
 
-        # 2. 극단값 저항: 50에서 멀어지는 방향이면 저항
+        # 2. 극단값: 50 방향이면 증폭, 반대면 저항
         dist = abs(current_value - self.NEUTRAL)
-        moving_away = (current_value > self.NEUTRAL and delta > 0) or \
-                      (current_value < self.NEUTRAL and delta < 0)
-        if moving_away and dist > 0:
-            resist = 1.0 - (dist / self.NEUTRAL) * 0.5  # 극단에서 50% 저항
-            delta *= max(0.3, resist)
+        if dist > 0 and delta != 0:
+            factor = dist / self.NEUTRAL  # 0 ~ 1
+            moving_toward = (current_value > self.NEUTRAL and delta < 0) or \
+                            (current_value < self.NEUTRAL and delta > 0)
+            if moving_toward:
+                delta *= 1.0 + factor * 1.0  # 멀수록 증폭 (최대 2배)
+            else:
+                delta *= max(0.3, 1.0 - factor * 0.7)  # 멀수록 저항 (최소 30%)
 
-        # 3. 서버 평균 정규화: 평균이 50에서 벗어나면 보정
+        # 3. 서버 평균 정규화: 평균을 50으로 되돌리는 방향 증폭
         if server_avg is not None:
-            avg_offset = (server_avg - self.NEUTRAL) / self.NEUTRAL  # -1 ~ +1
-            if delta > 0 and avg_offset > 0:
-                delta *= max(0.5, 1.0 - avg_offset)
-            elif delta < 0 and avg_offset < 0:
-                delta *= max(0.5, 1.0 + avg_offset)
+            avg_dist = abs(server_avg - self.NEUTRAL) / self.NEUTRAL  # 0 ~ 1
+            helps_avg = (server_avg > self.NEUTRAL and delta < 0) or \
+                        (server_avg < self.NEUTRAL and delta > 0)
+            if helps_avg:
+                delta *= 1.0 + avg_dist * 0.5  # 최대 50% 증폭
+            else:
+                delta *= max(0.5, 1.0 - avg_dist * 0.5)  # 최대 50% 저항
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 
