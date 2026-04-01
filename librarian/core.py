@@ -221,7 +221,7 @@ class AILibrarianBot(discord.Client):
             self._admin_notify_task = asyncio.create_task(self._flush_admin_notify())
 
     async def _recognize_url_background(self, parsed: dict, user_name: str):
-        """모든 URL 백그라운드 인식. 유튜브 영상이면 자막 → FileData, 일반이면 FileData 바로."""
+        """모든 URL 백그라운드 인식. 유튜브 자막 → FileData → HTML 폴백."""
         async with self._bg_semaphore:
             url = parsed["original_url"]
             normalized = parsed["normalized"]
@@ -229,7 +229,7 @@ class AILibrarianBot(discord.Client):
             result = ""
             loop = asyncio.get_event_loop()
 
-            # 유튜브 영상: 자막 먼저
+            # 1단계: 유튜브 영상 → 자막 추출
             if content_id:
                 try:
                     from youtube_transcript_api import YouTubeTranscriptApi
@@ -246,7 +246,7 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.info(f"유튜브 자막 없음 ({content_id}): {e}")
 
-            # 자막 실패 또는 일반 URL: FileData
+            # 2단계: FileData (이미지/PDF 등 직접 전달 가능한 URL)
             if not result:
                 try:
                     link_parts = [
@@ -260,6 +260,59 @@ class AILibrarianBot(discord.Client):
                     logger.info(f"URL FileData 인식 완료: {url}")
                 except Exception as e:
                     logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
+
+            # 3단계: HTML 폴백 (FileData 실패 시 직접 가져와서 텍스트 추출)
+            if not result:
+                try:
+                    import aiohttp
+                    from html.parser import HTMLParser
+
+                    class _TextExtractor(HTMLParser):
+                        """HTML에서 텍스트만 추출. script/style 태그 내용 제외."""
+                        def __init__(self):
+                            super().__init__()
+                            self.parts = []
+                            self._skip = False
+                        def handle_starttag(self, tag, attrs):
+                            if tag in ("script", "style", "noscript"):
+                                self._skip = True
+                            # og:description 등 메타태그 추출
+                            if tag == "meta":
+                                d = dict(attrs)
+                                content = d.get("content", "")
+                                prop = d.get("property", d.get("name", ""))
+                                if prop in ("og:description", "description", "og:title") and content:
+                                    self.parts.insert(0, content)
+                        def handle_endtag(self, tag):
+                            if tag in ("script", "style", "noscript"):
+                                self._skip = False
+                        def handle_data(self, data):
+                            if not self._skip:
+                                t = data.strip()
+                                if t:
+                                    self.parts.append(t)
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15),
+                                               headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                            if resp.status != 200:
+                                raise Exception(f"HTTP {resp.status}")
+                            html = await resp.text(errors="replace")
+
+                    extractor = _TextExtractor()
+                    extractor.feed(html[:100_000])
+                    text = "\n".join(extractor.parts)[:6000]
+                    if text and len(text) > 50:
+                        prompt = f"다음은 웹페이지({url})에서 추출한 텍스트야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                        config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                        response = await self._call_gemini(
+                            [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
+                        result = self._extract_reply(response)
+                        logger.info(f"URL HTML 폴백 인식 완료: {url}")
+                    else:
+                        logger.warning(f"URL HTML 텍스트 부족 ({url}): {len(text)}자")
+                except Exception as e:
+                    logger.warning(f"URL HTML 폴백 실패 ({url}): {e}")
 
             if result:
                 await self.librarian_db.update_url_result(normalized, result, status="done")
