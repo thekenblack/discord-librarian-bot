@@ -190,7 +190,7 @@ library_tools = [
                     "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화량 (-3, -2, -1, 0, +1, +2, +3)"),
                     "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                     "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
-                    "reaction": types.Schema(type="STRING", description="리액션 이모지 1개 (😊 등). 답변과 별개로 붙음. 생략 가능"),
+                    "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
                 },
                 required=["reason"],
             ),
