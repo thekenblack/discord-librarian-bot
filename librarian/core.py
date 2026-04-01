@@ -1118,8 +1118,8 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if _had_inline_function:
-                    # 함수만 시도하고 텍스트 없음 → 리트라이
+                if _had_inline_function or _mood_applied:
+                    # 함수 시도(인라인 또는 도구 호출) 후 빈 텍스트 → 리트라이
                     logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
                 else:
                     # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
