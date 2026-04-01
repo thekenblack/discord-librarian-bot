@@ -1492,6 +1492,23 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
+    @staticmethod
+    def _clean_bot_content(text: str) -> str:
+        """봇 자신의 메시지에서 유출된 메타데이터 정리 (맥락에 넣기 전)"""
+        import re
+        if not text:
+            return text
+        text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
+        text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
+        text = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', text).strip()
+        text = re.sub(r'\*\s*[\(\（]?감정\s*(변화|기록)[^*]*\*', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'\n---\s*\n.*', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'^function_call\s*:.*$', '', text, flags=re.MULTILINE | re.IGNORECASE).strip()
+        text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
+        text = re.sub(r'\*\*\*\*', '', text).strip()
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
+        return text[:150]
+
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
         """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. anchor도 반환."""
         chain = []
@@ -1520,9 +1537,10 @@ class AILibrarianBot(discord.Client):
         for ref, extras in zip(raw_msgs, extras_list):
             if self.user and ref.author.id == self.user.id:
                 name = self.persona.name
+                content = self._clean_bot_content(ref.content[:300])
             else:
                 name = f"{ref.author.display_name}(<@{ref.author.id}>)"
-            content = ref.content[:150]
+                content = ref.content[:150]
             if extras:
                 content = f"{content} {extras}" if content else extras
             for att in ref.attachments:
@@ -1553,9 +1571,10 @@ class AILibrarianBot(discord.Client):
         for msg, extras in zip(msgs, extras_list):
             if self.user and msg.author.id == self.user.id:
                 name = self.persona.name
+                content = self._clean_bot_content(msg.content[:300])
             else:
                 name = f"{msg.author.display_name}(<@{msg.author.id}>)"
-            content = msg.content[:150]
+                content = msg.content[:150]
             if extras:
                 content = f"{content} {extras}" if content else extras
             lines.append(f"{name}: {content}")
