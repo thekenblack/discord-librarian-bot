@@ -694,15 +694,26 @@ class AILibrarianBot(discord.Client):
         self._current_attachments = attachments or []
         _feeling_applied = False
         _tool_used = set()  # 도구별 1회 제한
+        # 1회 제한 대상 (feel, deliver, attach는 제외)
+        _once_only = {"search", "web_search", "save_memory", "forget_memory",
+                      "modify_memory", "add_alias", "add_entry_alias",
+                      "forget_alias", "recognize_media", "recognize_link"}
 
         file_to_send = None
 
-        config = types.GenerateContentConfig(
-            system_instruction=dynamic_prompt,
-            tools=library_tools,
-            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-            temperature=0.8,
-        )
+        def _make_config(temp=0.8):
+            """사용한 도구를 제외한 config 생성."""
+            all_decls = library_tools[0].function_declarations
+            filtered = [d for d in all_decls if d.name not in (_tool_used & _once_only)]
+            tools = [types.Tool(function_declarations=filtered)] if filtered else None
+            return types.GenerateContentConfig(
+                system_instruction=dynamic_prompt,
+                tools=tools,
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                temperature=temp,
+            )
+
+        config = _make_config(0.8)
 
         try:
             # 도구 루프용 로컬 리스트 (영구 히스토리 + 현재 요청)
@@ -1045,30 +1056,6 @@ class AILibrarianBot(discord.Client):
 
                 # 일반 도구 실행
                 tool_args = dict(fc.args) if fc.args else {}
-                # 도구별 1회 제한 (feel, deliver, attach 제외)
-                _once_only = {"search", "web_search", "save_memory", "forget_memory",
-                              "modify_memory", "add_alias", "add_entry_alias",
-                              "forget_alias", "recognize_media", "recognize_link"}
-                if fc.name in _once_only and fc.name in _tool_used:
-                    tool_result = json.dumps(
-                        {"info": f"{fc.name}은 1회만 가능해. 이미 받은 결과를 활용해."},
-                        ensure_ascii=False)
-                    logger.info(f"도구 중복 차단: {fc.name}")
-                    tool_data = json.loads(tool_result)
-                    loop_contents.append(response.candidates[0].content)
-                    loop_contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
-                    ))
-                    try:
-                        response = await self._call_gemini(loop_contents, config)
-                    except Exception as e:
-                        logger.warning(f"[1차] 도구 차단 후 API 에러: {e}")
-                        break
-                    continue
-                if fc.name in _once_only:
-                    _tool_used.add(fc.name)
-
                 if fc.name in ("search", "save_memory", "modify_memory"):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
@@ -1097,6 +1084,11 @@ class AILibrarianBot(discord.Client):
                     shared_url = tool_data.get("url", "")
                     if shared_url:
                         _meta.setdefault("shared_urls", []).append(shared_url)
+
+                # 1회 제한 도구 사용 기록 + config 갱신
+                if fc.name in _once_only:
+                    _tool_used.add(fc.name)
+                    config = _make_config(0.8)
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
