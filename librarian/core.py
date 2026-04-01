@@ -1111,16 +1111,12 @@ class AILibrarianBot(discord.Client):
         """Character: 지시서 + 페르소나로 대사 생성. 도구 없음."""
         history = self.chat_histories.get(user_id, [])
 
-        # 시스템 프롬프트: persona + character + 지시서 + reminder
+        # 시스템 프롬프트: character + 지시서
         sys_parts = []
-        if self.persona.persona_text:
-            sys_parts.append(self.persona.persona_text)
         if self.persona.character_text:
             sys_parts.append(self.persona.character_text)
         if instruction:
             sys_parts.append(f"## 연출 지시\n{instruction}")
-        if self.persona.reminder_text:
-            sys_parts.append(self.persona.reminder_text)
         system_prompt = "\n\n".join(p for p in sys_parts if p)
 
         config = types.GenerateContentConfig(

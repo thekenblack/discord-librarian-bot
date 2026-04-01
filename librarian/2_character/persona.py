@@ -1,8 +1,10 @@
 """
 페르소나 + 시스템 프롬프트 로드 (txt 기반)
+v5: 각 레이어 폴더의 prompts/ 내 모든 .txt를 파일명 순서로 합침
 """
 
 import os
+import glob
 import random
 
 
@@ -14,64 +16,40 @@ def _load_lines(path: str) -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 
+def _load_prompts_dir(prompts_dir: str, name: str) -> str:
+    """디렉토리 내 모든 .txt를 파일명 순서로 읽어서 합침"""
+    if not os.path.isdir(prompts_dir):
+        return ""
+    files = sorted(glob.glob(os.path.join(prompts_dir, "*.txt")))
+    parts = []
+    for f in files:
+        with open(f, encoding="utf-8") as fh:
+            text = fh.read().strip()
+            if text:
+                parts.append(text.replace("{name}", name))
+    return "\n\n".join(parts)
+
+
 class Persona:
     def __init__(self, persona_dir: str, name: str, status_text: str):
         self.name = name
         self.status_text = status_text
 
-        # v5 3레이어 구조: 1_director / 2_character / 3_evaluator
+        # v5 3레이어 구조
         director_prompts = os.path.join(persona_dir, "1_director", "prompts")
         character_prompts = os.path.join(persona_dir, "2_character", "prompts")
         evaluator_prompts = os.path.join(persona_dir, "3_evaluator", "prompts")
         messages_dir = os.path.join(persona_dir, "messages")
 
-        # 페르소나 프롬프트 (캐릭터)
-        persona_path = os.path.join(character_prompts, "persona.txt")
-        persona_text = ""
-        if os.path.exists(persona_path):
-            with open(persona_path, encoding="utf-8") as f:
-                persona_text = f.read().replace("{name}", name)
+        # 레이어별 프롬프트: 폴더 내 모든 .txt 합침
+        self.director_text: str = _load_prompts_dir(director_prompts, name)
+        self.character_text: str = _load_prompts_dir(character_prompts, name)
+        self.evaluator_text: str = _load_prompts_dir(evaluator_prompts, name)
 
-        # 시스템 프롬프트 (동작 규칙) — Director 영역
-        prompt_path = os.path.join(director_prompts, "functioning.txt")
-        prompt_text = ""
-        if os.path.exists(prompt_path):
-            with open(prompt_path, encoding="utf-8") as f:
-                prompt_text = f.read().replace("{name}", name)
-
-        # 마무리 리마인드 프롬프트
-        reminder_path = os.path.join(character_prompts, "reminder.txt")
-        reminder_text = ""
-        if os.path.exists(reminder_path):
-            with open(reminder_path, encoding="utf-8") as f:
-                reminder_text = f.read().replace("{name}", name)
-
-        # 외양
-        character_path = os.path.join(character_prompts, "character.txt")
-        character_text = ""
-        if os.path.exists(character_path):
-            with open(character_path, encoding="utf-8") as f:
-                character_text = f.read().replace("{name}", name)
-
-        # Director / Evaluator 프롬프트 (v5)
-        director_path = os.path.join(director_prompts, "director.txt")
-        director_text = ""
-        if os.path.exists(director_path):
-            with open(director_path, encoding="utf-8") as f:
-                director_text = f.read().replace("{name}", name)
-
-        evaluator_path = os.path.join(evaluator_prompts, "evaluator.txt")
-        evaluator_text = ""
-        if os.path.exists(evaluator_path):
-            with open(evaluator_path, encoding="utf-8") as f:
-                evaluator_text = f.read().replace("{name}", name)
-
-        self.persona_text: str = persona_text
-        self.prompt_text: str = prompt_text
-        self.reminder_text: str = reminder_text
-        self.character_text: str = character_text
-        self.director_text: str = director_text
-        self.evaluator_text: str = evaluator_text
+        # v4 호환 (prompt_text = director, persona_text = character 첫 파일)
+        self.prompt_text: str = self.director_text
+        self.persona_text: str = self.character_text
+        self.reminder_text: str = ""
 
         # 에러 메시지
         self._messages = [

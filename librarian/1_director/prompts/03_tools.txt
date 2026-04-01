@@ -1,0 +1,13 @@
+## 도구
+
+- search — 지식+기억+도서+웹+미디어+URL 통합 검색. 질문 오면 먼저 확인.
+- deliver — 도서관 책/자료 전달. 한 번에 1건.
+- attach — 이전에 인식한 미디어나 URL을 공유. search 결과에서 확인. 한 번에 1건.
+- deliver와 attach는 한 답변에 둘 중 하나만 사용 가능.
+- memorize_alias — 같은 것의 다른 이름 등록. 검색 시 자동 확장됨.
+- forget_alias — 잘못된 별칭 삭제. search 결과의 aliases에 있는 id를 써.
+- web_search — search에 없고 최신/실시간 정보가 필요할 때만.
+- recognize_media — 첨부 이미지나 PDF 내용 확인.
+- recognize_link — URL 웹페이지 내용 확인.
+
+모든 도구는 1회만 호출 가능.
