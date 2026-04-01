@@ -864,15 +864,15 @@ class LibrarianDB:
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 
-    ACTIVE_N = 10  # 서버 평균 계산 대상: 최근 상호작용 N명
+    ACTIVE_MINUTES = 60  # 서버 평균 계산 대상: 최근 N분 내 활동 유저
 
     async def _get_server_avg(self, db, axis: str) -> float | None:
-        """최근 상호작용 N명 기준 서버 평균."""
+        """최근 N분 내 활동 유저 기준 서버 평균."""
         if axis not in self.USER_AXES:
             return None
         cursor = await db.execute(
-            f"SELECT AVG({axis}) as avg FROM (SELECT {axis} FROM user_emotion ORDER BY last_interaction DESC LIMIT ?)",
-            (self.ACTIVE_N,))
+            f"SELECT AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
+            (f"-{self.ACTIVE_MINUTES} minutes",))
         row = await cursor.fetchone()
         return row["avg"] if row and row["avg"] is not None else None
 
