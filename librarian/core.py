@@ -950,6 +950,10 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'feel\s*\([^)]*\)', text):
                     _had_inline_function = True
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
+                # /feel ... 슬래시 커맨드 형태 제거
+                if re.search(r'/feel\s+\S', text):
+                    _had_inline_function = True
+                text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
                 # 잔여물 제거
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
