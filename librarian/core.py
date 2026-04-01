@@ -948,21 +948,46 @@ class AILibrarianBot(discord.Client):
                     parsed = parse_url(url)
                     normalized = parsed["normalized"]
 
-                    cached = await self.librarian_db.get_url_by_normalized(normalized)
-                    if cached:
-                        if cached.get("status") == "pending":
-                            logger.info(f"링크 인식 중: {url}")
-                            link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
-                        elif cached.get("status") == "failed":
-                            await self.librarian_db.update_url_result(normalized, "", status="pending")
-                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                            link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                            logger.info(f"링크 재시도: {url}")
-                        else:
-                            logger.info(f"링크 캐시 히트: {url}")
-                            link_result = cached["result"]
+                    # 이미지 URL은 동기로 바로 인식 (FileData)
+                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                    _url_path = url.split("?")[0].split("#")[0].lower()
+                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
 
-                    if not cached:
+                    if _is_image_url:
+                        try:
+                            img_parts = [
+                                types.Part(file_data=types.FileData(file_uri=url)),
+                                types.Part.from_text(text="이 이미지를 설명해."),
+                            ]
+                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                            img_response = await self._call_gemini(
+                                [types.Content(role="user", parts=img_parts)], img_config)
+                            link_result = self._extract_reply(img_response)
+                            if link_result:
+                                await self.librarian_db.save_url_result(
+                                    normalized, url, link_result, user_name=user_name, status="done")
+                                logger.info(f"이미지 URL 동기 인식 완료: {url}")
+                        except Exception as e:
+                            logger.warning(f"이미지 URL 인식 실패 ({url}): {e}")
+
+                    # 캐시 확인
+                    if not link_result:
+                        cached = await self.librarian_db.get_url_by_normalized(normalized)
+                        if cached:
+                            if cached.get("status") == "pending":
+                                logger.info(f"링크 인식 중: {url}")
+                                link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
+                            elif cached.get("status") == "failed":
+                                await self.librarian_db.update_url_result(normalized, "", status="pending")
+                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                                link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                                logger.info(f"링크 재시도: {url}")
+                            else:
+                                logger.info(f"링크 캐시 히트: {url}")
+                                link_result = cached["result"]
+
+                    # 새 URL → 백그라운드
+                    if not link_result:
                         await self.librarian_db.save_url_result(
                             normalized, url, "", user_name=user_name, status="pending")
                         asyncio.create_task(self._recognize_url_background(parsed, user_name))
