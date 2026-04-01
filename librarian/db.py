@@ -434,7 +434,7 @@ class LibrarianDB:
             """, (like, like, like, limit))
             rows = []
             for r in await cursor.fetchall():
-                line = f"[url_id:{r['id']}] [{r['original_url']}] {_snippet(r['result'])}"
+                line = f"[url_id:{r['id']}] [{r['original_url']}] {_snippet(r['result'])} (첨부 가능)"
                 rows.append(line)
             if rows:
                 result["URL"] = rows
