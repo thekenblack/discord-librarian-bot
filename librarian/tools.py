@@ -212,29 +212,32 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         exclude_url_ids = args.get("_exclude_url_ids", [])
         exclude_media_ids = args.get("_exclude_media_ids", [])
 
-        # 키워드 확장: 별칭 + 공백 분리
+        # 키워드 확장: 별칭
         keywords, aliases_used = await librarian_db.expand_keyword(keyword)
-        if " " in keyword:
-            for part in keyword.split():
-                if part not in keywords:
-                    keywords.append(part)
 
-        # 8개 카테고리 검색 (카테고리별 3건)
-        merged = {}
-        for kw in keywords:
-            kw_result = await librarian_db.search_all(
-                kw, exclude_memory_ids=exclude_memory_ids,
-                exclude_web_ids=exclude_web_ids,
-                exclude_url_ids=exclude_url_ids,
-                exclude_media_ids=exclude_media_ids,
-                user_name=user_name)
-            for cat, items in kw_result.items():
-                for item in items:
-                    merged.setdefault(cat, set()).add(item)
-
+        # 풀 키워드로 먼저 검색
+        _search_args = dict(
+            exclude_memory_ids=exclude_memory_ids,
+            exclude_web_ids=exclude_web_ids,
+            exclude_url_ids=exclude_url_ids,
+            exclude_media_ids=exclude_media_ids,
+            user_name=user_name)
         result = {}
-        for cat, items in merged.items():
-            result[cat] = list(items)
+        for kw in keywords:
+            kw_result = await librarian_db.search_all(kw, **_search_args)
+            for cat, items in kw_result.items():
+                result.setdefault(cat, []).extend(
+                    item for item in items if item not in result.get(cat, []))
+
+        # 결과 부족하면 공백 분리 서브 키워드로 보충
+        if len(result) < 2 and " " in keyword:
+            for part in keyword.split():
+                if part in keywords:
+                    continue
+                part_result = await librarian_db.search_all(part, **_search_args)
+                for cat, items in part_result.items():
+                    result.setdefault(cat, []).extend(
+                        item for item in items if item not in result.get(cat, []))
         # 뉴스 키워드 감지
         if "뉴스" in keyword or "news" in keyword.lower() or "헤드라인" in keyword:
             news = get_news()
