@@ -859,11 +859,15 @@ class LibrarianDB:
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 
+    ACTIVE_DAYS = 7  # 최근 활동 기준 (일)
+
     async def _get_server_avg(self, db, axis: str) -> float | None:
-        """유저 축 서버 평균 조회."""
+        """최근 활동 유저 기준 서버 평균 조회."""
         if axis not in self.USER_AXES:
             return None
-        cursor = await db.execute(f"SELECT AVG({axis}) as avg FROM user_emotion")
+        cursor = await db.execute(
+            f"SELECT AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
+            (f"-{self.ACTIVE_DAYS} days",))
         row = await cursor.fetchone()
         return row["avg"] if row and row["avg"] is not None else None
 
