@@ -756,6 +756,7 @@ class AILibrarianBot(discord.Client):
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
+                    reaction_emoji = feel_args.pop("reaction", None)
                     target_raw = feel_args.pop("target", None)
                     # target에서 user_id 추출: <@ID>, 숫자ID, 이름 대응
                     target_id = user_id
@@ -799,16 +800,20 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    # response가 순수 이모지일 때만 리액션 예약
-                    if response_mode and response_mode not in ("normal", "ignore"):
-                        emojis = _extract_emojis(response_mode)
-                        joined = "".join(emojis).replace("\uFE0F", "")
-                        clean = response_mode.strip().replace("\uFE0F", "")
-                        if emojis and clean == joined and not _meta.get("reaction"):
-                            _meta["reaction"] = response_mode
-                            logger.info(f"이모지 리액션 예약: {response_mode}")
+                    # reaction 파라미터: 이모지 리액션 예약
+                    if reaction_emoji and not _meta.get("reaction"):
+                        emojis = _extract_emojis(reaction_emoji)
+                        if emojis:
+                            _meta["reaction"] = reaction_emoji
+                            logger.info(f"이모지 리액션 예약: {reaction_emoji}")
                         else:
-                            logger.info(f"이모지 리액션 무시 (순수 이모지 아님): {response_mode[:50]}")
+                            logger.info(f"이모지 리액션 무시 (유효하지 않음): {reaction_emoji[:30]}")
+                    # 하위 호환: response에 이모지를 넣은 경우
+                    elif response_mode and response_mode not in ("normal", "ignore") and not _meta.get("reaction"):
+                        emojis = _extract_emojis(response_mode)
+                        if emojis and len(response_mode.strip()) <= 4:
+                            _meta["reaction"] = response_mode
+                            logger.info(f"이모지 리액션 예약 (response 폴백): {response_mode}")
 
                     result_parts = []
                     for k, v in current.items():
@@ -1158,6 +1163,7 @@ class AILibrarianBot(discord.Client):
                         feel_json = _json.loads(raw)
                         reason = feel_json.pop("reason", "")
                         response_val = feel_json.pop("response", None)
+                        reaction_val = feel_json.pop("reaction", None)
                         changes = {}
                         for axis in self.librarian_db.ALL_AXES:
                             prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
@@ -1173,17 +1179,15 @@ class AILibrarianBot(discord.Client):
                                     target_user_name=user_name, reason=reason or "json fallback"))
                             _tool_used.add("feel")
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
-                        # response 처리 (이모지 리액션/무응답)
-                        if response_val and response_val not in ("normal",):
-                            if response_val == "ignore":
-                                _meta["intentional_silence"] = True
-                            else:
-                                _fb_emojis = _extract_emojis(response_val)
-                                _fb_joined = "".join(_fb_emojis).replace("\uFE0F", "")
-                                _fb_clean = response_val.strip().replace("\uFE0F", "")
-                                if _fb_emojis and _fb_clean == _fb_joined and not _meta.get("reaction"):
-                                    _meta["reaction"] = response_val
-                                    logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
+                        # response 처리
+                        if response_val == "ignore":
+                            _meta["intentional_silence"] = True
+                        # reaction 처리
+                        if reaction_val and not _meta.get("reaction"):
+                            _fb_emojis = _extract_emojis(reaction_val)
+                            if _fb_emojis:
+                                _meta["reaction"] = reaction_val
+                                logger.info(f"이모지 리액션(JSON 폴백): {reaction_val}")
                     except Exception as e:
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
