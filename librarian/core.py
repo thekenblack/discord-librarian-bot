@@ -693,6 +693,7 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
         _feeling_applied = False
+        _search_done = False
 
         file_to_send = None
 
@@ -1048,6 +1049,23 @@ class AILibrarianBot(discord.Client):
                     tool_args["_user_id"] = user_id
                     tool_args["_user_name"] = user_name
                 if fc.name == "search":
+                    if _search_done:
+                        # search는 1회만 허용
+                        tool_result = json.dumps({"info": "search는 1회만 가능해. 이미 받은 검색 결과를 활용해."}, ensure_ascii=False)
+                        logger.info(f"search 2회 차단")
+                        tool_data = json.loads(tool_result)
+                        loop_contents.append(response.candidates[0].content)
+                        loop_contents.append(types.Content(
+                            role="user",
+                            parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
+                        ))
+                        try:
+                            response = await self._call_gemini(loop_contents, config)
+                        except Exception as e:
+                            logger.warning(f"[1차] search 차단 후 API 에러: {e}")
+                            break
+                        continue
+                    _search_done = True
                     tool_args["_exclude_memory_ids"] = memory_ids
                     tool_args["_exclude_web_ids"] = web_ids
                     tool_args["_exclude_url_ids"] = url_ids
