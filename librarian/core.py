@@ -1254,41 +1254,24 @@ class AILibrarianBot(discord.Client):
                         _tool_data = json.loads(_tool_result)
                         logger.info(f"인라인 함수 실행 결과: {_tool_result[:100]}")
 
-                        # history에 function call/response 추가
-                        loop_contents.append(types.Content(role="model", parts=[
-                            types.Part.from_text(text=reply),
-                        ]))
-                        loop_contents.append(types.Content(role="user", parts=[
-                            types.Part.from_function_response(name=_tool_name, response=_tool_data),
-                        ]))
-
-                        if _before:
-                            # 앞부분 텍스트 있으면 reply로 쓰고 함수 결과로 재응답
-                            try:
-                                _follow_response = await self._call_gemini(loop_contents, config)
-                                _follow_reply = self._extract_reply(_follow_response)
-                                if _follow_reply:
-                                    reply = _before + "\n" + _follow_reply
-                                else:
-                                    reply = _before
-                            except Exception as _e:
-                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
-                                reply = _before
-                        else:
-                            # 앞부분 없으면 함수 결과로만 재응답
-                            try:
-                                _follow_response = await self._call_gemini(loop_contents, config)
-                                _follow_reply = self._extract_reply(_follow_response)
-                                if _follow_reply:
-                                    reply = _follow_reply
-                            except Exception as _e:
-                                logger.warning(f"인라인 함수 후 재응답 실패: {_e}")
-                                reply = ""
+                        if _tool_data.get("_action") == "deliver":
+                            save_path = os.path.join(FILES_DIR, _tool_data["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
+                                await self.library_db.increment_download(_tool_data["file_id"])
+                        elif _tool_data.get("_action") == "attach":
+                            save_path = os.path.join(MEDIA_DIR, _tool_data["stored_name"])
+                            if os.path.exists(save_path):
+                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
+                        elif _tool_data.get("_action") == "share_url":
+                            _shared = _tool_data.get("url", "")
+                            if _shared:
+                                _meta.setdefault("shared_urls", []).append(_shared)
                     except Exception as _e:
                         logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
 
-                    # 인라인 함수 재응답에서 mood 태그 제거
-                    reply = _strip_feeling(reply)
+                    # 함수 호출 제거, 남은 텍스트만 사용
+                    reply = _before
 
             if not reply:
                 if _had_inline_function and not file_to_send:
