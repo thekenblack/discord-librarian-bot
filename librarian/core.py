@@ -666,7 +666,7 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
             logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # search 중복 제거용 ID 수집 (프롬프트에는 안 넣음)
+        # search 중복 제거용 ID 수집 (프롬프트에는 안 넣음 — 토큰 절약)
         _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
         _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
         _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
