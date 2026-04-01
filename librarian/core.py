@@ -504,44 +504,8 @@ class AILibrarianBot(discord.Client):
                 def _check_emoji(m):
                     return m.group() if m.group(2) in guild_emoji_ids else ""
                 reply_text = _re.sub(r'<(a?:\w+:)(\d+)>', _check_emoji, reply_text).strip()
-            # 이미지 URL 감지 → 임베드로 변환
-            _img_file_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\?\S*)?)', reply_text)
-            _tenor_url = _re.search(r'(https?://tenor\.com/\S+)', reply_text)
-            _giphy_url = _re.search(r'(https?://giphy\.com/\S+)', reply_text)
-            _embed_img = None
-
-            if _img_file_url:
-                _embed_img = _img_file_url.group()
-                reply_text = reply_text.replace(_embed_img, '').strip()
-            elif _tenor_url or _giphy_url:
-                # tenor/giphy: 텍스트에서 URL 제거 후 실제 미디어 URL 추출 시도
-                _page_url = (_tenor_url or _giphy_url).group()
-                reply_text = reply_text.replace(_page_url, '').strip()
-                try:
-                    import aiohttp
-                    async with aiohttp.ClientSession() as _sess:
-                        async with _sess.get(_page_url, timeout=aiohttp.ClientTimeout(total=5),
-                                             headers={"User-Agent": "Mozilla/5.0"}) as _resp:
-                            if _resp.status == 200:
-                                _html = await _resp.text(errors="replace")
-                                # og:image 또는 content-url 에서 실제 미디어 URL 추출
-                                _og = _re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', _html)
-                                if not _og:
-                                    _og = _re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', _html)
-                                if _og:
-                                    _embed_img = _og.group(1)
-                except Exception:
-                    pass
-                # 추출 실패 시 원본 URL 복원 (Discord 자체 임베드에 맡김)
-                if not _embed_img:
-                    reply_text = f"{reply_text}\n{_page_url}".strip()
-
-            if _embed_img:
-                _embed = discord.Embed()
-                _embed.set_image(url=_embed_img)
-                await _send_reply(reply_text, embed=_embed)
-            else:
-                await _send_reply(reply_text)
+            # URL은 텍스트에 남기면 Discord가 자동 임베드 (유저와 동일)
+            await _send_reply(reply_text)
 
         # 이모지 리액션
         if _meta.get("reaction"):
