@@ -653,7 +653,7 @@ class AILibrarianBot(discord.Client):
                 name = emo.get("user_name", uid)
                 emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
 
-        emo_block = "## 감정 (5가 중립, 0 ~ 10)\n" + "\n".join(emo_lines)
+        emo_block = "## 감정 (50이 중립, 0 ~ 100)\n" + "\n".join(emo_lines)
         parts.append(emo_block)
         logger.info(f"[타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
         logger.info(f"[타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
@@ -811,7 +811,7 @@ class AILibrarianBot(discord.Client):
 
                     result_parts = []
                     for k, v in current.items():
-                        result_parts.append(f"{k} {v:.1f} (0 ~ 10)")
+                        result_parts.append(f"{k} {v:.1f} (0 ~ 100)")
                     result_str = " | ".join(result_parts)
                     tool_data = {"result": result_str}
                     loop_contents.append(response.candidates[0].content)

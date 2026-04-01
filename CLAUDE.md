@@ -152,10 +152,11 @@ INVALID_ARGUMENT: 히스토리 초기화 + 도구 없이 1회 재시도
 ### 감정 시스템
 
 feel 도구 + DB 기반 6축 감정 (v4):
-- user_friendly, user_lovely, user_trust — 유저별 (0~10, 중립 5)
+- user_friendly, user_lovely, user_trust — 유저별 (0~100, 중립 50)
 - self_mood, self_energy — 봇 전역
 - server_vibe — 서버 전역
-- 변화량 -3 ~ +3, 범위 0 ~ 10, 전 축 동일
+- 변화량 -5 ~ +5, 범위 0 ~ 100, 중립 50, 전 축 동일
+- 시간 감쇠: 중립(50)을 향해 반감기 기반 복귀 (user 48h, self 6h, server 12h)
 - 1요청당 1회만 적용
 - reaction 파라미터로 이모지 리액션 분리, response는 모드(normal/ignore) 전용
 - emotion_log 테이블에 변경 이력 기록

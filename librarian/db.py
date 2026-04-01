@@ -116,7 +116,7 @@ class LibrarianDB:
             """)
             for key in ("self_mood", "self_energy", "server_vibe"):
                 await db.execute(
-                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 5)", (key,))
+                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 50)", (key,))
 
             # 감정 변동 기록
             await db.execute("""
@@ -746,7 +746,37 @@ class LibrarianDB:
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
-    AXIS_DELTA_MAX = 3  # 1회 변화량 ±3, 범위 0~10
+    AXIS_DELTA_MAX = 5  # 1회 변화량 ±5, 범위 0~100
+    NEUTRAL = 50  # 중립값
+    AXIS_RANGE = (0, 100)
+    # 시간 감쇠 반감기 (초)
+    DECAY_HALFLIFE = {
+        "friendly": 48 * 3600,    # 48시간
+        "lovely": 48 * 3600,
+        "trust": 48 * 3600,
+        "self_mood": 6 * 3600,    # 6시간
+        "self_energy": 6 * 3600,
+        "server_vibe": 12 * 3600, # 12시간
+    }
+
+    def _apply_decay(self, value: float, axis: str, last_time_str: str | None) -> float:
+        """시간 감쇠 적용. 중립(50)을 향해 반감기 기반 복귀."""
+        if not last_time_str or axis not in self.DECAY_HALFLIFE:
+            return value
+        try:
+            from datetime import datetime, timezone
+            import math
+            last = datetime.fromisoformat(last_time_str)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+            if elapsed <= 0:
+                return value
+            halflife = self.DECAY_HALFLIFE[axis]
+            decay = math.pow(0.5, elapsed / halflife)
+            return self.NEUTRAL + (value - self.NEUTRAL) * decay
+        except Exception:
+            return value
 
     async def get_user_emotion(self, user_id: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
@@ -754,7 +784,13 @@ class LibrarianDB:
             cursor = await db.execute(
                 "SELECT * FROM user_emotion WHERE user_id = ?", (user_id,))
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            result = dict(row)
+            last_time = result.get("last_interaction")
+            for axis in self.USER_AXES:
+                result[axis] = round(self._apply_decay(result[axis], axis, last_time), 1)
+            return result
 
     async def get_user_emotions_bulk(self, user_ids: set[str]) -> dict[str, dict]:
         """여러 유저 감정 한 번에 조회"""
@@ -766,14 +802,24 @@ class LibrarianDB:
             cursor = await db.execute(
                 f"SELECT * FROM user_emotion WHERE user_id IN ({placeholders})",
                 tuple(user_ids))
-            return {row["user_id"]: dict(row) for row in await cursor.fetchall()}
+            results = {}
+            for row in await cursor.fetchall():
+                d = dict(row)
+                last_time = d.get("last_interaction")
+                for axis in self.USER_AXES:
+                    d[axis] = round(self._apply_decay(d[axis], axis, last_time), 1)
+                results[d["user_id"]] = d
+            return results
 
     async def get_bot_emotion(self) -> dict:
-        """self_mood, self_energy, server_vibe 조회"""
+        """self_mood, self_energy, server_vibe 조회 (감쇠 적용)"""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT key, value FROM bot_emotion")
-            return {row["key"]: row["value"] for row in await cursor.fetchall()}
+            cursor = await db.execute("SELECT key, value, updated_at FROM bot_emotion")
+            result = {}
+            for row in await cursor.fetchall():
+                result[row["key"]] = round(self._apply_decay(row["value"], row["key"], row["updated_at"]), 1)
+            return result
 
     async def update_emotion(self, changes: dict, target_user_id: str = None,
                              target_user_name: str = None, reason: str = None) -> dict:
@@ -790,12 +836,12 @@ class LibrarianDB:
                 cursor = await db.execute(
                     "SELECT * FROM user_emotion WHERE user_id = ?", (target_user_id,))
                 row = await cursor.fetchone()
-                current = dict(row) if row else {"friendly": 5, "lovely": 5, "trust": 5,
+                current = dict(row) if row else {"friendly": self.NEUTRAL, "lovely": self.NEUTRAL, "trust": self.NEUTRAL,
                                                   "interaction_count": 0}
 
                 for axis, delta in user_changes.items():
                     delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
-                    current[axis] = max(0, min(10, current.get(axis, 0) + delta))
+                    current[axis] = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], current.get(axis, self.NEUTRAL) + delta))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
@@ -823,8 +869,8 @@ class LibrarianDB:
                 cursor = await db.execute(
                     "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
                 row = await cursor.fetchone()
-                old_val = row["value"] if row else 0
-                new_val = max(0, min(10, old_val + delta))
+                old_val = row["value"] if row else self.NEUTRAL
+                new_val = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], old_val + delta))
                 await db.execute(
                     "UPDATE bot_emotion SET value = ?, updated_at = ? WHERE key = ?",
                     (new_val, datetime.now(timezone.utc).isoformat(), axis))
