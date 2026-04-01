@@ -128,7 +128,7 @@ class AILibrarianBot(discord.Client):
 
         status_name = self.persona.status_text
         if LIGHTNING_ADDRESS:
-            status_name = LIGHTNING_ADDRESS
+            status_name = f"⚡ {LIGHTNING_ADDRESS}"
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.watching, name=status_name
         ))
@@ -387,8 +387,31 @@ class AILibrarianBot(discord.Client):
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
+        async def _send_reply(text, file=None, embed=None):
+            """reply 실패 시 channel.send로 폴백"""
+            try:
+                if file:
+                    await message.reply(text, file=file)
+                elif embed:
+                    if text:
+                        await message.reply(text, embed=embed)
+                    else:
+                        await message.reply(embed=embed)
+                else:
+                    await message.reply(text)
+            except discord.HTTPException:
+                if file:
+                    await message.channel.send(text, file=file)
+                elif embed:
+                    if text:
+                        await message.channel.send(text, embed=embed)
+                    else:
+                        await message.channel.send(embed=embed)
+                else:
+                    await message.channel.send(text)
+
         if file_to_send:
-            await message.reply(reply_text, file=file_to_send)
+            await _send_reply(reply_text, file=file_to_send)
         elif reply_text:
             # 커스텀 이모지: 현재 서버에 없으면 제거
             import re as _re
@@ -404,12 +427,9 @@ class AILibrarianBot(discord.Client):
                 _text = reply_text.replace(_url, '').strip()
                 _embed = discord.Embed()
                 _embed.set_image(url=_url)
-                if _text:
-                    await message.reply(_text, embed=_embed)
-                else:
-                    await message.reply(embed=_embed)
+                await _send_reply(_text, embed=_embed)
             else:
-                await message.reply(reply_text)
+                await _send_reply(reply_text)
 
         # 이모지 리액션
         if _meta.get("reaction"):
