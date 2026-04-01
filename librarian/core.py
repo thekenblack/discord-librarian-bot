@@ -1103,6 +1103,8 @@ class AILibrarianBot(discord.Client):
                     break
 
             reply = self._extract_reply(response)
+            if reply:
+                logger.info(f"[1차] 원본: {reply}")
 
             import re
 
