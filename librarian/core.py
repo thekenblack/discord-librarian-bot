@@ -387,8 +387,14 @@ class AILibrarianBot(discord.Client):
         if file_to_send:
             await message.reply(reply_text, file=file_to_send)
         elif reply_text:
-            # 이미지 URL 감지 → 임베드로 변환
+            # 커스텀 이모지: 현재 서버에 없으면 제거
             import re as _re
+            if message.guild:
+                guild_emoji_ids = {str(e.id) for e in message.guild.emojis}
+                def _check_emoji(m):
+                    return m.group() if m.group(2) in guild_emoji_ids else ""
+                reply_text = _re.sub(r'<(a?:\w+:)(\d+)>', _check_emoji, reply_text).strip()
+            # 이미지 URL 감지 → 임베드로 변환
             _img_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\S*)?|https?://tenor\.com/\S+|https?://giphy\.com/\S+)', reply_text)
             if _img_url:
                 _url = _img_url.group()
