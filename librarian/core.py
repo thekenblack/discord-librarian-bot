@@ -1291,14 +1291,17 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if _had_inline_function or ("feel" in _tool_used):
-                    # feel 도구 호출 후 텍스트가 빈 경우 → 리트라이 필요
-                    logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
+                if _had_inline_function:
+                    # 인라인 함수 시도 후 텍스트가 빈 경우 → 리트라이 필요
+                    logger.info("[1차] 인라인 함수 시도 후 빈 텍스트 → 리트라이")
                 else:
-                    # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
+                    # 텍스트 없음 → 무응답 (feel만 호출한 경우 포함)
                     if history and history[-1].role == "user":
                         history.pop()
-                    logger.info("[1차] 빈 응답 → 무응답")
+                    if "feel" in _tool_used:
+                        logger.info("[1차] feel 후 빈 응답 → 무응답 (정상)")
+                    else:
+                        logger.info("[1차] 빈 응답 → 무응답")
                     _meta["intentional_silence"] = True
                     return "", file_to_send, _meta
             else:
