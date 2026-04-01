@@ -219,24 +219,22 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 if part not in keywords:
                     keywords.append(part)
 
-        # 7개 카테고리 검색 (카테고리별 3건, merge 후 5건)
+        # 8개 카테고리 검색 (카테고리별 3건)
         merged = {}
         for kw in keywords:
             kw_result = await librarian_db.search_all(
-                kw, limit=3,
-                exclude_memory_ids=exclude_memory_ids,
+                kw, exclude_memory_ids=exclude_memory_ids,
                 exclude_web_ids=exclude_web_ids,
                 exclude_url_ids=exclude_url_ids,
                 exclude_media_ids=exclude_media_ids,
                 user_name=user_name)
             for cat, items in kw_result.items():
                 for item in items:
-                    if item not in merged.setdefault(cat, set()):
-                        merged.setdefault(cat, set()).add(item)
+                    merged.setdefault(cat, set()).add(item)
 
         result = {}
         for cat, items in merged.items():
-            result[cat] = list(items)[:5]
+            result[cat] = list(items)
         # 뉴스 키워드 감지
         if "뉴스" in keyword or "news" in keyword.lower() or "헤드라인" in keyword:
             news = get_news()
