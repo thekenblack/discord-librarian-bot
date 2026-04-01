@@ -126,8 +126,11 @@ class AILibrarianBot(discord.Client):
         _handler.setLevel(logging.ERROR)
         logging.getLogger().addHandler(_handler)
 
+        status_name = self.persona.status_text
+        if LIGHTNING_ADDRESS:
+            status_name = f"후원: {LIGHTNING_ADDRESS}"
         await self.change_presence(activity=discord.Activity(
-            type=discord.ActivityType.watching, name=self.persona.status_text
+            type=discord.ActivityType.watching, name=status_name
         ))
         asyncio.create_task(bitcoin_data.start_background_update())
         asyncio.create_task(self._learn_all_books())
