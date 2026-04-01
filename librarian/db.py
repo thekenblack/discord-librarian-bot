@@ -106,7 +106,7 @@ class LibrarianDB:
                 )
             """)
 
-            # 공통/전역 감정 (self_mood, self_energy, server_vibe)
+            # 공통/전역 감정 (self_mood, self_capacity, server_vibe)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS bot_emotion (
                     key   TEXT PRIMARY KEY,
@@ -114,7 +114,7 @@ class LibrarianDB:
                     updated_at TEXT
                 )
             """)
-            for key in ("self_mood", "self_energy", "server_vibe"):
+            for key in ("self_mood", "self_capacity", "server_vibe"):
                 await db.execute(
                     "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 50)", (key,))
 
@@ -742,7 +742,7 @@ class LibrarianDB:
     # ── 감정 시스템 v2 ─────────────────────────────────────
 
     USER_AXES = ["friendly", "lovely", "trust"]
-    SELF_AXES = ["self_mood", "self_energy"]
+    SELF_AXES = ["self_mood", "self_capacity"]
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
@@ -755,7 +755,7 @@ class LibrarianDB:
         "lovely": 48 * 3600,
         "trust": 48 * 3600,
         "self_mood": 6 * 3600,    # 6시간
-        "self_energy": 6 * 3600,
+        "self_capacity": 6 * 3600,
         "server_vibe": 12 * 3600, # 12시간
     }
 
@@ -812,7 +812,7 @@ class LibrarianDB:
             return results
 
     async def get_bot_emotion(self) -> dict:
-        """self_mood, self_energy, server_vibe 조회 (감쇠 적용)"""
+        """self_mood, self_capacity, server_vibe 조회 (감쇠 적용)"""
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT key, value, updated_at FROM bot_emotion")
