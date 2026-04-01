@@ -1291,11 +1291,15 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if history and history[-1].role == "user":
-                    history.pop()
-                logger.info("[1차] 빈 응답 → 무응답")
-                _meta["intentional_silence"] = True
-                return "", file_to_send, _meta
+                if _had_inline_function and not file_to_send:
+                    # 인라인 함수만 있고 재응답도 빈 경우 → 리트라이
+                    logger.info("[1차] 인라인 함수 파싱 후 빈 텍스트 → 리트라이")
+                else:
+                    if history and history[-1].role == "user":
+                        history.pop()
+                    logger.info("[1차] 빈 응답 → 무응답")
+                    _meta["intentional_silence"] = True
+                    return "", file_to_send, _meta
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
