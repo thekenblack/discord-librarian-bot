@@ -376,8 +376,8 @@ class AILibrarianBot(discord.Client):
                 return
             reply_text = error_msg
 
-        # 에러 메시지면 어드민 알림 대기열에 추가
-        if reply_text and reply_text in self._error_messages:
+        # 에러 발생 시 어드민 알림
+        if _meta.get("error"):
             error_type = _meta.get("error") or "unknown"
             channel_name_short = getattr(message.channel, "name", "DM")
             self._queue_admin_notify(

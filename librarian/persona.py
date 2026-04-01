@@ -59,7 +59,7 @@ class Persona:
         self._messages = [
             msg.replace("{name}", name)
             for msg in _load_lines(os.path.join(messages_dir, "error.txt"))
-        ] or [""]
+        ] or ["..."]
 
     @property
     def error_message(self) -> str:
