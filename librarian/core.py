@@ -388,7 +388,7 @@ class AILibrarianBot(discord.Client):
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
         async def _send_reply(text, file=None, embed=None):
-            """reply 실패 시 channel.send로 폴백"""
+            """reply 실패 시 무시 (원본 삭제됨)"""
             try:
                 if file:
                     await message.reply(text, file=file)
@@ -400,15 +400,7 @@ class AILibrarianBot(discord.Client):
                 else:
                     await message.reply(text)
             except discord.HTTPException:
-                if file:
-                    await message.channel.send(text, file=file)
-                elif embed:
-                    if text:
-                        await message.channel.send(text, embed=embed)
-                    else:
-                        await message.channel.send(embed=embed)
-                else:
-                    await message.channel.send(text)
+                logger.info("reply 실패 (원본 삭제) → 무시")
 
         if file_to_send:
             await _send_reply(reply_text, file=file_to_send)
