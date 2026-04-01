@@ -1,0 +1,150 @@
+"""
+도서 학습: 파일을 Gemini에 넘겨서 내용 설명을 받고 book_knowledge에 저장
+"""
+
+import os
+import logging
+import asyncio
+from google import genai
+from google.genai import types
+from config import GEMINI_API_KEY, FILES_DIR, GEMINI_MODEL
+
+logger = logging.getLogger("BookLearning")
+
+# 지원 확장자
+SUPPORTED_EXTS = {".epub", ".pdf", ".txt"}
+
+
+def _extract_epub_text(file_path: str) -> str:
+    """epub에서 텍스트 추출"""
+    import ebooklib
+    from ebooklib import epub
+    from html.parser import HTMLParser
+
+    class _HTMLStripper(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.parts = []
+        def handle_data(self, data):
+            self.parts.append(data)
+        def get_text(self):
+            return "".join(self.parts)
+
+    try:
+        book = epub.read_epub(file_path, options={"ignore_ncx": True})
+    except KeyError as e:
+        if "toc.ncx" in str(e):
+            # toc.ncx 없는 EPUB3 — zipfile로 직접 파싱
+            import zipfile
+            texts = []
+            with zipfile.ZipFile(file_path) as z:
+                for name in z.namelist():
+                    if name.endswith((".html", ".xhtml", ".htm")):
+                        try:
+                            html = z.read(name).decode("utf-8", errors="replace")
+                            stripper = _HTMLStripper()
+                            stripper.feed(html)
+                            text = stripper.get_text().strip()
+                            if text:
+                                texts.append(text)
+                        except Exception:
+                            pass
+            return "\n\n".join(texts)
+        raise
+    texts = []
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        html = item.get_content().decode("utf-8", errors="replace")
+        stripper = _HTMLStripper()
+        stripper.feed(html)
+        text = stripper.get_text().strip()
+        if text:
+            texts.append(text)
+    return "\n\n".join(texts)
+
+
+async def learn_book(librarian_db, book_id: int, title: str, filename: str, stored_name: str):
+    """책 파일을 Gemini에 넘겨서 내용을 학습하고 book_knowledge에 저장"""
+
+    # 이미 학습했으면 건너뜀
+    if await librarian_db.has_book_knowledge(book_id):
+        logger.info(f"도서 학습 건너뜀 (이미 있음): 《{title}》")
+        return
+
+    file_path = os.path.join(FILES_DIR, stored_name)
+    if not os.path.exists(file_path):
+        logger.warning(f"도서 학습 실패 (파일 없음): 《{title}》 → {file_path}")
+        return
+
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in SUPPORTED_EXTS:
+        logger.info(f"도서 학습 건너뜀 (미지원 형식): 《{title}》 ({ext})")
+        return
+
+    try:
+        logger.info(f"도서 학습 시작: 《{title}》")
+
+        # pending 상태로 먼저 저장
+        await librarian_db.save_book_knowledge(book_id, "", source=title, status="pending")
+
+        prompt_text = (
+            f"이 책의 제목은 《{title}》이다. "
+            "사서가 이 책의 내용을 숙지할 수 있도록 상세하게 설명해. "
+            "핵심 주장, 주요 개념, 챕터별 내용, 인상적인 구절이나 수치를 빠짐없이 포함해."
+        )
+
+        # epub: 텍스트 추출 → 텍스트로 전달
+        # pdf/txt: 바이너리로 직접 전달
+        if ext == ".epub":
+            text = _extract_epub_text(file_path)
+            if not text:
+                logger.warning(f"도서 학습 실패 (텍스트 없음): 《{title}》")
+                return
+            logger.info(f"epub 텍스트 추출: {len(text):,}자")
+            parts = [
+                types.Part.from_text(text=text[:500000]),  # 50만자 제한 (안전)
+                types.Part.from_text(text=prompt_text),
+            ]
+        else:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            mime_type = "application/pdf" if ext == ".pdf" else "text/plain"
+            logger.info(f"파일 로드: {len(data):,} bytes")
+            parts = [
+                types.Part.from_bytes(data=data, mime_type=mime_type),
+                types.Part.from_text(text=prompt_text),
+            ]
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+
+        def _call_gemini():
+            return client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[types.Content(role="user", parts=parts)],
+                config=types.GenerateContentConfig(
+                    max_output_tokens=8192,
+                    temperature=0.3,
+                ),
+            )
+
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, _call_gemini)
+
+        result = ""
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.text:
+                    result += part.text
+
+        if result:
+            await librarian_db.update_book_knowledge(book_id, result, status="done")
+            logger.info(f"도서 학습 완료: 《{title}》 ({len(result):,}자)")
+        else:
+            await librarian_db.update_book_knowledge(book_id, "", status="failed")
+            logger.warning(f"도서 학습 실패 (빈 응답): 《{title}》")
+
+    except Exception as e:
+        try:
+            await librarian_db.update_book_knowledge(book_id, "", status="failed")
+        except Exception:
+            pass
+        logger.error(f"도서 학습 실패: 《{title}》 → {e}")
