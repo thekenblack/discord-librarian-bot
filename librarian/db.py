@@ -746,7 +746,7 @@ class LibrarianDB:
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
-    AXIS_DELTA_MAX = 5  # 1회 변화량 ±5, 범위 0~100
+    AXIS_DELTA_MAX = 10  # 보정 후 최종 변화 허용치 ±10
     NEUTRAL = 50  # 중립값
     AXIS_RANGE = (0, 100)
     # 시간 감쇠 반감기 (초)
@@ -859,7 +859,7 @@ class LibrarianDB:
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 
-    ACTIVE_DAYS = 7  # 최근 활동 기준 (일)
+    ACTIVE_HOURS = 24  # 최근 활동 기준 (시간)
 
     async def _get_server_avg(self, db, axis: str) -> float | None:
         """최근 활동 유저 기준 서버 평균 조회."""
@@ -867,7 +867,7 @@ class LibrarianDB:
             return None
         cursor = await db.execute(
             f"SELECT AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
-            (f"-{self.ACTIVE_DAYS} days",))
+            (f"-{self.ACTIVE_HOURS} hours",))
         row = await cursor.fetchone()
         return row["avg"] if row and row["avg"] is not None else None
 
