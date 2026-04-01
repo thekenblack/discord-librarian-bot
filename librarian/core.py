@@ -1132,11 +1132,31 @@ class AILibrarianBot(discord.Client):
                 text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
                 # <br> 태그만 제거 (디스코드 꺾쇠 보호)
                 text = re.sub(r'<br\s*/?>', '\n', text).strip()
+                # --- 구분선 이후 메타데이터 제거
+                text = re.sub(r'\n---\s*\n.*', '', text, flags=re.DOTALL).strip()
+                # 줄 단위 잔여물 제거
+                _clean_lines = []
+                for _line in text.split('\n'):
+                    _stripped = _line.strip()
+                    # 빈 줄은 유지
+                    if not _stripped:
+                        _clean_lines.append(_line)
+                        continue
+                    # 메타데이터/잔여물 줄 제거
+                    if re.match(r'^[\*_]*\s*감정\s*(변화|기록|:)', _stripped):
+                        continue
+                    if re.match(r'^function_call\s*:', _stripped, re.IGNORECASE):
+                        continue
+                    if re.match(r'^---\s*$', _stripped):
+                        continue
+                    if _stripped in ('/', '\\'):
+                        continue
+                    _clean_lines.append(_line)
+                text = '\n'.join(_clean_lines).strip()
                 # 잔여물 제거
-                text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드 (AI가 **제목** 대신 **** 출력)
+                text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
-                text = re.sub(r'^\s*/\s*$', '', text, flags=re.MULTILINE).strip()  # 슬래시만 있는 줄
                 text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()  # 연속 빈 줄 정리
                 # JSON/감정 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
                 # "감정:" 라벨 포함, 따옴표 없는 키도 매칭
