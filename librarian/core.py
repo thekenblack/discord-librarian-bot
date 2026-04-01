@@ -808,12 +808,6 @@ class AILibrarianBot(discord.Client):
                             logger.info(f"이모지 리액션 예약: {reaction_emoji}")
                         else:
                             logger.info(f"이모지 리액션 무시 (유효하지 않음): {reaction_emoji[:30]}")
-                    # 하위 호환: response에 이모지를 넣은 경우
-                    elif response_mode and response_mode not in ("normal", "ignore") and not _meta.get("reaction"):
-                        emojis = _extract_emojis(response_mode)
-                        if emojis and len(response_mode.strip()) <= 4:
-                            _meta["reaction"] = response_mode
-                            logger.info(f"이모지 리액션 예약 (response 폴백): {response_mode}")
 
                     result_parts = []
                     for k, v in current.items():
