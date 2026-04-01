@@ -799,14 +799,16 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"의도적 무응답: {reason}")
                         return "", None, _meta
 
-                    # response에 이모지가 있으면 리액션 예약 (답변도 계속 진행)
+                    # response가 순수 이모지일 때만 리액션 예약
                     if response_mode and response_mode not in ("normal", "ignore"):
                         emojis = _extract_emojis(response_mode)
-                        if emojis and not _meta.get("reaction"):
+                        joined = "".join(emojis).replace("\uFE0F", "")
+                        clean = response_mode.strip().replace("\uFE0F", "")
+                        if emojis and clean == joined and not _meta.get("reaction"):
                             _meta["reaction"] = response_mode
                             logger.info(f"이모지 리액션 예약: {response_mode}")
-                        elif not emojis:
-                            logger.info(f"이모지 리액션 무시 (유효하지 않음): {response_mode[:50]}")
+                        else:
+                            logger.info(f"이모지 리액션 무시 (순수 이모지 아님): {response_mode[:50]}")
 
                     result_parts = []
                     for k, v in current.items():
@@ -1175,9 +1177,13 @@ class AILibrarianBot(discord.Client):
                         if response_val and response_val not in ("normal",):
                             if response_val == "ignore":
                                 _meta["intentional_silence"] = True
-                            elif _extract_emojis(response_val) and not _meta.get("reaction"):
-                                _meta["reaction"] = response_val
-                                logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
+                            else:
+                                _fb_emojis = _extract_emojis(response_val)
+                                _fb_joined = "".join(_fb_emojis).replace("\uFE0F", "")
+                                _fb_clean = response_val.strip().replace("\uFE0F", "")
+                                if _fb_emojis and _fb_clean == _fb_joined and not _meta.get("reaction"):
+                                    _meta["reaction"] = response_val
+                                    logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
                     except Exception as e:
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
