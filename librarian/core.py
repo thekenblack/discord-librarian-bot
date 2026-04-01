@@ -1114,103 +1114,115 @@ class AILibrarianBot(discord.Client):
             import re
 
             def _strip_feeling(text):
-                """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
+                """줄 단위 후처리: 메타데이터 제거 + feel 미호출 시 폴백."""
                 nonlocal _had_inline_function
                 if not text:
                     return text
-                # feel(...) 인라인 제거
-                if re.search(r'feel\s*\([^)]*\)', text):
-                    _had_inline_function = True
-                text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
-                # /feel ... 슬래시 형태 제거
-                if re.search(r'/feel\s+\S', text):
-                    _had_inline_function = True
-                text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
-                # (feel: reason=..., ...) 괄호 형태 제거
-                if re.search(r'[\(\（]\s*feel\s*:', text):
-                    _had_inline_function = True
-                text = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', text).strip()
-                # *(감정 기록: ...)* 형태 제거
-                if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
-                    _had_inline_function = True
-                text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
-                # <br> 태그만 제거 (디스코드 꺾쇠 보호)
-                text = re.sub(r'<br\s*/?>', '\n', text).strip()
-                # --- 구분선 이후 메타데이터 제거
-                text = re.sub(r'\n---\s*\n.*', '', text, flags=re.DOTALL).strip()
-                # 줄 단위 잔여물 제거
-                _clean_lines = []
-                for _line in text.split('\n'):
-                    _stripped = _line.strip()
-                    # 빈 줄은 유지
-                    if not _stripped:
-                        _clean_lines.append(_line)
+
+                # --- 이후 전부 자르기 (줄 단위로 처리)
+                cut_lines = text.split('\n')
+                final_lines = []
+                after_separator = False
+                for line in cut_lines:
+                    stripped = line.strip()
+                    if re.match(r'^---\s*$', stripped):
+                        after_separator = True
                         continue
-                    # 메타데이터/잔여물 줄 제거
-                    if re.match(r'^[\*_]*\s*감정\s*(변화|기록|:)', _stripped):
+                    if after_separator:
                         continue
-                    if re.match(r'^function_call\s*:', _stripped, re.IGNORECASE):
+                    final_lines.append(line)
+                text = '\n'.join(final_lines)
+
+                # 줄 단위 정리
+                result_lines = []
+                for line in text.split('\n'):
+                    stripped = line.strip()
+
+                    # 빈 줄 유지
+                    if not stripped:
+                        result_lines.append(line)
                         continue
-                    if re.match(r'^---\s*$', _stripped):
+
+                    # feel(...) 인라인
+                    if re.search(r'feel\s*\([^)]*\)', stripped):
+                        _had_inline_function = True
+                    cleaned = re.sub(r'feel\s*\([^)]*\)', '', stripped)
+                    # /feel ...
+                    if re.search(r'/feel\s+\S', cleaned):
+                        _had_inline_function = True
+                    cleaned = re.sub(r'/feel\s+.*', '', cleaned)
+                    # (feel: reason=..., ...)
+                    if re.search(r'[\(\（]\s*feel\s*:', cleaned):
+                        _had_inline_function = True
+                    cleaned = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', cleaned)
+                    # [mood:XX]
+                    cleaned = re.sub(r'\[mood:[+-]?\d+\]', '', cleaned)
+                    # **** 빈 볼드
+                    cleaned = re.sub(r'\*\*\*\*', '', cleaned)
+                    # <br>
+                    cleaned = re.sub(r'<br\s*/?>', '', cleaned)
+
+                    cleaned = cleaned.strip()
+
+                    # 줄 전체가 메타데이터인 경우 제거
+                    if not cleaned:
                         continue
-                    if _stripped in ('/', '\\'):
+                    if re.match(r'^[\*_]*\s*감정\s*(변화|기록|:)', cleaned):
                         continue
-                    _clean_lines.append(_line)
-                text = '\n'.join(_clean_lines).strip()
-                # 잔여물 제거
-                text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드
-                text = re.sub(r'\[\s*\]', '', text).strip()  # []
-                text = re.sub(r'\{\s*\}', '', text).strip()  # {}
-                text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()  # 연속 빈 줄 정리
-                # JSON/감정 블록 파싱 + 실행 + 제거 (feel을 텍스트로 출력한 경우)
-                # "감정:" 라벨 포함, 따옴표 없는 키도 매칭
-                json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
-                if json_match:
-                    _had_inline_function = True
-                if json_match and not ("feel" in _tool_used):
-                    try:
-                        import json as _json
-                        raw = json_match.group()
-                        # "감정:" 라벨 제거
-                        raw = re.sub(r'^감정\s*:\s*', '', raw)
-                        # 따옴표 없는 키를 따옴표로 감싸기
-                        raw = re.sub(r'(\w+)\s*:', r'"\1":', raw)
-                        # +숫자를 숫자로 (JSON은 +를 안 받음)
-                        raw = re.sub(r':\s*\+(\d)', r': \1', raw)
-                        feel_json = _json.loads(raw)
-                        reason = feel_json.pop("reason", "")
-                        response_val = feel_json.pop("response", None)
-                        reaction_val = feel_json.pop("reaction", None)
-                        changes = {}
-                        for axis in self.librarian_db.ALL_AXES:
-                            prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
-                            if prefixed in feel_json:
-                                try:
-                                    changes[axis] = int(feel_json[prefixed])
-                                except (ValueError, TypeError):
-                                    pass
-                        if changes:
-                            asyncio.create_task(
-                                self.librarian_db.update_emotion(
-                                    changes, target_user_id=user_id,
-                                    target_user_name=user_name, reason=reason or "json fallback"))
-                            _tool_used.add("feel")
-                            logger.info(f"감정(JSON 폴백): {changes} | {reason}")
-                        # response 처리
-                        if response_val == "ignore":
-                            _meta["intentional_silence"] = True
-                        # reaction 처리
-                        if reaction_val and not _meta.get("reaction"):
-                            _fb_emojis = _extract_emojis(reaction_val)
-                            if _fb_emojis:
-                                _meta["reaction"] = reaction_val
-                                logger.info(f"이모지 리액션(JSON 폴백): {reaction_val}")
-                    except Exception as e:
-                        logger.warning(f"feel JSON 파싱 실패: {e}")
-                if json_match:
-                    text = (text[:json_match.start()] + text[json_match.end():]).strip()
-                # [mood:XX] 태그 제거 (v3 레거시)
-                text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
+                    if re.match(r'^function_call\s*:', cleaned, re.IGNORECASE):
+                        continue
+                    if cleaned in ('/', '\\', '[]', '{}'):
+                        continue
+
+                    # JSON 감정 블록 감지 + 실행 (한 줄에 {reason...} 가 있는 경우)
+                    json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', cleaned)
+                    if json_match:
+                        _had_inline_function = True
+                        if not ("feel" in _tool_used):
+                            try:
+                                import json as _json
+                                raw = json_match.group()
+                                raw = re.sub(r'^감정\s*:\s*', '', raw)
+                                raw = re.sub(r'(\w+)\s*:', r'"\1":', raw)
+                                raw = re.sub(r':\s*\+(\d)', r': \1', raw)
+                                feel_json = _json.loads(raw)
+                                reason = feel_json.pop("reason", "")
+                                response_val = feel_json.pop("response", None)
+                                reaction_val = feel_json.pop("reaction", None)
+                                changes = {}
+                                for axis in self.librarian_db.ALL_AXES:
+                                    prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
+                                    if prefixed in feel_json:
+                                        try:
+                                            changes[axis] = int(feel_json[prefixed])
+                                        except (ValueError, TypeError):
+                                            pass
+                                if changes:
+                                    asyncio.create_task(
+                                        self.librarian_db.update_emotion(
+                                            changes, target_user_id=user_id,
+                                            target_user_name=user_name, reason=reason or "json fallback"))
+                                    _tool_used.add("feel")
+                                    logger.info(f"감정(JSON 폴백): {changes} | {reason}")
+                                if response_val == "ignore":
+                                    _meta["intentional_silence"] = True
+                                if reaction_val and not _meta.get("reaction"):
+                                    _fb_emojis = _extract_emojis(reaction_val)
+                                    if _fb_emojis:
+                                        _meta["reaction"] = reaction_val
+                                        logger.info(f"이모지 리액션(JSON 폴백): {reaction_val}")
+                            except Exception as e:
+                                logger.warning(f"feel JSON 파싱 실패: {e}")
+                        # JSON 부분만 제거, 나머지 텍스트 보존
+                        cleaned = (cleaned[:json_match.start()] + cleaned[json_match.end():]).strip()
+                        if not cleaned:
+                            continue
+
+                    result_lines.append(cleaned)
+
+                text = '\n'.join(result_lines).strip()
+                # 연속 빈 줄 정리
+                text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
                 return text
 
             reply = _strip_feeling(reply)
