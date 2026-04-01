@@ -408,10 +408,10 @@ class AILibrarianBot(discord.Client):
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
         _t2 = _time.monotonic()
-        reply_chain, seen_filenames, chain_attachments = await self._build_reply_chain(message)
+        reply_chain, seen_filenames, chain_attachments, chain_anchor = await self._build_reply_chain(message)
         logger.info(f"[타이밍] reply_chain: {_time.monotonic()-_t2:.2f}s ({len(reply_chain)}건)")
         _t3 = _time.monotonic()
-        pre_context = await self._build_pre_context(message)
+        pre_context = await self._build_pre_context(message, anchor=chain_anchor)
         logger.info(f"[타이밍] pre_context: {_time.monotonic()-_t3:.2f}s ({len(pre_context)}건)")
         logger.info(f"[타이밍] 전처리 총: {_time.monotonic()-_t0:.2f}s")
 
@@ -1476,11 +1476,12 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
-    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""
+    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. anchor도 반환."""
         chain = []
         seen_filenames = []
         chain_attachments = []
+        raw_msgs = []
         current = message
         while current.reference:
             ref = current.reference.resolved
@@ -1491,19 +1492,29 @@ class AILibrarianBot(discord.Client):
                     break
             if not ref:
                 break
+            raw_msgs.append(ref)
+            current = ref
+
+        # extras를 동시에 조회
+        if raw_msgs:
+            extras_list = await asyncio.gather(*(self._extract_extras(m) for m in raw_msgs))
+        else:
+            extras_list = []
+
+        for ref, extras in zip(raw_msgs, extras_list):
             if self.user and ref.author.id == self.user.id:
                 name = self.persona.name
             else:
                 name = f"{ref.author.display_name}(<@{ref.author.id}>)"
             content = ref.content[:150]
-            extras = await self._extract_extras(ref)
             if extras:
                 content = f"{content} {extras}" if content else extras
             for att in ref.attachments:
                 seen_filenames.append(att.filename)
                 chain_attachments.append(att)
             chain.append(f"{name}: {content}")
-            current = ref
+
+        anchor = raw_msgs[-1] if raw_msgs else message
         chain.reverse()
 
         if len(chain) > 10:
@@ -1511,30 +1522,24 @@ class AILibrarianBot(discord.Client):
             tail = chain[-5:]
             chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
 
-        return chain, seen_filenames, chain_attachments
+        return chain, seen_filenames, chain_attachments, anchor
 
-    async def _build_pre_context(self, message, limit=10) -> list[str]:
-        """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
-        anchor = message
-        while anchor.reference:
-            ref = anchor.reference.resolved
-            if not ref and anchor.reference.message_id:
-                try:
-                    ref = await anchor.channel.fetch_message(anchor.reference.message_id)
-                except Exception:
-                    break
-            if not ref:
-                break
-            anchor = ref
+    async def _build_pre_context(self, message, limit=10, anchor=None) -> list[str]:
+        """답글 체인 시작점 직전 또는 멘션 직전 메시지들. anchor는 _build_reply_chain에서 받음."""
+        if anchor is None:
+            anchor = message
 
+        msgs = [msg async for msg in anchor.channel.history(limit=limit, before=anchor)]
+        if not msgs:
+            return []
+        extras_list = await asyncio.gather(*(self._extract_extras(m) for m in msgs))
         lines = []
-        async for msg in anchor.channel.history(limit=limit, before=anchor):
+        for msg, extras in zip(msgs, extras_list):
             if self.user and msg.author.id == self.user.id:
                 name = self.persona.name
             else:
                 name = f"{msg.author.display_name}(<@{msg.author.id}>)"
             content = msg.content[:150]
-            extras = await self._extract_extras(msg)
             if extras:
                 content = f"{content} {extras}" if content else extras
             lines.append(f"{name}: {content}")
