@@ -63,7 +63,6 @@ v4 초기:
 
 ## IRRELEVANT (현재 안 쓰는 시스템)
 
-- patches/ 시스템 (startup.py에서 실행. v4 이후 새 패치 없음. 마이그레이션으로 대체)
 - add_knowledge 도구 (선언만 있고 실사용 0. memorize로 통합됨)
 - add_entry_alias 도구 (라이브러리 엔트리 별칭. 사용 실적 없음)
 - customs 테이블 (knowledge_base와 별도로 존재. 패치로 초기 데이터만 넣고 이후 추가 없음)
