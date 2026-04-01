@@ -497,8 +497,8 @@ class AILibrarianBot(discord.Client):
         if file_to_send:
             await _send_reply(reply_text, file=file_to_send)
         elif reply_text:
-            # 커스텀 이모지: 현재 서버에 없으면 제거
             import re as _re
+            # 커스텀 이모지: 현재 서버에 없으면 제거
             if message.guild:
                 guild_emoji_ids = {str(e.id) for e in message.guild.emojis}
                 def _check_emoji(m):
