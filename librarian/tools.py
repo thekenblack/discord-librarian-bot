@@ -19,7 +19,6 @@ def parse_url(url: str) -> dict:
     host = (parsed.hostname or "").removeprefix("www.").removeprefix("m.")
 
     if host in ("youtube.com", "youtu.be"):
-        result["platform"] = "youtube"
         if host == "youtu.be":
             content_id = parsed.path.lstrip("/").split("/")[0]
         else:
@@ -31,7 +30,8 @@ def parse_url(url: str) -> dict:
             else:
                 content_id = None
         result["content_id"] = content_id
-        result["normalized"] = f"youtube:{content_id}" if content_id else normalize_url(url)
+        result["platform"] = "youtube_video" if content_id else "youtube"
+        result["normalized"] = f"youtu.be/{content_id}" if content_id else normalize_url(url)
     else:
         result["normalized"] = normalize_url(url)
 
