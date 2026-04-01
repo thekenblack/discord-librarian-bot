@@ -16,7 +16,7 @@ from library.db import LibraryDB
 from librarian.db import LibrarianDB
 from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR
 from librarian.persona import Persona
-from librarian.tools import library_tools, execute_tool, normalize_url, parse_url
+from librarian.tools import library_tools, director_tools, evaluator_tools, execute_tool, normalize_url, parse_url
 from librarian import server_log
 from librarian import bitcoin_data
 # from librarian.mood import MoodSystem  # v4: feel 도구 + DB로 대체
@@ -559,28 +559,150 @@ class AILibrarianBot(discord.Client):
                           pre_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None) -> tuple[str, discord.File | None, dict]:
-        """Gemini에게 질문하고 응답 + 파일(있으면) + 메타 반환"""
+        """v5 3레이어 오케스트레이션: Director → Character → Evaluator"""
+        import time as _time
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
         if user_id not in self.chat_histories:
             self.chat_histories[user_id] = []
         history = self.chat_histories[user_id]
 
-        # 프롬프트 조립
+        try:
+            # ── Phase 1: Director (연출가) ──
+            _td0 = _time.monotonic()
+            instruction, file_to_send, director_meta = await self._run_director(
+                user_id=user_id, user_name=user_name, user_text=user_text,
+                guild=guild, reply_chain=reply_chain, pre_context=pre_context,
+                attachments=attachments, seen_filenames=seen_filenames,
+            )
+            _meta["tools_called"] = director_meta.get("tools_called", [])
+            _meta["tool_results"] = director_meta.get("tool_results", [])
+            if director_meta.get("shared_urls"):
+                _meta["shared_urls"] = director_meta["shared_urls"]
+            if director_meta.get("reaction"):
+                _meta["reaction"] = director_meta["reaction"]
+            logger.info(f"[Director] 완료 ({_time.monotonic()-_td0:.2f}s) | 지시서: {instruction[:200] if instruction else '(없음)'}")
+
+            # 응답 모드 판별
+            import re as _re
+            if _re.search(r'(?:응답\s*모드\s*[:：]\s*)?무응답', instruction or ""):
+                logger.info("[Director] 응답 모드: 무응답")
+                _meta["intentional_silence"] = True
+                return "", file_to_send, _meta
+
+            reaction_only_match = _re.search(r'(?:응답\s*모드\s*[:：]\s*)?리액션만\s*[:：]?\s*(.+)', instruction or "")
+            if reaction_only_match:
+                emoji_str = reaction_only_match.group(1).strip()
+                emojis = _extract_emojis(emoji_str)
+                if emojis:
+                    _meta["reaction"] = emoji_str
+                    logger.info(f"[Director] 응답 모드: 리액션만 → {emoji_str}")
+                    return "", file_to_send, _meta
+
+            # ── Phase 2: Character (배우) ──
+            _tc0 = _time.monotonic()
+
+            if user_text:
+                user_content = f"{user_name}: {user_text}"
+            else:
+                user_content = f"({user_name}이 빈 멘션을 보냈다.)"
+
+            history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
+
+            reply = await self._run_character(
+                user_id=user_id, user_name=user_name,
+                user_text=user_text, instruction=instruction,
+            )
+            logger.info(f"[Character] 완료 ({_time.monotonic()-_tc0:.2f}s) | 응답: {reply[:100] if reply else '(빈 응답)'}")
+
+            if not reply:
+                # 빈 응답 → user 턴 롤백
+                if history and history[-1].role == "user":
+                    history.pop()
+                _meta["intentional_silence"] = True
+                return "", file_to_send, _meta
+
+            # 히스토리에 모델 응답 추가
+            history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+            self._trim_history(user_id)
+
+            # ── Phase 3: Evaluator (평론가) — 백그라운드 ──
+            if reply:
+                asyncio.create_task(self._run_evaluator(
+                    user_id=user_id, user_name=user_name,
+                    user_text=user_text, bot_reply=reply,
+                ))
+
+            if len(reply) > 2000:
+                reply = reply[:1997] + "..."
+
+            return reply, file_to_send, _meta
+
+        except ClientError as e:
+            logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
+            self.chat_histories[user_id] = []
+            if e.status == "RESOURCE_EXHAUSTED":
+                msg = str(e)
+                if "PerDay" in msg or "per_day" in msg:
+                    logger.warning("일일 한도 초과 (모든 키 소진)")
+                    _meta["error"] = "daily_limit"
+                    return self.persona.error_message, None, _meta
+                else:
+                    logger.warning("분당 한도 초과")
+                    _meta["error"] = "rate_limit"
+                    return self.persona.error_message, None, _meta
+            if e.status == "INVALID_ARGUMENT":
+                logger.warning("INVALID_ARGUMENT → 히스토리 초기화 후 클린 재시도")
+                try:
+                    clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
+                    retry_config = types.GenerateContentConfig(
+                        system_instruction=self.persona.persona_text,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=0.8,
+                    )
+                    response = await self._call_gemini(clean_message, retry_config)
+                    reply = self._extract_reply(response)
+                    if reply:
+                        logger.info(f"[클린 재시도] 응답: {reply}")
+                        return reply, None, _meta
+                except Exception as retry_e:
+                    logger.warning(f"[클린 재시도] 실패: {retry_e}")
+            _meta["error"] = f"client_error:{e.status}"
+            return self.persona.error_message, None, _meta
+
+        except Exception as e:
+            self.chat_histories[user_id] = []
+            logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
+            _meta["error"] = f"{type(e).__name__}"
+            return self.persona.error_message, None, _meta
+
+    # ── Layer 1: Director (연출가) ────────────────────────
+
+    async def _run_director(self, user_id: str, user_name: str, user_text: str,
+                            guild=None, reply_chain: list[str] = None,
+                            pre_context: list[str] = None,
+                            attachments: list = None,
+                            seen_filenames: list[str] = None,
+                            ) -> tuple[str, discord.File | None, dict]:
+        """Director: 도구 실행 + 지시서 생성. (instruction, file_to_send, meta) 반환."""
         import time as _time
+        _meta = {"tools_called": [], "tool_results": []}
+
+        # ── 프롬프트 조립 ──
         _tp0 = _time.monotonic()
         parts = []
-        parts.append(self.persona.persona_text)
 
         _tp1 = _time.monotonic()
         catalog = await self._build_catalog()
-        logger.info(f"[타이밍] catalog: {_time.monotonic()-_tp1:.2f}s")
+        logger.info(f"[Director][타이밍] catalog: {_time.monotonic()-_tp1:.2f}s")
         _tp2 = _time.monotonic()
         memories_text, memory_ids = await self._build_memories(user_name)
-        logger.info(f"[타이밍] memories: {_time.monotonic()-_tp2:.2f}s")
-        prompt = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
-        prompt_no_memories = self.persona.prompt_text.replace("{library_catalog}", catalog).replace("{learned_memories}", "(기억 없음)")
-        parts.append(prompt)
+        logger.info(f"[Director][타이밍] memories: {_time.monotonic()-_tp2:.2f}s")
+
+        # Director 전용 프롬프트 (director.txt + functioning.txt)
+        director_base = self.persona.director_text or self.persona.prompt_text
+        director_prompt = director_base.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
+        parts.append(director_prompt)
 
         # 상황 정보
         admin_names = []
@@ -596,7 +718,7 @@ class AILibrarianBot(discord.Client):
         if _emo:
             _emo_parts.append(" ".join(f"{k}:{_emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
         _emo_parts.append(" ".join(f"{k}:{v:.1f}" for k, v in _bot_emo.items()))
-        logger.info(f"대화 상대: {user_name} (ID: {user_id}) → {role} | {' | '.join(_emo_parts) or '첫 방문'}")
+        logger.info(f"[Director] 대화 상대: {user_name} (ID: {user_id}) → {role} | {' | '.join(_emo_parts) or '첫 방문'}")
 
         from datetime import datetime as dt
         import zoneinfo
@@ -625,21 +747,15 @@ class AILibrarianBot(discord.Client):
 
         # 감정 상태
         _te0 = _time.monotonic()
-        import json as _json
         emo_lines = []
-
-        # 공통/전역 감정
         bot_emo = await self.librarian_db.get_bot_emotion()
         emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
-
-        # 현재 유저 감정
         user_emo = await self.librarian_db.get_user_emotion(user_id)
         if user_emo:
             emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
         else:
             emo_lines.append(f"{user_name}: 첫 방문")
 
-        # 답글 체인 참여 유저 감정 (bulk 조회)
         chain_user_ids = set()
         if reply_chain:
             import re as _re
@@ -655,50 +771,38 @@ class AILibrarianBot(discord.Client):
 
         emo_block = "## 감정 (50이 중립, 0 ~ 100)\n" + "\n".join(emo_lines)
         parts.append(emo_block)
-        logger.info(f"[타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
-        logger.info(f"[타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
+        logger.info(f"[Director][타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
+        logger.info(f"[Director][타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
 
         if pre_context:
             parts.append("## 직전 대화\n" + "\n".join(pre_context))
-            logger.info(f"직전 대화: {len(pre_context)}건")
+            logger.info(f"[Director] 직전 대화: {len(pre_context)}건")
 
         if reply_chain:
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
-            logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
+            logger.info(f"[Director] 답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # search 중복 제거용 ID 수집 (프롬프트에는 안 넣음 — 토큰 절약)
+        # search 중복 제거용 ID 수집
         _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
         _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
         _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
-        parts.append(self.persona.reminder_text)
-        parts.append(self.persona.character_text)
-
         dynamic_prompt = "\n\n".join(p for p in parts if p)
-        logger.info(f"프롬프트 길이: {len(dynamic_prompt)}자")
+        logger.info(f"[Director] 프롬프트 길이: {len(dynamic_prompt)}자")
 
-        clean_parts = [p for p in parts
-                       if not p.startswith("## 직전 대화") and not p.startswith("## 답글 흐름")]
-        clean_prompt = "\n\n".join(p for p in clean_parts if p)
-
-        bare_parts = [self.persona.persona_text, prompt_no_memories, info_block,
-                      self.persona.reminder_text, self.persona.persona_text]
-        bare_prompt = "\n\n".join(p for p in bare_parts if p)
-
+        # ── Director 유저 메시지 ──
         if user_text:
             user_content = f"{user_name}: {user_text}"
         else:
             user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
-        history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
-        _tool_used = set()  # 모든 도구 1회 제한 (도구 호출 + 인라인 폴백 공유)
-
+        _tool_used = set()  # 도구 1회 제한
         file_to_send = None
 
-        def _make_config(temp=0.8):
-            """사용한 도구를 제외한 config 생성."""
-            all_decls = library_tools[0].function_declarations
+        def _make_director_config(temp=0.8):
+            """사용한 도구를 제외한 Director config 생성."""
+            all_decls = director_tools[0].function_declarations
             filtered = [d for d in all_decls if d.name not in _tool_used]
             tools = [types.Tool(function_declarations=filtered)] if filtered else None
             return types.GenerateContentConfig(
@@ -708,19 +812,435 @@ class AILibrarianBot(discord.Client):
                 temperature=temp,
             )
 
-        config = _make_config(0.8)
+        config = _make_director_config(0.8)
 
+        # Director는 히스토리 없이 단발 호출
+        loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
+
+        logger.info(f"[Director] API 호출 (temperature=0.8)")
+        response = await self._call_gemini(loop_contents, config)
+        logger.info("[Director] API 응답 수신")
+
+        # ── 도구 루프 (최대 10회) ──
+        for loop_i in range(10):
+            if not response.candidates or not response.candidates[0].content.parts:
+                logger.info(f"[Director] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
+                break
+
+            fc = None
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    fc = part.function_call
+                    break
+            if not fc:
+                logger.info(f"[Director] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
+                break
+
+            logger.info(f"[Director] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
+            _meta["tools_called"].append(fc.name)
+
+            # web_search 특수 처리
+            if fc.name == "web_search":
+                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
+                logger.info(f"[Director] 웹 검색: {query}")
+
+                # 캐시 확인
+                cached = await self.librarian_db.get_web_by_query(query)
+                if cached:
+                    logger.info(f"[Director] 웹 캐시 히트: {query}")
+                    web_ids.append(cached["id"])
+                    tool_data = {"result": cached["result"]}
+                    _meta["tool_results"].append(f"web_cache:{cached['result']}")
+                    loop_contents.append(response.candidates[0].content)
+                    loop_contents.append(types.Content(
+                        role="user",
+                        parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
+                    ))
+                    try:
+                        response = await self._call_gemini(loop_contents, config)
+                    except Exception as e:
+                        logger.warning(f"[Director] 웹 캐시 후 API 에러: {e}")
+                        break
+                    continue
+
+                from librarian.tools import google_search_tool
+                web_config = types.GenerateContentConfig(
+                    system_instruction=dynamic_prompt,
+                    tools=google_search_tool,
+                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                    temperature=1.0,
+                )
+                web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                web_result = ""
+                try:
+                    web_response = await self._call_gemini(web_query, web_config)
+                    web_result = self._extract_reply(web_response)
+                except Exception as e:
+                    logger.warning(f"[Director] 웹 검색 실패: {e}")
+
+                if web_result:
+                    logger.info(f"[Director] 웹 검색 결과: {web_result}")
+                    saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
+                    if saved_id:
+                        web_ids.append(saved_id)
+                    tool_data = {"result": web_result}
+                else:
+                    tool_data = {"result": f"'{query}' 검색 결과 없음"}
+
+                _meta["tool_results"].append(f"web:{web_result}")
+                loop_contents.append(response.candidates[0].content)
+                loop_contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
+                ))
+                try:
+                    response = await self._call_gemini(loop_contents, config)
+                except Exception as e:
+                    logger.warning(f"[Director] 웹 검색 후 API 에러: {e}")
+                    break
+                continue
+
+            # recognize_media 특수 처리
+            if fc.name == "recognize_media":
+                att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
+                media_result = ""
+                stored_name = None
+                saved_media_id = None
+                if att_idx < len(self._current_attachments):
+                    att = self._current_attachments[att_idx]
+                    ct = att.content_type or ""
+
+                    cached = None
+                    data = None
+                    file_hash = None
+                    if ct.startswith("image/") or ct == "application/pdf":
+                        data = await att.read()
+                        import hashlib
+                        file_hash = hashlib.sha256(data).hexdigest()
+                        cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                              or await self.librarian_db.get_media_by_filename(att.filename)
+                    else:
+                        cached = await self.librarian_db.get_media_by_filename(att.filename)
+
+                    if cached:
+                        logger.info(f"[Director] 미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
+                        media_result = cached["result"]
+                        stored_name = cached.get("stored_name")
+                        saved_media_id = cached["id"]
+                    elif ct.startswith("image/") or ct == "application/pdf":
+                        logger.info(f"[Director] 미디어 인식: {att.filename} ({ct})")
+                        try:
+                            media_parts = [
+                                types.Part.from_bytes(data=data, mime_type=ct),
+                                types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                            ]
+                            media_config = types.GenerateContentConfig(
+                                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                                temperature=0.5,
+                            )
+                            media_response = await self._call_gemini(
+                                [types.Content(role="user", parts=media_parts)],
+                                media_config,
+                            )
+                            media_result = self._extract_reply(media_response)
+                            if media_result:
+                                stored_name = None
+                                try:
+                                    os.makedirs(MEDIA_DIR, exist_ok=True)
+                                    import uuid
+                                    ext = os.path.splitext(att.filename)[1] or ""
+                                    stored_name = f"{uuid.uuid4().hex}{ext}"
+                                    with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                        mf.write(data)
+                                    logger.info(f"[Director] 미디어 저장: {att.filename} → {stored_name}")
+                                except Exception as e:
+                                    logger.warning(f"[Director] 미디어 파일 저장 실패: {e}")
+                                    stored_name = None
+                                saved_media_id = await self.librarian_db.save_media_result(
+                                    att.filename, media_result, user_name=user_name,
+                                    uploader=user_name, stored_name=stored_name,
+                                    file_hash=file_hash)
+                                if saved_media_id:
+                                    media_ids.append(saved_media_id)
+                        except Exception as e:
+                            logger.warning(f"[Director] 미디어 인식 실패: {e}")
+                    else:
+                        media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                else:
+                    media_result = "첨부파일이 없어."
+
+                tool_data = {"result": media_result if media_result else "인식 실패"}
+                if media_result and stored_name:
+                    tool_data["media_id"] = saved_media_id
+                logger.info(f"[Director] 미디어 인식 결과: {media_result}")
+                _meta["tool_results"].append(f"media:{media_result}")
+                loop_contents.append(response.candidates[0].content)
+                loop_contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_function_response(name="recognize_media", response=tool_data)],
+                ))
+                try:
+                    response = await self._call_gemini(loop_contents, config)
+                except Exception as e:
+                    logger.warning(f"[Director] 미디어 인식 후 API 에러: {e}")
+                    break
+                continue
+
+            # recognize_link 특수 처리
+            if fc.name == "recognize_link":
+                url = (dict(fc.args) if fc.args else {}).get("url", "")
+                link_result = ""
+                parsed = parse_url(url)
+                normalized = parsed["normalized"]
+
+                _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                _url_path = url.split("?")[0].split("#")[0].lower()
+                _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
+
+                if _is_image_url:
+                    try:
+                        img_parts = [
+                            types.Part(file_data=types.FileData(file_uri=url)),
+                            types.Part.from_text(text="이 이미지를 설명해."),
+                        ]
+                        img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                        img_response = await self._call_gemini(
+                            [types.Content(role="user", parts=img_parts)], img_config)
+                        link_result = self._extract_reply(img_response)
+                        if link_result:
+                            await self.librarian_db.save_url_result(
+                                normalized, url, link_result, user_name=user_name, status="done")
+                            logger.info(f"[Director] 이미지 URL 동기 인식 완료: {url}")
+                    except Exception as e:
+                        logger.warning(f"[Director] 이미지 URL 인식 실패 ({url}): {e}")
+
+                if not link_result:
+                    cached = await self.librarian_db.get_url_by_normalized(normalized)
+                    if cached:
+                        if cached.get("status") == "pending":
+                            logger.info(f"[Director] 링크 인식 중: {url}")
+                            link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
+                        elif cached.get("status") == "failed":
+                            await self.librarian_db.update_url_result(normalized, "", status="pending")
+                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                            link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                            logger.info(f"[Director] 링크 재시도: {url}")
+                        else:
+                            logger.info(f"[Director] 링크 캐시 히트: {url}")
+                            link_result = cached["result"]
+
+                if not link_result:
+                    await self.librarian_db.save_url_result(
+                        normalized, url, "", user_name=user_name, status="pending")
+                    asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                    link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                    logger.info(f"[Director] 링크 인식 백그라운드 시작: {url}")
+
+                tool_data = {"result": link_result if link_result else "인식 실패"}
+                logger.info(f"[Director] 링크 인식 결과: {link_result}")
+                _meta["tool_results"].append(f"link:{link_result}")
+                loop_contents.append(response.candidates[0].content)
+                loop_contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_function_response(name="recognize_link", response=tool_data)],
+                ))
+                try:
+                    response = await self._call_gemini(loop_contents, config)
+                except Exception as e:
+                    logger.warning(f"[Director] 링크 인식 후 API 에러: {e}")
+                    break
+                continue
+
+            # 일반 도구 실행 (search, deliver, attach, memorize_alias, forget_alias)
+            tool_args = dict(fc.args) if fc.args else {}
+            if fc.name == "search":
+                tool_args["_user_id"] = user_id
+                tool_args["_user_name"] = user_name
+                tool_args["_exclude_memory_ids"] = memory_ids
+                tool_args["_exclude_web_ids"] = web_ids
+                tool_args["_exclude_url_ids"] = url_ids
+                tool_args["_exclude_media_ids"] = media_ids
+            tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+            tool_data = json.loads(tool_result)
+            logger.info(f"[Director] 도구 결과: {tool_result}")
+            _meta["tool_results"].append(tool_result)
+
+            if tool_data.get("_action") == "deliver":
+                save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
+                if os.path.exists(save_path):
+                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
+                    await self.library_db.increment_download(tool_data["file_id"])
+
+            if tool_data.get("_action") == "attach":
+                save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
+                if os.path.exists(save_path):
+                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
+
+            if tool_data.get("_action") == "share_url":
+                shared_url = tool_data.get("url", "")
+                if shared_url:
+                    _meta.setdefault("shared_urls", []).append(shared_url)
+
+            # 사용한 도구 제거 + config 갱신
+            _tool_used.add(fc.name)
+            if fc.name in ("deliver", "attach"):
+                _tool_used.add("deliver")
+                _tool_used.add("attach")
+            config = _make_director_config(0.8)
+
+            loop_contents.append(response.candidates[0].content)
+            loop_contents.append(types.Content(
+                role="user",
+                parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
+            ))
+
+            try:
+                response = await self._call_gemini(loop_contents, config)
+            except Exception as e:
+                logger.warning(f"[Director] 도구 후 API 에러: {e}")
+                break
+
+        # Director의 최종 텍스트 = 지시서
+        instruction = self._extract_reply(response)
+        return instruction, file_to_send, _meta
+
+    # ── Layer 2: Character (배우) ─────────────────────────
+
+    async def _run_character(self, user_id: str, user_name: str,
+                             user_text: str, instruction: str) -> str:
+        """Character: 지시서 + 페르소나로 대사 생성. 도구 없음."""
+        history = self.chat_histories.get(user_id, [])
+
+        # 시스템 프롬프트: persona + character + 지시서 + reminder
+        sys_parts = []
+        if self.persona.persona_text:
+            sys_parts.append(self.persona.persona_text)
+        if self.persona.character_text:
+            sys_parts.append(self.persona.character_text)
+        if instruction:
+            sys_parts.append(f"## 연출 지시\n{instruction}")
+        if self.persona.reminder_text:
+            sys_parts.append(self.persona.reminder_text)
+        system_prompt = "\n\n".join(p for p in sys_parts if p)
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            tools=None,  # Character는 도구 없음
+            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+            temperature=0.8,
+        )
+
+        # 히스토리 포함 호출
+        loop_contents = list(history)
+        logger.info(f"[Character] API 호출 (temperature=0.8, 히스토리={len(loop_contents)}턴)")
+        response = await self._call_gemini(loop_contents, config)
+        reply = self._extract_reply(response)
+
+        if reply:
+            logger.info(f"[Character] 1차 응답: {reply[:100]}")
+
+        # 반복 검사 + 리트라이
+        def _needs_retry(r):
+            if not r:
+                return True
+            is_rep = self._is_repeat(history, r)
+            if is_rep:
+                logger.info(f"[Character] 반복 감지: {r[:50]}")
+            return is_rep
+
+        if _needs_retry(reply):
+            # 2차: 높은 temperature, 같은 지시서
+            logger.warning("[Character] 2차 시도 (temperature=0.9)")
+            try:
+                config_2 = types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    tools=None,
+                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                    temperature=0.9,
+                )
+                response_2 = await self._call_gemini(loop_contents, config_2)
+                r = self._extract_reply(response_2)
+                logger.info(f"[Character] 2차 응답: {'빈 응답' if not r else r[:100]}")
+                if r and not self._is_repeat(history, r):
+                    reply = r
+            except Exception as e:
+                logger.warning(f"[Character] 2차 실패: {e}")
+
+        if _needs_retry(reply):
+            # 3차: 페르소나만 (지시서 없이), temperature=1.0
+            logger.warning("[Character] 3차 시도 (bare, temperature=1.0)")
+            try:
+                bare_prompt = self.persona.persona_text or ""
+                config_3 = types.GenerateContentConfig(
+                    system_instruction=bare_prompt,
+                    tools=None,
+                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                    temperature=1.0,
+                )
+                # 3차는 히스토리 없이 단발
+                if user_text:
+                    user_content = f"{user_name}: {user_text}"
+                else:
+                    user_content = f"({user_name}이 빈 멘션을 보냈다.)"
+                bare_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
+                response_3 = await self._call_gemini(bare_contents, config_3)
+                r = self._extract_reply(response_3)
+                logger.info(f"[Character] 3차 응답: {'빈 응답' if not r else r[:100]}")
+                if r and not self._is_repeat(history, r):
+                    reply = r
+            except Exception as e:
+                logger.warning(f"[Character] 3차 실패: {e}")
+
+        if _needs_retry(reply):
+            logger.warning("[Character] 포기: 응답 생성 실패")
+            reply = ""
+
+        return reply
+
+    # ── Layer 3: Evaluator (평론가) ───────────────────────
+
+    async def _run_evaluator(self, user_id: str, user_name: str,
+                             user_text: str, bot_reply: str):
+        """Evaluator: 감정/기억 업데이트. 백그라운드 실행, 에러 무시."""
         try:
-            # 도구 루프용 로컬 리스트 (영구 히스토리 + 현재 요청)
-            loop_contents = list(history)
+            # 현재 감정 상태 조회
+            bot_emo = await self.librarian_db.get_bot_emotion()
+            user_emo = await self.librarian_db.get_user_emotion(user_id)
 
-            logger.info(f"[1차] API 호출 (temperature=0.8, 히스토리={len(loop_contents)}턴)")
+            emo_lines = []
+            emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
+            if user_emo:
+                emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
+            else:
+                emo_lines.append(f"{user_name}: 첫 방문")
+            emo_block = "## 현재 감정 (50이 중립, 0 ~ 100)\n" + "\n".join(emo_lines)
+
+            # Evaluator 프롬프트
+            sys_parts = []
+            if self.persona.evaluator_text:
+                sys_parts.append(self.persona.evaluator_text)
+            sys_parts.append(emo_block)
+            system_prompt = "\n\n".join(p for p in sys_parts if p)
+
+            # 유저 메시지 + 봇 응답을 평가 대상으로 전달
+            eval_text = f"유저({user_name}): {user_text}\n봇 응답: {bot_reply}"
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                tools=evaluator_tools,
+                max_output_tokens=500,
+                temperature=0.5,
+            )
+
+            loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=eval_text)])]
+
+            logger.info(f"[Evaluator] API 호출")
             response = await self._call_gemini(loop_contents, config)
-            logger.info("[1차] API 응답 수신")
 
-            for loop_i in range(10):
+            # 도구 루프 (최대 5회 — feel, memorize, forget)
+            _feel_done = False
+            for loop_i in range(5):
                 if not response.candidates or not response.candidates[0].content.parts:
-                    logger.info(f"[1차] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
                     break
 
                 fc = None
@@ -729,20 +1249,14 @@ class AILibrarianBot(discord.Client):
                         fc = part.function_call
                         break
                 if not fc:
-                    logger.info(f"[1차] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
                     break
 
-                if fc.name == "feel" and fc.args:
-                    _args_fmt = {k: (f"{v:+d}" if isinstance(v, (int, float)) and v != 0 else str(v)) for k, v in dict(fc.args).items()}
-                    logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 feel({_args_fmt})")
-                else:
-                    logger.info(f"[1차] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
-                _meta["tools_called"].append(fc.name)
+                logger.info(f"[Evaluator] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
 
-                # feel 도구: 감정 변화 기록 (1요청당 1회만)
+                # feel 도구
                 if fc.name == "feel":
-                    if ("feel" in _tool_used):
-                        # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
+                    if _feel_done:
+                        # 1회 제한
                         loop_contents.append(response.candidates[0].content)
                         loop_contents.append(types.Content(
                             role="user",
@@ -753,12 +1267,13 @@ class AILibrarianBot(discord.Client):
                         except Exception:
                             break
                         continue
+
                     feel_args = dict(fc.args) if fc.args else {}
                     reason = feel_args.pop("reason", "")
                     response_mode = feel_args.pop("response", "normal")
                     reaction_emoji = feel_args.pop("reaction", None)
                     target_raw = feel_args.pop("target", None)
-                    # target에서 user_id 추출: <@ID>, 숫자ID, 이름 대응
+
                     target_id = user_id
                     target_name = user_name
                     if target_raw:
@@ -766,7 +1281,6 @@ class AILibrarianBot(discord.Client):
                         id_match = _re.search(r'(\d{15,})', str(target_raw))
                         if id_match:
                             target_id = id_match.group(1)
-                            # 이름은 guild에서 조회 시도
                             target_name = target_raw
                         else:
                             target_name = str(target_raw)
@@ -774,7 +1288,6 @@ class AILibrarianBot(discord.Client):
 
                     changes = {}
                     for axis in self.librarian_db.ALL_AXES:
-                        # feel 파라미터는 user_friendly 등 접두사 포함
                         prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
                         if prefixed in feel_args:
                             try:
@@ -785,702 +1298,77 @@ class AILibrarianBot(discord.Client):
                     current = await self.librarian_db.update_emotion(
                         changes, target_user_id=target_id,
                         target_user_name=target_name, reason=reason)
+
                     def _fmt_delta(v):
                         return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
                     def _fmt_cur(v):
                         return f"{v:.1f}" if isinstance(v, float) else str(v)
                     changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                     current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
-                    logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
-                    _tool_used.add("feel")
+                    logger.info(f"[Evaluator] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+                    _feel_done = True
 
-                    # 의도적 무응답
-                    if response_mode == "ignore":
-                        _meta["intentional_silence"] = True
-                        logger.info(f"의도적 무응답: {reason}")
-                        return "", None, _meta
-
-                    # reaction 파라미터: 이모지 리액션 예약
-                    if reaction_emoji and not _meta.get("reaction"):
-                        emojis = _extract_emojis(reaction_emoji)
-                        if emojis:
-                            _meta["reaction"] = reaction_emoji
-                            logger.info(f"이모지 리액션 예약: {reaction_emoji}")
-                        else:
-                            logger.info(f"이모지 리액션 무시 (유효하지 않음): {reaction_emoji[:30]}")
+                    # reaction 로그만 남김 (실제 리액션은 on_message에서 처리)
+                    if reaction_emoji:
+                        logger.info(f"[Evaluator] 리액션 예약 (무시됨, 이미 응답 전송 후): {reaction_emoji}")
 
                     result_parts = []
                     for k, v in current.items():
                         result_parts.append(f"{k} {v:.1f} (0 ~ 100)")
                     result_str = " | ".join(result_parts)
                     tool_data = {"result": result_str}
+
                     loop_contents.append(response.candidates[0].content)
                     loop_contents.append(types.Content(
                         role="user",
-                        parts=[types.Part.from_function_response(
-                            name="feel",
-                            response=tool_data,
-                        )],
+                        parts=[types.Part.from_function_response(name="feel", response=tool_data)],
                     ))
                     try:
                         response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
-                        logger.warning(f"[1차] feel 후 API 에러: {e}")
+                        logger.warning(f"[Evaluator] feel 후 API 에러: {e}")
                         break
                     continue
 
-                if fc.name == "web_search":
-                    query = (dict(fc.args) if fc.args else {}).get("query", user_text)
-                    logger.info(f"AI 판단 웹 검색: {query}")
+                # memorize / forget 도구
+                if fc.name in ("memorize", "forget"):
+                    tool_args = dict(fc.args) if fc.args else {}
+                    if fc.name == "memorize":
+                        tool_args["_user_id"] = user_id
+                        tool_args["_user_name"] = user_name
+                    tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                    tool_data = json.loads(tool_result)
+                    logger.info(f"[Evaluator] {fc.name} 결과: {tool_result}")
 
-                    # 캐시 확인 — 히트면 바로 반환
-                    cached = await self.librarian_db.get_web_by_query(query)
-                    if cached:
-                        logger.info(f"웹 캐시 히트: {query}")
-                        web_ids.append(cached["id"])
-                        tool_data = {"result": cached["result"]}
-                        _meta["tool_results"].append(f"web_cache:{cached['result']}")
-                        loop_contents.append(response.candidates[0].content)
-                        loop_contents.append(types.Content(
-                            role="user",
-                            parts=[types.Part.from_function_response(
-                                name="web_search",
-                                response=tool_data,
-                            )],
-                        ))
-                        try:
-                            response = await self._call_gemini(loop_contents, config)
-                        except Exception as e:
-                            logger.warning(f"[1차] 웹 캐시 후 API 에러: {e}")
-                            break
-                        continue
-
-                    from librarian.tools import google_search_tool
-                    web_config = types.GenerateContentConfig(
-                        system_instruction=dynamic_prompt,
-                        tools=google_search_tool,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=1.0,
-                    )
-                    web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-                    web_result = ""
-                    try:
-                        web_response = await self._call_gemini(web_query, web_config)
-                        web_result = self._extract_reply(web_response)
-                    except Exception as e:
-                        logger.warning(f"웹 검색 실패: {e}")
-
-                    if web_result:
-                        logger.info(f"웹 검색 결과: {web_result}")
-                        saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
-                        if saved_id:
-                            web_ids.append(saved_id)
-                        tool_data = {"result": web_result}
-                    else:
-                        tool_data = {"result": f"'{query}' 검색 결과 없음"}
-
-                    _meta["tool_results"].append(f"web:{web_result}")
                     loop_contents.append(response.candidates[0].content)
                     loop_contents.append(types.Content(
                         role="user",
-                        parts=[types.Part.from_function_response(
-                            name="web_search",
-                            response=tool_data,
-                        )],
+                        parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
                     ))
                     try:
                         response = await self._call_gemini(loop_contents, config)
                     except Exception as e:
-                        logger.warning(f"[1차] 웹 검색 후 API 에러: {e}")
+                        logger.warning(f"[Evaluator] {fc.name} 후 API 에러: {e}")
                         break
                     continue
 
-                if fc.name == "recognize_media":
-                    att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
-                    media_result = ""
-                    stored_name = None
-                    saved_media_id = None
-                    if att_idx < len(self._current_attachments):
-                        att = self._current_attachments[att_idx]
-                        ct = att.content_type or ""
-
-                        cached = None
-                        data = None
-                        file_hash = None
-                        if ct.startswith("image/") or ct == "application/pdf":
-                            data = await att.read()
-                            import hashlib
-                            file_hash = hashlib.sha256(data).hexdigest()
-                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
-                                  or await self.librarian_db.get_media_by_filename(att.filename)
-                        else:
-                            cached = await self.librarian_db.get_media_by_filename(att.filename)
-
-                        if cached:
-                            logger.info(f"미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
-                            media_result = cached["result"]
-                            stored_name = cached.get("stored_name")
-                            saved_media_id = cached["id"]
-                        elif ct.startswith("image/") or ct == "application/pdf":
-                            logger.info(f"미디어 인식: {att.filename} ({ct})")
-                            try:
-                                media_parts = [
-                                    types.Part.from_bytes(data=data, mime_type=ct),
-                                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                                ]
-                                media_config = types.GenerateContentConfig(
-                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                                    temperature=0.5,
-                                )
-                                media_response = await self._call_gemini(
-                                    [types.Content(role="user", parts=media_parts)],
-                                    media_config,
-                                )
-                                media_result = self._extract_reply(media_response)
-                                if media_result:
-                                    stored_name = None
-                                    try:
-                                        os.makedirs(MEDIA_DIR, exist_ok=True)
-                                        import uuid
-                                        ext = os.path.splitext(att.filename)[1] or ""
-                                        stored_name = f"{uuid.uuid4().hex}{ext}"
-                                        with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
-                                            mf.write(data)
-                                        logger.info(f"미디어 저장: {att.filename} → {stored_name}")
-                                    except Exception as e:
-                                        logger.warning(f"미디어 파일 저장 실패: {e}")
-                                        stored_name = None
-                                    saved_media_id = await self.librarian_db.save_media_result(
-                                        att.filename, media_result, user_name=user_name,
-                                        uploader=user_name, stored_name=stored_name,
-                                        file_hash=file_hash)
-                                    if saved_media_id:
-                                        media_ids.append(saved_media_id)
-                            except Exception as e:
-                                logger.warning(f"미디어 인식 실패: {e}")
-                        else:
-                            media_result = f"이 파일 형식({ct})은 인식할 수 없어."
-                    else:
-                        media_result = "첨부파일이 없어."
-
-                    tool_data = {"result": media_result if media_result else "인식 실패"}
-                    if media_result and stored_name:
-                        tool_data["media_id"] = saved_media_id
-                    logger.info(f"미디어 인식 결과: {media_result}")
-                    _meta["tool_results"].append(f"media:{media_result}")
-                    loop_contents.append(response.candidates[0].content)
-                    loop_contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part.from_function_response(
-                            name="recognize_media",
-                            response=tool_data,
-                        )],
-                    ))
-                    try:
-                        response = await self._call_gemini(loop_contents, config)
-                    except Exception as e:
-                        logger.warning(f"[1차] 미디어 인식 후 API 에러: {e}")
-                        break
-                    continue
-
-                if fc.name == "recognize_link":
-                    url = (dict(fc.args) if fc.args else {}).get("url", "")
-                    link_result = ""
-                    parsed = parse_url(url)
-                    normalized = parsed["normalized"]
-
-                    # 이미지 URL은 동기로 바로 인식 (FileData)
-                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
-                    _url_path = url.split("?")[0].split("#")[0].lower()
-                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
-
-                    if _is_image_url:
-                        try:
-                            img_parts = [
-                                types.Part(file_data=types.FileData(file_uri=url)),
-                                types.Part.from_text(text="이 이미지를 설명해."),
-                            ]
-                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
-                            img_response = await self._call_gemini(
-                                [types.Content(role="user", parts=img_parts)], img_config)
-                            link_result = self._extract_reply(img_response)
-                            if link_result:
-                                await self.librarian_db.save_url_result(
-                                    normalized, url, link_result, user_name=user_name, status="done")
-                                logger.info(f"이미지 URL 동기 인식 완료: {url}")
-                        except Exception as e:
-                            logger.warning(f"이미지 URL 인식 실패 ({url}): {e}")
-
-                    # 캐시 확인
-                    if not link_result:
-                        cached = await self.librarian_db.get_url_by_normalized(normalized)
-                        if cached:
-                            if cached.get("status") == "pending":
-                                logger.info(f"링크 인식 중: {url}")
-                                link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
-                            elif cached.get("status") == "failed":
-                                await self.librarian_db.update_url_result(normalized, "", status="pending")
-                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                                link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                                logger.info(f"링크 재시도: {url}")
-                            else:
-                                logger.info(f"링크 캐시 히트: {url}")
-                                link_result = cached["result"]
-
-                    # 새 URL → 백그라운드
-                    if not link_result:
-                        await self.librarian_db.save_url_result(
-                            normalized, url, "", user_name=user_name, status="pending")
-                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                        link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                        logger.info(f"링크 인식 백그라운드 시작: {url}")
-
-                    tool_data = {"result": link_result if link_result else "인식 실패"}
-                    logger.info(f"링크 인식 결과: {link_result}")
-                    _meta["tool_results"].append(f"link:{link_result}")
-                    loop_contents.append(response.candidates[0].content)
-                    loop_contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part.from_function_response(
-                            name="recognize_link",
-                            response=tool_data,
-                        )],
-                    ))
-                    try:
-                        response = await self._call_gemini(loop_contents, config)
-                    except Exception as e:
-                        logger.warning(f"[1차] 링크 인식 후 API 에러: {e}")
-                        break
-                    continue
-
-                # 일반 도구 실행
-                tool_args = dict(fc.args) if fc.args else {}
-                if fc.name in ("search", "memorize"):
-                    tool_args["_user_id"] = user_id
-                    tool_args["_user_name"] = user_name
-                if fc.name == "search":
-                    tool_args["_exclude_memory_ids"] = memory_ids
-                    tool_args["_exclude_web_ids"] = web_ids
-                    tool_args["_exclude_url_ids"] = url_ids
-                    tool_args["_exclude_media_ids"] = media_ids
-                tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-                tool_data = json.loads(tool_result)
-                logger.info(f"도구 결과: {tool_result}")
-                _meta["tool_results"].append(tool_result)
-
-                if tool_data.get("_action") == "deliver":
-                    save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
-                    if os.path.exists(save_path):
-                        file_to_send = discord.File(save_path, filename=tool_data["filename"])
-                        await self.library_db.increment_download(tool_data["file_id"])
-
-                if tool_data.get("_action") == "attach":
-                    save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
-                    if os.path.exists(save_path):
-                        file_to_send = discord.File(save_path, filename=tool_data["filename"])
-
-                if tool_data.get("_action") == "share_url":
-                    shared_url = tool_data.get("url", "")
-                    if shared_url:
-                        _meta.setdefault("shared_urls", []).append(shared_url)
-
-                # 사용한 도구 제거 + config 갱신
-                _tool_used.add(fc.name)
-                # deliver/attach는 상호 배타 (한 응답에 파일 하나)
-                if fc.name in ("deliver", "attach"):
-                    _tool_used.add("deliver")
-                    _tool_used.add("attach")
-                config = _make_config(0.8)
-
+                # 알 수 없는 도구 → 무시
+                logger.warning(f"[Evaluator] 알 수 없는 도구 무시: {fc.name}")
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
                     role="user",
-                    parts=[types.Part.from_function_response(
-                        name=fc.name,
-                        response=tool_data,
-                    )],
+                    parts=[types.Part.from_function_response(name=fc.name, response={"result": "unknown tool"})],
                 ))
-
                 try:
                     response = await self._call_gemini(loop_contents, config)
-                except Exception as e:
-                    logger.warning(f"[1차] 도구 후 API 에러: {e}")
+                except Exception:
                     break
 
-            reply = self._extract_reply(response)
-            if reply:
-                logger.info(f"[1차] 원본: {reply}")
-
-            import re
-
-            def _strip_feeling(text):
-                """줄 단위 후처리: 메타데이터 제거 + feel 미호출 시 폴백."""
-                nonlocal _had_inline_function
-                if not text:
-                    return text
-
-                # --- 이후 전부 자르기 (줄 단위로 처리)
-                cut_lines = text.split('\n')
-                final_lines = []
-                after_separator = False
-                for line in cut_lines:
-                    stripped = line.strip()
-                    if re.match(r'^---\s*$', stripped):
-                        after_separator = True
-                        continue
-                    if after_separator:
-                        continue
-                    final_lines.append(line)
-                text = '\n'.join(final_lines)
-
-                # 줄 단위 정리
-                result_lines = []
-                for line in text.split('\n'):
-                    stripped = line.strip()
-
-                    # 빈 줄 유지
-                    if not stripped:
-                        result_lines.append(line)
-                        continue
-
-                    # feel(...) 인라인
-                    if re.search(r'feel\s*\([^)]*\)', stripped):
-                        _had_inline_function = True
-                    cleaned = re.sub(r'feel\s*\([^)]*\)', '', stripped)
-                    # /feel ...
-                    if re.search(r'/feel\s+\S', cleaned):
-                        _had_inline_function = True
-                    cleaned = re.sub(r'/feel\s+.*', '', cleaned)
-                    # (feel: reason=..., ...)
-                    if re.search(r'[\(\（]\s*feel\s*:', cleaned):
-                        _had_inline_function = True
-                    cleaned = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', cleaned)
-                    # [mood:XX]
-                    cleaned = re.sub(r'\[mood:[+-]?\d+\]', '', cleaned)
-                    # 내부 ID 제거: (file_id:9), (media_id:3), (url_id:5) 등
-                    cleaned = re.sub(r'\(?\b(?:file_id|media_id|url_id|entry_id)\s*[:=]\s*\d+\)?', '', cleaned)
-                    # **** 빈 볼드
-                    cleaned = re.sub(r'\*\*\*\*', '', cleaned)
-                    # <br>
-                    cleaned = re.sub(r'<br\s*/?>', '', cleaned)
-
-                    cleaned = cleaned.strip()
-
-                    # 줄 전체가 메타데이터인 경우 제거
-                    if not cleaned:
-                        continue
-                    if re.match(r'^[\*_]*\s*감정\s*(변화|기록|:)', cleaned):
-                        continue
-                    if re.match(r'^function_call\s*:', cleaned, re.IGNORECASE):
-                        continue
-                    if cleaned in ('/', '\\', '[]', '{}'):
-                        continue
-
-                    # JSON 감정 블록 감지 + 실행 (한 줄에 {reason...} 가 있는 경우)
-                    json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', cleaned)
-                    if json_match:
-                        _had_inline_function = True
-                        if not ("feel" in _tool_used):
-                            try:
-                                import json as _json
-                                raw = json_match.group()
-                                raw = re.sub(r'^감정\s*:\s*', '', raw)
-                                raw = re.sub(r'(\w+)\s*:', r'"\1":', raw)
-                                raw = re.sub(r':\s*\+(\d)', r': \1', raw)
-                                feel_json = _json.loads(raw)
-                                reason = feel_json.pop("reason", "")
-                                response_val = feel_json.pop("response", None)
-                                reaction_val = feel_json.pop("reaction", None)
-                                changes = {}
-                                for axis in self.librarian_db.ALL_AXES:
-                                    prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
-                                    if prefixed in feel_json:
-                                        try:
-                                            changes[axis] = int(feel_json[prefixed])
-                                        except (ValueError, TypeError):
-                                            pass
-                                if changes:
-                                    asyncio.create_task(
-                                        self.librarian_db.update_emotion(
-                                            changes, target_user_id=user_id,
-                                            target_user_name=user_name, reason=reason or "json fallback"))
-                                    _tool_used.add("feel")
-                                    logger.info(f"감정(JSON 폴백): {changes} | {reason}")
-                                if response_val == "ignore":
-                                    _meta["intentional_silence"] = True
-                                if reaction_val and not _meta.get("reaction"):
-                                    _fb_emojis = _extract_emojis(reaction_val)
-                                    if _fb_emojis:
-                                        _meta["reaction"] = reaction_val
-                                        logger.info(f"이모지 리액션(JSON 폴백): {reaction_val}")
-                            except Exception as e:
-                                logger.warning(f"feel JSON 파싱 실패: {e}")
-                        # JSON 부분만 제거, 나머지 텍스트 보존
-                        cleaned = (cleaned[:json_match.start()] + cleaned[json_match.end():]).strip()
-                        if not cleaned:
-                            continue
-
-                    result_lines.append(cleaned)
-
-                text = '\n'.join(result_lines).strip()
-                # 연속 빈 줄 정리
-                text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
-                return text
-
-            reply = _strip_feeling(reply)
-
-            # 텍스트에 함수 호출 패턴이 섞여 있을 때 감지 후 실행
-            _had_inline_function = False
-            _TOOL_NAMES = {
-                "search", "deliver", "memorize", "forget",
-                "web_search", "memorize_alias", "forget_alias",
-                "recognize_media", "recognize_link", "attach", "feel",
-            }
-            _POSITIONAL_MAP = {
-                "deliver": "file_id",
-                "attach": "media_id",
-                "recognize_media": "attachment_index",
-                "recognize_link": "url",
-                "search": "keyword",
-                "web_search": "query",
-                "memorize": "content",
-                "forget": "keyword",
-                "forget_alias": "alias_id",
-            }
-            if reply:
-                _inline_pattern = re.compile(
-                    r'(' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(([^)]*)\)',
-                    re.DOTALL
-                )
-                _inline_match = _inline_pattern.search(reply)
-                if _inline_match:
-                    _before = reply[:_inline_match.start()].strip()
-                    _tool_name = _inline_match.group(1)
-                    _args_raw = _inline_match.group(2).strip()
-                    logger.info(f"인라인 함수 감지: {_tool_name}({_args_raw[:80]})")
-                    _had_inline_function = True
-
-                    # args 파싱
-                    _tool_args = {}
-                    # key: value 또는 key=value 형태
-                    _kv_matches = list(re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw, re.DOTALL))
-                    if _kv_matches:
-                        for _m in _kv_matches:
-                            _k = _m.group(1).strip()
-                            _v = _m.group(2).strip().strip('"\'')
-                            _tool_args[_k] = _v
-                    elif _args_raw and _tool_name in _POSITIONAL_MAP:
-                        # positional: deliver(5) → {"file_id": 5}
-                        _val = _args_raw.strip().strip('"\'')
-                        try:
-                            _val = int(_val)
-                        except ValueError:
-                            pass
-                        _tool_args[_POSITIONAL_MAP[_tool_name]] = _val
-
-                    if _tool_name in ("search", "memorize"):
-                        _tool_args["_user_id"] = user_id
-                        _tool_args["_user_name"] = user_name
-                    if _tool_name == "search":
-                        _tool_args["_exclude_memory_ids"] = memory_ids
-                        _tool_args["_exclude_web_ids"] = web_ids
-                        _tool_args["_exclude_url_ids"] = url_ids
-                        _tool_args["_exclude_media_ids"] = media_ids
-
-                    try:
-                        _tool_result = await execute_tool(self.library_db, self.librarian_db, _tool_name, _tool_args)
-                        _tool_data = json.loads(_tool_result)
-                        logger.info(f"인라인 함수 실행 결과: {_tool_result[:100]}")
-
-                        if _tool_data.get("_action") == "deliver":
-                            save_path = os.path.join(FILES_DIR, _tool_data["stored_name"])
-                            if os.path.exists(save_path):
-                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
-                                await self.library_db.increment_download(_tool_data["file_id"])
-                        elif _tool_data.get("_action") == "attach":
-                            save_path = os.path.join(MEDIA_DIR, _tool_data["stored_name"])
-                            if os.path.exists(save_path):
-                                file_to_send = discord.File(save_path, filename=_tool_data["filename"])
-                        elif _tool_data.get("_action") == "share_url":
-                            _shared = _tool_data.get("url", "")
-                            if _shared:
-                                _meta.setdefault("shared_urls", []).append(_shared)
-                    except Exception as _e:
-                        logger.warning(f"인라인 함수 실행 실패 ({_tool_name}): {_e}")
-
-                    # 함수 호출 제거, 남은 텍스트만 사용
-                    reply = _before
-
-            if not reply:
-                if history and history[-1].role == "user":
-                    history.pop()
-                logger.info("[1차] 빈 응답 → 무응답")
-                _meta["intentional_silence"] = True
-                return "", file_to_send, _meta
-            else:
-                logger.info(f"[1차] 응답: {reply}")
-
-            def _needs_retry(r):
-                """빈 응답이거나 반복이면 리트라이 필요."""
-                if not r:
-                    return True
-                is_rep = self._is_repeat(history, r)
-                if is_rep:
-                    logger.info(f"반복 감지: {r[:50]}")
-                return is_rep
-
-            clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
-
-            if _needs_retry(reply):
-                logger.warning(f"[2차] 시도 (클린, 0.9)")
-                try:
-                    retry_config = types.GenerateContentConfig(
-                        system_instruction=clean_prompt,
-                        tools=library_tools,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=0.9,
-                    )
-                    logger.info("[2차] API 호출")
-                    r = self._extract_reply(await self._call_gemini(clean_message, retry_config))
-                    if r:
-                        r = _strip_feeling(r)
-                    logger.info(f"[2차] 응답: {'빈 응답' if not r else r}")
-                    if r and not self._is_repeat(history, r):
-                        reply = r
-                except Exception as e:
-                    logger.warning(f"[2차] 실패: {e}")
-
-            if _needs_retry(reply):
-                logger.warning(f"[3차] 시도 (bare+웹, 1.0)")
-                try:
-                    from librarian.tools import google_search_tool
-                    web_config = types.GenerateContentConfig(
-                        system_instruction=bare_prompt,
-                        tools=google_search_tool,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=1.0,
-                    )
-                    logger.info("[3차] API 호출")
-                    r = self._extract_reply(await self._call_gemini(clean_message, web_config))
-                    if r:
-                        r = _strip_feeling(r)
-                    logger.info(f"[3차] 응답: {'빈 응답' if not r else r}")
-                    if r and not self._is_repeat(history, r):
-                        reply = r
-                except Exception as e:
-                    logger.warning(f"[3차] 실패: {e}")
-
-            if _needs_retry(reply):
-                logger.warning("[포기] 응답 생성 실패")
-                reply = ""
-
-            # 2-3차 결과에도 인라인 함수 패턴이 있으면 실행 + 제거
-            if reply:
-                _inline_pattern_retry = re.compile(
-                    r'(' + '|'.join(re.escape(t) for t in _TOOL_NAMES) + r')\s*\(([^)]*)\)',
-                    re.DOTALL
-                )
-                _inline_match_retry = _inline_pattern_retry.search(reply)
-                if _inline_match_retry:
-                    _tool_name_r = _inline_match_retry.group(1)
-                    _args_raw_r = _inline_match_retry.group(2).strip()
-                    logger.info(f"[재시도] 인라인 함수 감지: {_tool_name_r}({_args_raw_r[:80]})")
-
-                    _tool_args_r = {}
-                    _kv_r = list(re.finditer(r'(\w+)\s*[:=]\s*(.+?)(?=,\s*\w+\s*[:=]|$)', _args_raw_r, re.DOTALL))
-                    if _kv_r:
-                        for _m in _kv_r:
-                            _tool_args_r[_m.group(1).strip()] = _m.group(2).strip().strip('"\'')
-                    elif _args_raw_r and _tool_name_r in _POSITIONAL_MAP:
-                        _val = _args_raw_r.strip().strip('"\'')
-                        try:
-                            _val = int(_val)
-                        except ValueError:
-                            pass
-                        _tool_args_r[_POSITIONAL_MAP[_tool_name_r]] = _val
-
-                    try:
-                        _tool_result_r = await execute_tool(self.library_db, self.librarian_db, _tool_name_r, _tool_args_r)
-                        _tool_data_r = json.loads(_tool_result_r)
-                        logger.info(f"[재시도] 인라인 함수 실행: {_tool_result_r[:100]}")
-
-                        if _tool_data_r.get("_action") == "deliver":
-                            save_path = os.path.join(FILES_DIR, _tool_data_r["stored_name"])
-                            if os.path.exists(save_path):
-                                file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
-                                await self.library_db.increment_download(_tool_data_r["file_id"])
-                        elif _tool_data_r.get("_action") == "attach":
-                            save_path = os.path.join(MEDIA_DIR, _tool_data_r["stored_name"])
-                            if os.path.exists(save_path):
-                                file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
-                        elif _tool_data_r.get("_action") == "share_url":
-                            _shared = _tool_data_r.get("url", "")
-                            if _shared:
-                                _meta.setdefault("shared_urls", []).append(_shared)
-                    except Exception as _e:
-                        logger.warning(f"[재시도] 인라인 함수 실행 실패: {_e}")
-
-                    # 텍스트에서 함수 호출 제거
-                    reply = reply[:_inline_match_retry.start()].strip()
-                    if not reply:
-                        reply = f"여기 있어."
-
-            if reply:
-                history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
-            else:
-                if history and history[-1].role == "user":
-                    history.pop()
-
-            self._trim_history(user_id)
-
-            if len(reply) > 2000:
-                reply = reply[:1997] + "..."
-
-            return reply, file_to_send, _meta
-
-        except ClientError as e:
-            logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
-            self.chat_histories[user_id] = []
-            if e.status == "RESOURCE_EXHAUSTED":
-                msg = str(e)
-                if "PerDay" in msg or "per_day" in msg:
-                    logger.warning("일일 한도 초과 (모든 키 소진)")
-                    _meta["error"] = "daily_limit"
-                    return self.persona.error_message, None, _meta
-                else:
-                    logger.warning("분당 한도 초과")
-                    _meta["error"] = "rate_limit"
-                    return self.persona.error_message, None, _meta
-            if e.status == "INVALID_ARGUMENT":
-                logger.warning("INVALID_ARGUMENT → 히스토리 초기화 후 클린 재시도")
-                try:
-                    clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_text)])]
-                    retry_config = types.GenerateContentConfig(
-                        system_instruction=dynamic_prompt,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=0.8,
-                    )
-                    response = await self._call_gemini(clean_message, retry_config)
-                    reply = self._extract_reply(response)
-                    if reply:
-                        import re as _re
-                        reply = _re.sub(r'\[mood:[+-]?\d+\]', '', reply).strip()
-                        reply = _re.sub(r'feel\s*\([^)]*\)', '', reply).strip()
-                        reply = _re.sub(r'/feel\s+[^\n]*', '', reply).strip()
-                        reply = _re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', reply).strip()
-                        reply = _re.sub(r'\*\*\*\*', '', reply).strip()
-                        logger.info(f"[클린 재시도] 응답: {reply}")
-                        return reply, None, _meta
-                except Exception as retry_e:
-                    logger.warning(f"[클린 재시도] 실패: {retry_e}")
-            _meta["error"] = f"client_error:{e.status}"
-            return self.persona.error_message, None, _meta
+            logger.info("[Evaluator] 완료")
 
         except Exception as e:
-            self.chat_histories[user_id] = []
-            logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
-            _meta["error"] = f"{type(e).__name__}"
-            return self.persona.error_message, None, _meta
+            # Evaluator 에러는 무시 (응답에 영향 없음)
+            logger.warning(f"[Evaluator] 에러 (무시): {type(e).__name__}: {e}")
 
     async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
         """API 호출 (비동기). 실패 시 재시도."""

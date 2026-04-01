@@ -62,6 +62,11 @@ def normalize_url(url: str) -> str:
 
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
+# v5 레이어별 도구 이름
+DIRECTOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
+EVALUATOR_TOOL_NAMES = {"feel", "memorize", "forget"}
+
+# 전체 도구 선언 (v4 호환 + 레이어별 필터링 기반)
 library_tools = [
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
@@ -197,6 +202,11 @@ library_tools = [
         ),
     ]),
 ]
+
+# v5 레이어별 도구 리스트
+_all_decls = library_tools[0].function_declarations
+director_tools = [types.Tool(function_declarations=[d for d in _all_decls if d.name in DIRECTOR_TOOL_NAMES])]
+evaluator_tools = [types.Tool(function_declarations=[d for d in _all_decls if d.name in EVALUATOR_TOOL_NAMES])]
 
 # ── 도구 실행 ────────────────────────────────────────
 
