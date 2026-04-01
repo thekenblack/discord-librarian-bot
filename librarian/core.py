@@ -1130,9 +1130,8 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
                     _had_inline_function = True
                 text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
-                # <br> 등 HTML 태그 제거 (디스코드 포맷 보호)
+                # <br> 태그만 제거 (디스코드 꺾쇠 보호)
                 text = re.sub(r'<br\s*/?>', '\n', text).strip()
-                text = re.sub(r'<(?![@#:a?:]\S)[^>]+>', '', text).strip()
                 # 잔여물 제거
                 text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드 (AI가 **제목** 대신 **** 출력)
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
@@ -1185,7 +1184,7 @@ class AILibrarianBot(discord.Client):
                     except Exception as e:
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
-                    text = text[:json_match.start()].strip()
+                    text = (text[:json_match.start()] + text[json_match.end():]).strip()
                 # [mood:XX] 태그 제거 (v3 레거시)
                 text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
                 return text
