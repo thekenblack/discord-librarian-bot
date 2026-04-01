@@ -60,3 +60,14 @@ v4 초기:
 ## CANCEL (처음부터 안 하기로 한 것)
 
 - 디스코드 메시지 포워드 (답글로 못 달아서 실용성 없음)
+
+## IRRELEVANT (현재 안 쓰는 시스템)
+
+- patches/ 시스템 (startup.py에서 실행. v4 이후 새 패치 없음. 마이그레이션으로 대체)
+- add_knowledge 도구 (선언만 있고 실사용 0. memorize로 통합됨)
+- add_entry_alias 도구 (라이브러리 엔트리 별칭. 사용 실적 없음)
+- customs 테이블 (knowledge_base와 별도로 존재. 패치로 초기 데이터만 넣고 이후 추가 없음)
+- web_results 테이블 (url_results로 분리 후 키워드 검색 캐시 용도만. 실사용 미미)
+- mood.py (MoodSystem 클래스. feel 도구로 완전 대체. import만 주석 처리됨)
+- server_log.py DailyFileHandler (동작은 하지만 server.log 활용 빈도 낮음)
+- error.txt (에러 메시지 풀. 빈 응답 시 무응답 처리로 변경돼서 거의 안 쓰임)
