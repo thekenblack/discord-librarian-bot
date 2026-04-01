@@ -1086,6 +1086,10 @@ class AILibrarianBot(discord.Client):
 
                 # 사용한 도구 제거 + config 갱신
                 _tool_used.add(fc.name)
+                # deliver/attach는 상호 배타 (한 응답에 파일 하나)
+                if fc.name in ("deliver", "attach"):
+                    _tool_used.add("deliver")
+                    _tool_used.add("attach")
                 config = _make_config(0.8)
 
                 loop_contents.append(response.candidates[0].content)
