@@ -3,6 +3,7 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 """
 
 import os
+import re
 import json
 import asyncio
 import discord
@@ -24,6 +25,32 @@ logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
 MAX_HISTORY = 10
+
+# 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
+_CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
+_UNICODE_EMOJI_RE = re.compile(
+    r"[\U0001F1E0-\U0001F1FF]{2}"          # 국기 이모지
+    r"|(?:[\U0001F600-\U0001FAFF]"          # 이모지 본체
+    r"  (?:\uFE0F)?"                        # variation selector
+    r"  (?:\u200D"                           # ZWJ 시퀀스
+    r"    [\U0001F600-\U0001FAFF\u2600-\u27BF]"
+    r"    (?:\uFE0F)?"
+    r"  )*"
+    r")"
+    r"|[\u2600-\u27BF]\uFE0F?"              # 기호 이모지
+    r"|[\u231A-\u23F3]\uFE0F?"              # 시계 등 기호
+    r"|[\u2702-\u27B0]\uFE0F?"              # 가위 등 기호
+, re.VERBOSE)
+
+
+def _extract_emojis(raw: str) -> list[str]:
+    """reaction 문자열에서 유효한 이모지만 개별 추출."""
+    if not raw:
+        return []
+    custom = _CUSTOM_EMOJI_RE.findall(raw)
+    if custom:
+        return custom
+    return _UNICODE_EMOJI_RE.findall(raw)
 
 
 class AILibrarianBot(discord.Client):
@@ -194,7 +221,7 @@ class AILibrarianBot(discord.Client):
             self._admin_notify_task = asyncio.create_task(self._flush_admin_notify())
 
     async def _recognize_url_background(self, parsed: dict, user_name: str):
-        """모든 URL 백그라운드 인식. 유튜브 영상이면 자막 → FileData, 일반이면 FileData 바로."""
+        """모든 URL 백그라운드 인식. 유튜브 자막 → FileData → HTML 폴백."""
         async with self._bg_semaphore:
             url = parsed["original_url"]
             normalized = parsed["normalized"]
@@ -202,7 +229,7 @@ class AILibrarianBot(discord.Client):
             result = ""
             loop = asyncio.get_event_loop()
 
-            # 유튜브 영상: 자막 먼저
+            # 1단계: 유튜브 영상 → 자막 추출
             if content_id:
                 try:
                     from youtube_transcript_api import YouTubeTranscriptApi
@@ -219,7 +246,7 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.info(f"유튜브 자막 없음 ({content_id}): {e}")
 
-            # 자막 실패 또는 일반 URL: FileData
+            # 2단계: FileData (이미지/PDF 등 직접 전달 가능한 URL)
             if not result:
                 try:
                     link_parts = [
@@ -233,6 +260,59 @@ class AILibrarianBot(discord.Client):
                     logger.info(f"URL FileData 인식 완료: {url}")
                 except Exception as e:
                     logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
+
+            # 3단계: HTML 폴백 (FileData 실패 시 직접 가져와서 텍스트 추출)
+            if not result:
+                try:
+                    import aiohttp
+                    from html.parser import HTMLParser
+
+                    class _TextExtractor(HTMLParser):
+                        """HTML에서 텍스트만 추출. script/style 태그 내용 제외."""
+                        def __init__(self):
+                            super().__init__()
+                            self.parts = []
+                            self._skip = False
+                        def handle_starttag(self, tag, attrs):
+                            if tag in ("script", "style", "noscript"):
+                                self._skip = True
+                            # og:description 등 메타태그 추출
+                            if tag == "meta":
+                                d = dict(attrs)
+                                content = d.get("content", "")
+                                prop = d.get("property", d.get("name", ""))
+                                if prop in ("og:description", "description", "og:title") and content:
+                                    self.parts.insert(0, content)
+                        def handle_endtag(self, tag):
+                            if tag in ("script", "style", "noscript"):
+                                self._skip = False
+                        def handle_data(self, data):
+                            if not self._skip:
+                                t = data.strip()
+                                if t:
+                                    self.parts.append(t)
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15),
+                                               headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                            if resp.status != 200:
+                                raise Exception(f"HTTP {resp.status}")
+                            html = await resp.text(errors="replace")
+
+                    extractor = _TextExtractor()
+                    extractor.feed(html[:100_000])
+                    text = "\n".join(extractor.parts)[:6000]
+                    if text and len(text) > 50:
+                        prompt = f"다음은 웹페이지({url})에서 추출한 텍스트야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                        config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                        response = await self._call_gemini(
+                            [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
+                        result = self._extract_reply(response)
+                        logger.info(f"URL HTML 폴백 인식 완료: {url}")
+                    else:
+                        logger.warning(f"URL HTML 텍스트 부족 ({url}): {len(text)}자")
+                except Exception as e:
+                    logger.warning(f"URL HTML 폴백 실패 ({url}): {e}")
 
             if result:
                 await self.librarian_db.update_url_result(normalized, result, status="done")
@@ -328,10 +408,10 @@ class AILibrarianBot(discord.Client):
 
         # 답글 체인 수집 + 체인 시작점 직전 맥락
         _t2 = _time.monotonic()
-        reply_chain, seen_filenames, chain_attachments = await self._build_reply_chain(message)
+        reply_chain, seen_filenames, chain_attachments, chain_anchor = await self._build_reply_chain(message)
         logger.info(f"[타이밍] reply_chain: {_time.monotonic()-_t2:.2f}s ({len(reply_chain)}건)")
         _t3 = _time.monotonic()
-        pre_context = await self._build_pre_context(message)
+        pre_context = await self._build_pre_context(message, anchor=chain_anchor)
         logger.info(f"[타이밍] pre_context: {_time.monotonic()-_t3:.2f}s ({len(pre_context)}건)")
         logger.info(f"[타이밍] 전처리 총: {_time.monotonic()-_t0:.2f}s")
 
@@ -361,11 +441,12 @@ class AILibrarianBot(discord.Client):
         if not reply_text and not file_to_send:
             # 이모지 리액션
             if _meta.get("reaction"):
-                try:
-                    await message.add_reaction(_meta["reaction"])
-                    logger.info(f"이모지 리액션: {_meta['reaction']}")
-                except Exception as e:
-                    logger.warning(f"리액션 실패: {e}")
+                for em in _extract_emojis(_meta["reaction"]):
+                    try:
+                        await message.add_reaction(em)
+                        logger.info(f"이모지 리액션: {em}")
+                    except Exception as e:
+                        logger.warning(f"리액션 실패: {e}")
                 return
             if _meta.get("intentional_silence"):
                 logger.info("의도적 무응답 → 메시지 안 보냄")
@@ -407,6 +488,12 @@ class AILibrarianBot(discord.Client):
             except discord.HTTPException:
                 logger.info("reply 실패 (원본 삭제) → 무시")
 
+        # share_url: AI 응답에 URL이 누락됐으면 끝에 추가
+        if _meta.get("shared_urls"):
+            for _surl in _meta["shared_urls"]:
+                if _surl not in (reply_text or ""):
+                    reply_text = f"{reply_text}\n{_surl}".strip() if reply_text else _surl
+
         if file_to_send:
             await _send_reply(reply_text, file=file_to_send)
         elif reply_text:
@@ -417,23 +504,54 @@ class AILibrarianBot(discord.Client):
                 def _check_emoji(m):
                     return m.group() if m.group(2) in guild_emoji_ids else ""
                 reply_text = _re.sub(r'<(a?:\w+:)(\d+)>', _check_emoji, reply_text).strip()
-            # 이미지 URL 감지 → 임베드로 변환
-            _img_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\S*)?|https?://tenor\.com/\S+|https?://giphy\.com/\S+)', reply_text)
-            if _img_url:
-                _url = _img_url.group()
+            # URL이 있으면 텍스트에서 빼고 임베드로 이미지만 표시
+            _img_match = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\?\S*)?)', reply_text)
+            _page_match = not _img_match and _re.search(r'(https?://(?:tenor\.com|giphy\.com)/\S+)', reply_text)
+
+            if _img_match:
+                # 이미지 파일 URL → 바로 임베드
+                _url = _img_match.group()
                 _text = reply_text.replace(_url, '').strip()
                 _embed = discord.Embed()
                 _embed.set_image(url=_url)
                 await _send_reply(_text, embed=_embed)
+            elif _page_match:
+                # tenor/giphy HTML → og:image 추출 후 임베드
+                _url = _page_match.group()
+                _text = reply_text.replace(_url, '').strip()
+                _media_url = None
+                try:
+                    import aiohttp
+                    async with aiohttp.ClientSession() as _s:
+                        async with _s.get(_url, timeout=aiohttp.ClientTimeout(total=5),
+                                          headers={"User-Agent": "Mozilla/5.0"}) as _r:
+                            if _r.status == 200:
+                                _html = await _r.text(errors="replace")
+                                _og = _re.search(
+                                    r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)', _html)
+                                if not _og:
+                                    _og = _re.search(
+                                        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', _html)
+                                if _og:
+                                    _media_url = _og.group(1)
+                except Exception:
+                    pass
+                if _media_url:
+                    _embed = discord.Embed()
+                    _embed.set_image(url=_media_url)
+                    await _send_reply(_text, embed=_embed)
+                else:
+                    await _send_reply(reply_text)
             else:
                 await _send_reply(reply_text)
 
         # 이모지 리액션
         if _meta.get("reaction"):
-            try:
-                await message.add_reaction(_meta["reaction"])
-            except Exception as e:
-                logger.warning(f"리액션 실패: {e}")
+            for em in _extract_emojis(_meta["reaction"]):
+                try:
+                    await message.add_reaction(em)
+                except Exception as e:
+                    logger.warning(f"리액션 실패: {e}")
 
     async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
@@ -548,7 +666,7 @@ class AILibrarianBot(discord.Client):
             parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
             logger.info(f"답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
 
-        # search 중복 제거용 ID 수집 (프롬프트에는 안 넣음)
+        # search 중복 제거용 ID 수집 (프롬프트에는 안 넣음 — 토큰 절약)
         _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
         _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
         _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
@@ -574,7 +692,7 @@ class AILibrarianBot(discord.Client):
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
-        _mood_applied = False
+        _feeling_applied = False
 
         file_to_send = None
 
@@ -616,7 +734,7 @@ class AILibrarianBot(discord.Client):
 
                 # feel 도구: 감정 변화 기록 (1요청당 1회만)
                 if fc.name == "feel":
-                    if _mood_applied:
+                    if _feeling_applied:
                         # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
                         loop_contents.append(response.candidates[0].content)
                         loop_contents.append(types.Content(
@@ -666,7 +784,7 @@ class AILibrarianBot(discord.Client):
                     changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                     current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
                     logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
-                    _mood_applied = True
+                    _feeling_applied = True
 
                     # 의도적 무응답
                     if response_mode == "ignore":
@@ -860,21 +978,46 @@ class AILibrarianBot(discord.Client):
                     parsed = parse_url(url)
                     normalized = parsed["normalized"]
 
-                    cached = await self.librarian_db.get_url_by_normalized(normalized)
-                    if cached:
-                        if cached.get("status") == "pending":
-                            logger.info(f"링크 인식 중: {url}")
-                            link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
-                        elif cached.get("status") == "failed":
-                            await self.librarian_db.update_url_result(normalized, "", status="pending")
-                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                            link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                            logger.info(f"링크 재시도: {url}")
-                        else:
-                            logger.info(f"링크 캐시 히트: {url}")
-                            link_result = cached["result"]
+                    # 이미지 URL은 동기로 바로 인식 (FileData)
+                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                    _url_path = url.split("?")[0].split("#")[0].lower()
+                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
 
-                    if not cached:
+                    if _is_image_url:
+                        try:
+                            img_parts = [
+                                types.Part(file_data=types.FileData(file_uri=url)),
+                                types.Part.from_text(text="이 이미지를 설명해."),
+                            ]
+                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                            img_response = await self._call_gemini(
+                                [types.Content(role="user", parts=img_parts)], img_config)
+                            link_result = self._extract_reply(img_response)
+                            if link_result:
+                                await self.librarian_db.save_url_result(
+                                    normalized, url, link_result, user_name=user_name, status="done")
+                                logger.info(f"이미지 URL 동기 인식 완료: {url}")
+                        except Exception as e:
+                            logger.warning(f"이미지 URL 인식 실패 ({url}): {e}")
+
+                    # 캐시 확인
+                    if not link_result:
+                        cached = await self.librarian_db.get_url_by_normalized(normalized)
+                        if cached:
+                            if cached.get("status") == "pending":
+                                logger.info(f"링크 인식 중: {url}")
+                                link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
+                            elif cached.get("status") == "failed":
+                                await self.librarian_db.update_url_result(normalized, "", status="pending")
+                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                                link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
+                                logger.info(f"링크 재시도: {url}")
+                            else:
+                                logger.info(f"링크 캐시 히트: {url}")
+                                link_result = cached["result"]
+
+                    # 새 URL → 백그라운드
+                    if not link_result:
                         await self.librarian_db.save_url_result(
                             normalized, url, "", user_name=user_name, status="pending")
                         asyncio.create_task(self._recognize_url_background(parsed, user_name))
@@ -925,7 +1068,10 @@ class AILibrarianBot(discord.Client):
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
-                # share_url은 도구 결과에 URL이 포함돼서 AI가 답변에 자연스럽게 포함
+                if tool_data.get("_action") == "share_url":
+                    shared_url = tool_data.get("url", "")
+                    if shared_url:
+                        _meta.setdefault("shared_urls", []).append(shared_url)
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
@@ -948,7 +1094,7 @@ class AILibrarianBot(discord.Client):
 
             def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
-                nonlocal _mood_applied, _had_inline_function
+                nonlocal _feeling_applied, _had_inline_function
                 if not text:
                     return text
                 # feel(...) 인라인 제거
@@ -976,7 +1122,7 @@ class AILibrarianBot(discord.Client):
                 json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
                 if json_match:
                     _had_inline_function = True
-                if json_match and not _mood_applied:
+                if json_match and not _feeling_applied:
                     try:
                         import json as _json
                         raw = json_match.group()
@@ -1002,7 +1148,7 @@ class AILibrarianBot(discord.Client):
                                 self.librarian_db.update_emotion(
                                     changes, target_user_id=user_id,
                                     target_user_name=user_name, reason=reason or "json fallback"))
-                            _mood_applied = True
+                            _feeling_applied = True
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
                         # response 처리 (이모지 리액션/무응답)
                         if response_val and response_val not in ("normal",):
@@ -1020,12 +1166,12 @@ class AILibrarianBot(discord.Client):
                 if not m:
                     return text
                 text = text.replace(m.group(0), '').strip()
-                if not _mood_applied:
+                if not _feeling_applied:
                     try:
                         val = int(m.group(1))
                         asyncio.create_task(
                             self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
-                        _mood_applied = True
+                        _feeling_applied = True
                         logger.info(f"감정(폴백): mood={m.group(1)} → DB")
                     except (ValueError, Exception) as e:
                         logger.warning(f"mood 폴백 실패: {e}")
@@ -1134,8 +1280,8 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if _had_inline_function or _mood_applied:
-                    # 함수 시도(인라인 또는 도구 호출) 후 빈 텍스트 → 리트라이
+                if _had_inline_function or _feeling_applied:
+                    # feel 도구 호출 후 텍스트가 빈 경우 → 리트라이 필요
                     logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
                 else:
                     # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
@@ -1147,7 +1293,10 @@ class AILibrarianBot(discord.Client):
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
-            def _is_repeat_reply(r):
+            def _needs_retry(r):
+                """빈 응답이거나 반복이면 리트라이 필요."""
+                if not r:
+                    return True
                 is_rep = self._is_repeat(history, r)
                 if is_rep:
                     logger.info(f"반복 감지: {r[:50]}")
@@ -1155,7 +1304,7 @@ class AILibrarianBot(discord.Client):
 
             clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-            if _is_repeat_reply(reply):
+            if _needs_retry(reply):
                 logger.warning(f"[2차] 시도 (클린, 0.9)")
                 try:
                     retry_config = types.GenerateContentConfig(
@@ -1172,7 +1321,7 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[2차] 실패: {e}")
 
-            if _is_repeat_reply(reply):
+            if _needs_retry(reply):
                 logger.warning(f"[3차] 시도 (bare+웹, 1.0)")
                 try:
                     from librarian.tools import google_search_tool
@@ -1190,8 +1339,8 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[3차] 실패: {e}")
 
-            if _is_repeat_reply(reply):
-                logger.warning("[포기] 반복 해소 실패")
+            if _needs_retry(reply):
+                logger.warning("[포기] 응답 생성 실패")
                 reply = ""
 
             # 2-3차 결과에도 인라인 함수 패턴이 있으면 실행 + 제거
@@ -1233,6 +1382,10 @@ class AILibrarianBot(discord.Client):
                             save_path = os.path.join(MEDIA_DIR, _tool_data_r["stored_name"])
                             if os.path.exists(save_path):
                                 file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
+                        elif _tool_data_r.get("_action") == "share_url":
+                            _shared = _tool_data_r.get("url", "")
+                            if _shared:
+                                _meta.setdefault("shared_urls", []).append(_shared)
                     except Exception as _e:
                         logger.warning(f"[재시도] 인라인 함수 실행 실패: {_e}")
 
@@ -1323,11 +1476,12 @@ class AILibrarianBot(discord.Client):
             raise last_err
         raise ClientError("API 호출 실패")
 
-    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5."""
+    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
+        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. anchor도 반환."""
         chain = []
         seen_filenames = []
         chain_attachments = []
+        raw_msgs = []
         current = message
         while current.reference:
             ref = current.reference.resolved
@@ -1338,19 +1492,29 @@ class AILibrarianBot(discord.Client):
                     break
             if not ref:
                 break
+            raw_msgs.append(ref)
+            current = ref
+
+        # extras를 동시에 조회
+        if raw_msgs:
+            extras_list = await asyncio.gather(*(self._extract_extras(m) for m in raw_msgs))
+        else:
+            extras_list = []
+
+        for ref, extras in zip(raw_msgs, extras_list):
             if self.user and ref.author.id == self.user.id:
                 name = self.persona.name
             else:
                 name = f"{ref.author.display_name}(<@{ref.author.id}>)"
             content = ref.content[:150]
-            extras = await self._extract_extras(ref)
             if extras:
                 content = f"{content} {extras}" if content else extras
             for att in ref.attachments:
                 seen_filenames.append(att.filename)
                 chain_attachments.append(att)
             chain.append(f"{name}: {content}")
-            current = ref
+
+        anchor = raw_msgs[-1] if raw_msgs else message
         chain.reverse()
 
         if len(chain) > 10:
@@ -1358,30 +1522,24 @@ class AILibrarianBot(discord.Client):
             tail = chain[-5:]
             chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
 
-        return chain, seen_filenames, chain_attachments
+        return chain, seen_filenames, chain_attachments, anchor
 
-    async def _build_pre_context(self, message, limit=10) -> list[str]:
-        """답글 체인 시작점 직전 또는 멘션 직전 메시지들"""
-        anchor = message
-        while anchor.reference:
-            ref = anchor.reference.resolved
-            if not ref and anchor.reference.message_id:
-                try:
-                    ref = await anchor.channel.fetch_message(anchor.reference.message_id)
-                except Exception:
-                    break
-            if not ref:
-                break
-            anchor = ref
+    async def _build_pre_context(self, message, limit=10, anchor=None) -> list[str]:
+        """답글 체인 시작점 직전 또는 멘션 직전 메시지들. anchor는 _build_reply_chain에서 받음."""
+        if anchor is None:
+            anchor = message
 
+        msgs = [msg async for msg in anchor.channel.history(limit=limit, before=anchor)]
+        if not msgs:
+            return []
+        extras_list = await asyncio.gather(*(self._extract_extras(m) for m in msgs))
         lines = []
-        async for msg in anchor.channel.history(limit=limit, before=anchor):
+        for msg, extras in zip(msgs, extras_list):
             if self.user and msg.author.id == self.user.id:
                 name = self.persona.name
             else:
                 name = f"{msg.author.display_name}(<@{msg.author.id}>)"
             content = msg.content[:150]
-            extras = await self._extract_extras(msg)
             if extras:
                 content = f"{content} {extras}" if content else extras
             lines.append(f"{name}: {content}")

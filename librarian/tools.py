@@ -19,7 +19,6 @@ def parse_url(url: str) -> dict:
     host = (parsed.hostname or "").removeprefix("www.").removeprefix("m.")
 
     if host in ("youtube.com", "youtu.be"):
-        result["platform"] = "youtube"
         if host == "youtu.be":
             content_id = parsed.path.lstrip("/").split("/")[0]
         else:
@@ -31,7 +30,8 @@ def parse_url(url: str) -> dict:
             else:
                 content_id = None
         result["content_id"] = content_id
-        result["normalized"] = f"youtube:{content_id}" if content_id else normalize_url(url)
+        result["platform"] = "youtube_video" if content_id else "youtube"
+        result["normalized"] = f"youtu.be/{content_id}" if content_id else normalize_url(url)
     else:
         result["normalized"] = normalize_url(url)
 
@@ -289,6 +289,34 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 weather = await get_weather_for(city)
                 if weather:
                     result["weather"] = weather
+
+        # 미디어/URL 키워드 감지 → 최근 목록 반환
+        _media_kw = ["이미지", "사진", "미디어", "짤", "그림", "파일", "media", "image"]
+        _url_kw = ["링크", "url", "유튜브", "영상", "웹"]
+        if any(mk in keyword.lower() for mk in _media_kw) and "미디어" not in result:
+            _m_user, _m_other, _ = await librarian_db.get_recent_media_results(
+                10, exclude_filenames=[], user_name=user_name)
+            _m_rows = []
+            for r in (_m_user + _m_other)[:10]:
+                line = f"[media_id:{r['id']}] [{r['filename']}] {r['result'][:150]}"
+                _m_rows.append(line + " (첨부 가능)")
+            if _m_rows:
+                result["미디어"] = _m_rows
+        if any(uk in keyword.lower() for uk in _url_kw) and "유튜브" not in result and "웹" not in result:
+            _u_user, _u_other, _ = await librarian_db.get_recent_url_results(
+                10, user_name=user_name)
+            _yt, _web = [], []
+            for r in (_u_user + _u_other)[:10]:
+                norm = r.get("normalized", "")
+                line = f"[url_id:{r['id']}] [{r['original_url']}] {r['result'][:150]} (첨부 가능)"
+                if norm.startswith("youtu.be/") or norm.startswith("youtube:"):
+                    _yt.append(line)
+                else:
+                    _web.append(line)
+            if _yt:
+                result["유튜브"] = _yt
+            if _web:
+                result["웹"] = _web
 
         if not result:
             result["info"] = f"'{keyword}'에 대해 아는 게 없음."

@@ -424,7 +424,7 @@ class LibrarianDB:
             if rows:
                 result["미디어"] = rows
 
-            # 7. URL 캐시
+            # 7. URL 캐시 (유튜브 영상 / 일반 URL 분리)
             cursor = await db.execute(f"""
                 SELECT id, normalized, original_url, result FROM url_results
                 WHERE status = 'done'
@@ -432,12 +432,19 @@ class LibrarianDB:
                   {url_exclude}
                 ORDER BY id DESC LIMIT ?
             """, (like, like, like, limit))
-            rows = []
+            yt_rows = []
+            url_rows = []
             for r in await cursor.fetchall():
-                line = f"[url_id:{r['id']}] [{r['original_url']}] {_snippet(r['result'])}"
-                rows.append(line)
-            if rows:
-                result["URL"] = rows
+                norm = r['normalized'] or ""
+                line = f"[url_id:{r['id']}] [{r['original_url']}] {_snippet(r['result'])} (첨부 가능)"
+                if norm.startswith("youtu.be/") or norm.startswith("youtube:"):
+                    yt_rows.append(line)
+                else:
+                    url_rows.append(line)
+            if yt_rows:
+                result["유튜브"] = yt_rows
+            if url_rows:
+                result["웹"] = url_rows
 
             # 8. 도서 지식 (키워드 주변 200자, done만)
             cursor = await db.execute("""
