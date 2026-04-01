@@ -1186,20 +1186,8 @@ class AILibrarianBot(discord.Client):
                         logger.warning(f"feel JSON 파싱 실패: {e}")
                 if json_match:
                     text = text[:json_match.start()].strip()
-                # [mood:XX] 태그 처리
-                m = re.search(r'\[mood:([+-]?\d+)\]', text)
-                if not m:
-                    return text
-                text = text.replace(m.group(0), '').strip()
-                if not ("feel" in _tool_used):
-                    try:
-                        val = int(m.group(1))
-                        asyncio.create_task(
-                            self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
-                        _tool_used.add("feel")
-                        logger.info(f"감정(폴백): mood={m.group(1)} → DB")
-                    except (ValueError, Exception) as e:
-                        logger.warning(f"mood 폴백 실패: {e}")
+                # [mood:XX] 태그 제거 (v3 레거시)
+                text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
                 return text
 
             reply = _strip_feeling(reply)
