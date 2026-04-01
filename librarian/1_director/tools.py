@@ -62,13 +62,11 @@ def normalize_url(url: str) -> str:
 
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
-# v5 레이어별 도구 이름
+# v5 Director 도구 이름
 DIRECTOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
-EVALUATOR_TOOL_NAMES = {"feel", "memorize", "forget"}
 
-# 전체 도구 선언 (v4 호환 + 레이어별 필터링 기반)
-library_tools = [
-    types.Tool(function_declarations=[
+# Director 도구 선언
+director_declarations = [
         types.FunctionDeclaration(
             name="search",
             description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
@@ -89,28 +87,6 @@ library_tools = [
                     "file_id": types.Schema(type="INTEGER", description="전송할 파일 ID"),
                 },
                 required=["file_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="memorize",
-            description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모, 지식 등. 수정이 필요하면 forget 후 memorize.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "content": types.Schema(type="STRING", description="기억할 내용"),
-                },
-                required=["content"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="forget",
-            description="잘못된 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
-                },
-                required=["keyword"],
             ),
         ),
         types.FunctionDeclaration(
@@ -180,33 +156,9 @@ library_tools = [
                 },
             ),
         ),
-        types.FunctionDeclaration(
-            name="feel",
-            description="감정 변화를 기록한다. 매 답변마다 호출해.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "target": types.Schema(type="STRING", description="대상 유저 ID (<@ID> 또는 숫자). 생략하면 현재 대화 상대"),
-                    "user_friendly": types.Schema(type="INTEGER", description="호감 변화량 (-5 ~ +5)"),
-                    "user_lovely": types.Schema(type="INTEGER", description="애정 변화량 (-5 ~ +5)"),
-                    "user_trust": types.Schema(type="INTEGER", description="신뢰 변화량 (-5 ~ +5)"),
-                    "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-5 ~ +5)"),
-                    "self_energy": types.Schema(type="INTEGER", description="기력 변화량 (-5 ~ +5)"),
-                    "server_vibe": types.Schema(type="INTEGER", description="분위기 변화량 (-5 ~ +5)"),
-                    "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
-                    "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
-                    "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
-                },
-                required=["reason"],
-            ),
-        ),
-    ]),
 ]
 
-# v5 레이어별 도구 리스트
-_all_decls = library_tools[0].function_declarations
-director_tools = [types.Tool(function_declarations=[d for d in _all_decls if d.name in DIRECTOR_TOOL_NAMES])]
-evaluator_tools = [types.Tool(function_declarations=[d for d in _all_decls if d.name in EVALUATOR_TOOL_NAMES])]
+director_tools = [types.Tool(function_declarations=director_declarations)]
 
 # ── 도구 실행 ────────────────────────────────────────
 
