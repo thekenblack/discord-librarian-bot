@@ -387,7 +387,20 @@ class AILibrarianBot(discord.Client):
         if file_to_send:
             await message.reply(reply_text, file=file_to_send)
         elif reply_text:
-            await message.reply(reply_text)
+            # 이미지 URL 감지 → 임베드로 변환
+            import re as _re
+            _img_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\S*)?|https?://tenor\.com/\S+|https?://giphy\.com/\S+)', reply_text)
+            if _img_url:
+                _url = _img_url.group()
+                _text = reply_text.replace(_url, '').strip()
+                _embed = discord.Embed()
+                _embed.set_image(url=_url)
+                if _text:
+                    await message.reply(_text, embed=_embed)
+                else:
+                    await message.reply(embed=_embed)
+            else:
+                await message.reply(reply_text)
 
         # 이모지 리액션
         if _meta.get("reaction"):
