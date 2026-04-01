@@ -954,6 +954,13 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'/feel\s+\S', text):
                     _had_inline_function = True
                 text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
+                # <br> 등 HTML 태그 제거
+                text = re.sub(r'<br\s*/?>', '\n', text).strip()
+                text = re.sub(r'<[^>]+>', '', text).strip()
+                # *(감정 기록: ...)* 형태 제거
+                if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
+                    _had_inline_function = True
+                text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
                 # 잔여물 제거
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
