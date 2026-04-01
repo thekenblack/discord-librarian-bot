@@ -504,8 +504,8 @@ class AILibrarianBot(discord.Client):
                 def _check_emoji(m):
                     return m.group() if m.group(2) in guild_emoji_ids else ""
                 reply_text = _re.sub(r'<(a?:\w+:)(\d+)>', _check_emoji, reply_text).strip()
-            # 이미지 URL 감지 → 임베드로 변환
-            _img_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\S*)?|https?://tenor\.com/\S+|https?://giphy\.com/\S+)', reply_text)
+            # 이미지 URL 감지 → 임베드로 변환 (tenor/giphy는 Discord 자체 임베드에 맡김)
+            _img_url = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\?\S*)?)', reply_text)
             if _img_url:
                 _url = _img_url.group()
                 _text = reply_text.replace(_url, '').strip()
