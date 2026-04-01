@@ -801,9 +801,12 @@ class AILibrarianBot(discord.Client):
 
                     # response에 이모지가 있으면 리액션 예약 (답변도 계속 진행)
                     if response_mode and response_mode not in ("normal", "ignore"):
-                        if not _meta.get("reaction"):
+                        emojis = _extract_emojis(response_mode)
+                        if emojis and not _meta.get("reaction"):
                             _meta["reaction"] = response_mode
                             logger.info(f"이모지 리액션 예약: {response_mode}")
+                        elif not emojis:
+                            logger.info(f"이모지 리액션 무시 (유효하지 않음): {response_mode[:50]}")
 
                     result_parts = []
                     for k, v in current.items():
@@ -1116,6 +1119,10 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'/feel\s+\S', text):
                     _had_inline_function = True
                 text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
+                # (feel: reason=..., ...) 괄호 형태 제거
+                if re.search(r'[\(\（]\s*feel\s*:', text):
+                    _had_inline_function = True
+                text = re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', text).strip()
                 # *(감정 기록: ...)* 형태 제거
                 if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
                     _had_inline_function = True
@@ -1124,6 +1131,7 @@ class AILibrarianBot(discord.Client):
                 text = re.sub(r'<br\s*/?>', '\n', text).strip()
                 text = re.sub(r'<(?![@#:a?:]\S)[^>]+>', '', text).strip()
                 # 잔여물 제거
+                text = re.sub(r'\*\*\*\*', '', text).strip()  # **** 빈 볼드 (AI가 **제목** 대신 **** 출력)
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
                 text = re.sub(r'^\s*/\s*$', '', text, flags=re.MULTILINE).strip()  # 슬래시만 있는 줄
@@ -1165,7 +1173,7 @@ class AILibrarianBot(discord.Client):
                         if response_val and response_val not in ("normal",):
                             if response_val == "ignore":
                                 _meta["intentional_silence"] = True
-                            elif not _meta.get("reaction"):
+                            elif _extract_emojis(response_val) and not _meta.get("reaction"):
                                 _meta["reaction"] = response_val
                                 logger.info(f"이모지 리액션(JSON 폴백): {response_val}")
                     except Exception as e:
@@ -1325,6 +1333,8 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[2차] API 호출")
                     r = self._extract_reply(await self._call_gemini(clean_message, retry_config))
+                    if r:
+                        r = _strip_feeling(r)
                     logger.info(f"[2차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -1343,6 +1353,8 @@ class AILibrarianBot(discord.Client):
                     )
                     logger.info("[3차] API 호출")
                     r = self._extract_reply(await self._call_gemini(clean_message, web_config))
+                    if r:
+                        r = _strip_feeling(r)
                     logger.info(f"[3차] 응답: {'빈 응답' if not r else r}")
                     if r and not self._is_repeat(history, r):
                         reply = r
@@ -1445,6 +1457,9 @@ class AILibrarianBot(discord.Client):
                         import re as _re
                         reply = _re.sub(r'\[mood:[+-]?\d+\]', '', reply).strip()
                         reply = _re.sub(r'feel\s*\([^)]*\)', '', reply).strip()
+                        reply = _re.sub(r'/feel\s+[^\n]*', '', reply).strip()
+                        reply = _re.sub(r'[\(\（]\s*feel\s*:[^)\）]*[\)\）]', '', reply).strip()
+                        reply = _re.sub(r'\*\*\*\*', '', reply).strip()
                         logger.info(f"[클린 재시도] 응답: {reply}")
                         return reply, None, _meta
                 except Exception as retry_e:
