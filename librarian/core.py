@@ -603,7 +603,7 @@ class AILibrarianBot(discord.Client):
 
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
-        _mood_applied = False
+        _feeling_applied = False
 
         file_to_send = None
 
@@ -645,7 +645,7 @@ class AILibrarianBot(discord.Client):
 
                 # feel 도구: 감정 변화 기록 (1요청당 1회만)
                 if fc.name == "feel":
-                    if _mood_applied:
+                    if _feeling_applied:
                         # 이미 feel 했으면 무시하고 빈 결과로 다음 턴
                         loop_contents.append(response.candidates[0].content)
                         loop_contents.append(types.Content(
@@ -695,7 +695,7 @@ class AILibrarianBot(discord.Client):
                     changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                     current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
                     logger.info(f"감정: {target_name} | {changes_str} | {reason} | response={response_mode} → {current_str}")
-                    _mood_applied = True
+                    _feeling_applied = True
 
                     # 의도적 무응답
                     if response_mode == "ignore":
@@ -977,7 +977,7 @@ class AILibrarianBot(discord.Client):
 
             def _strip_feeling(text):
                 """내부 태그/JSON 제거 + feel 미호출 시 폴백."""
-                nonlocal _mood_applied, _had_inline_function
+                nonlocal _feeling_applied, _had_inline_function
                 if not text:
                     return text
                 # feel(...) 인라인 제거
@@ -1005,7 +1005,7 @@ class AILibrarianBot(discord.Client):
                 json_match = re.search(r'(?:감정\s*:\s*)?\{[^}]*reason[^}]*\}', text, flags=re.DOTALL)
                 if json_match:
                     _had_inline_function = True
-                if json_match and not _mood_applied:
+                if json_match and not _feeling_applied:
                     try:
                         import json as _json
                         raw = json_match.group()
@@ -1031,7 +1031,7 @@ class AILibrarianBot(discord.Client):
                                 self.librarian_db.update_emotion(
                                     changes, target_user_id=user_id,
                                     target_user_name=user_name, reason=reason or "json fallback"))
-                            _mood_applied = True
+                            _feeling_applied = True
                             logger.info(f"감정(JSON 폴백): {changes} | {reason}")
                         # response 처리 (이모지 리액션/무응답)
                         if response_val and response_val not in ("normal",):
@@ -1049,12 +1049,12 @@ class AILibrarianBot(discord.Client):
                 if not m:
                     return text
                 text = text.replace(m.group(0), '').strip()
-                if not _mood_applied:
+                if not _feeling_applied:
                     try:
                         val = int(m.group(1))
                         asyncio.create_task(
                             self.librarian_db.update_emotion(user_id, user_name, {"mood": val}, "mood tag fallback"))
-                        _mood_applied = True
+                        _feeling_applied = True
                         logger.info(f"감정(폴백): mood={m.group(1)} → DB")
                     except (ValueError, Exception) as e:
                         logger.warning(f"mood 폴백 실패: {e}")
@@ -1163,8 +1163,8 @@ class AILibrarianBot(discord.Client):
                     reply = _strip_feeling(reply)
 
             if not reply:
-                if _had_inline_function or _mood_applied:
-                    # 함수 시도(인라인 또는 도구 호출) 후 빈 텍스트 → 리트라이
+                if _had_inline_function or _feeling_applied:
+                    # feel 도구 호출 후 텍스트가 빈 경우 → 리트라이 필요
                     logger.info("[1차] 함수 시도 후 빈 텍스트 → 리트라이")
                 else:
                     # 함수 시도도 없고 텍스트도 없음 → 진짜 무응답
@@ -1176,7 +1176,10 @@ class AILibrarianBot(discord.Client):
             else:
                 logger.info(f"[1차] 응답: {reply}")
 
-            def _is_repeat_reply(r):
+            def _needs_retry(r):
+                """빈 응답이거나 반복이면 리트라이 필요."""
+                if not r:
+                    return True
                 is_rep = self._is_repeat(history, r)
                 if is_rep:
                     logger.info(f"반복 감지: {r[:50]}")
@@ -1184,7 +1187,7 @@ class AILibrarianBot(discord.Client):
 
             clean_message = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-            if _is_repeat_reply(reply):
+            if _needs_retry(reply):
                 logger.warning(f"[2차] 시도 (클린, 0.9)")
                 try:
                     retry_config = types.GenerateContentConfig(
@@ -1201,7 +1204,7 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[2차] 실패: {e}")
 
-            if _is_repeat_reply(reply):
+            if _needs_retry(reply):
                 logger.warning(f"[3차] 시도 (bare+웹, 1.0)")
                 try:
                     from librarian.tools import google_search_tool
@@ -1219,8 +1222,8 @@ class AILibrarianBot(discord.Client):
                 except Exception as e:
                     logger.warning(f"[3차] 실패: {e}")
 
-            if _is_repeat_reply(reply):
-                logger.warning("[포기] 반복 해소 실패")
+            if _needs_retry(reply):
+                logger.warning("[포기] 응답 생성 실패")
                 reply = ""
 
             # 2-3차 결과에도 인라인 함수 패턴이 있으면 실행 + 제거
