@@ -693,7 +693,7 @@ class AILibrarianBot(discord.Client):
         history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
         self._current_attachments = attachments or []
         _feeling_applied = False
-        _tool_used = set()  # 도구별 1회 제한 (feel만 제외)
+        _tool_used = set()  # 모든 도구 1회 제한
 
         file_to_send = None
 
@@ -1081,10 +1081,9 @@ class AILibrarianBot(discord.Client):
                     if shared_url:
                         _meta.setdefault("shared_urls", []).append(shared_url)
 
-                # 1회 제한 도구 사용 기록 + config 갱신
-                if fc.name != "feel":
-                    _tool_used.add(fc.name)
-                    config = _make_config(0.8)
+                # 사용한 도구 제거 + config 갱신
+                _tool_used.add(fc.name)
+                config = _make_config(0.8)
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
