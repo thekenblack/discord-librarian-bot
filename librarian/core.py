@@ -1120,9 +1120,9 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
                     _had_inline_function = True
                 text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
-                # <br> 등 HTML 태그 제거
+                # <br> 등 HTML 태그 제거 (디스코드 포맷 보호)
                 text = re.sub(r'<br\s*/?>', '\n', text).strip()
-                text = re.sub(r'<[^>]+>', '', text).strip()
+                text = re.sub(r'<(?![@#:a?:]\S)[^>]+>', '', text).strip()
                 # 잔여물 제거
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
