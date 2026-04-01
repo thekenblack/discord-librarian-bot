@@ -488,6 +488,12 @@ class AILibrarianBot(discord.Client):
             except discord.HTTPException:
                 logger.info("reply 실패 (원본 삭제) → 무시")
 
+        # share_url: AI 응답에 URL이 누락됐으면 끝에 추가
+        if _meta.get("shared_urls"):
+            for _surl in _meta["shared_urls"]:
+                if _surl not in (reply_text or ""):
+                    reply_text = f"{reply_text}\n{_surl}".strip() if reply_text else _surl
+
         if file_to_send:
             await _send_reply(reply_text, file=file_to_send)
         elif reply_text:
@@ -1007,7 +1013,10 @@ class AILibrarianBot(discord.Client):
                     if os.path.exists(save_path):
                         file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
-                # share_url은 도구 결과에 URL이 포함돼서 AI가 답변에 자연스럽게 포함
+                if tool_data.get("_action") == "share_url":
+                    shared_url = tool_data.get("url", "")
+                    if shared_url:
+                        _meta.setdefault("shared_urls", []).append(shared_url)
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
@@ -1318,6 +1327,10 @@ class AILibrarianBot(discord.Client):
                             save_path = os.path.join(MEDIA_DIR, _tool_data_r["stored_name"])
                             if os.path.exists(save_path):
                                 file_to_send = discord.File(save_path, filename=_tool_data_r["filename"])
+                        elif _tool_data_r.get("_action") == "share_url":
+                            _shared = _tool_data_r.get("url", "")
+                            if _shared:
+                                _meta.setdefault("shared_urls", []).append(_shared)
                     except Exception as _e:
                         logger.warning(f"[재시도] 인라인 함수 실행 실패: {_e}")
 
