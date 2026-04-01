@@ -821,6 +821,52 @@ class LibrarianDB:
                 result[row["key"]] = round(self._apply_decay(row["value"], row["key"], row["updated_at"]), 1)
             return result
 
+    FREQ_COOLDOWN = 1800  # 빈도 감쇠 쿨다운 (30분)
+
+    def _adjust_delta(self, delta: float, axis: str, current_value: float,
+                      last_interaction_str: str | None = None, server_avg: float | None = None) -> float:
+        """보정된 변화량 계산. 최종 범위 -5 ~ +5."""
+        import math
+        delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, float(delta)))
+
+        # 1. 빈도 감쇠: 최근 대화일수록 효과 감소
+        if last_interaction_str:
+            try:
+                last = datetime.fromisoformat(last_interaction_str)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+                freq_mult = min(1.0, elapsed / self.FREQ_COOLDOWN)
+                delta *= freq_mult
+            except Exception:
+                pass
+
+        # 2. 극단값 저항: 50에서 멀어지는 방향이면 저항
+        dist = abs(current_value - self.NEUTRAL)
+        moving_away = (current_value > self.NEUTRAL and delta > 0) or \
+                      (current_value < self.NEUTRAL and delta < 0)
+        if moving_away and dist > 0:
+            resist = 1.0 - (dist / self.NEUTRAL) * 0.5  # 극단에서 50% 저항
+            delta *= max(0.3, resist)
+
+        # 3. 서버 평균 정규화: 평균이 50에서 벗어나면 보정
+        if server_avg is not None:
+            avg_offset = (server_avg - self.NEUTRAL) / self.NEUTRAL  # -1 ~ +1
+            if delta > 0 and avg_offset > 0:
+                delta *= max(0.5, 1.0 - avg_offset)
+            elif delta < 0 and avg_offset < 0:
+                delta *= max(0.5, 1.0 + avg_offset)
+
+        return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
+
+    async def _get_server_avg(self, db, axis: str) -> float | None:
+        """유저 축 서버 평균 조회."""
+        if axis not in self.USER_AXES:
+            return None
+        cursor = await db.execute(f"SELECT AVG({axis}) as avg FROM user_emotion")
+        row = await cursor.fetchone()
+        return row["avg"] if row and row["avg"] is not None else None
+
     async def update_emotion(self, changes: dict, target_user_id: str = None,
                              target_user_name: str = None, reason: str = None) -> dict:
         """감정 변화 적용. user_ 축은 target 유저에, self_/server_ 축은 전역에."""
@@ -838,10 +884,13 @@ class LibrarianDB:
                 row = await cursor.fetchone()
                 current = dict(row) if row else {"friendly": self.NEUTRAL, "lovely": self.NEUTRAL, "trust": self.NEUTRAL,
                                                   "interaction_count": 0}
+                last_interaction = current.get("last_interaction")
 
                 for axis, delta in user_changes.items():
-                    delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
-                    current[axis] = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], current.get(axis, self.NEUTRAL) + delta))
+                    cur_val = current.get(axis, self.NEUTRAL)
+                    server_avg = await self._get_server_avg(db, axis)
+                    adjusted = self._adjust_delta(delta, axis, cur_val, last_interaction, server_avg)
+                    current[axis] = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], cur_val + adjusted))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
@@ -865,12 +914,13 @@ class LibrarianDB:
             global_changes = {k: v for k, v in changes.items()
                               if k in self.SELF_AXES + self.SERVER_AXES}
             for axis, delta in global_changes.items():
-                delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
                 cursor = await db.execute(
-                    "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
+                    "SELECT value, updated_at FROM bot_emotion WHERE key = ?", (axis,))
                 row = await cursor.fetchone()
                 old_val = row["value"] if row else self.NEUTRAL
-                new_val = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], old_val + delta))
+                last_updated = row["updated_at"] if row else None
+                adjusted = self._adjust_delta(delta, axis, old_val, last_updated)
+                new_val = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], old_val + adjusted))
                 await db.execute(
                     "UPDATE bot_emotion SET value = ?, updated_at = ? WHERE key = ?",
                     (new_val, datetime.now(timezone.utc).isoformat(), axis))
