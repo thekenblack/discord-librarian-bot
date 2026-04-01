@@ -377,12 +377,17 @@ class AILibrarianBot(discord.Client):
             reply_text = error_msg
 
         # 에러 메시지면 어드민 알림 대기열에 추가
-        if reply_text in self._error_messages:
-            error_type = _meta.get("error", "unknown")
+        if reply_text and reply_text in self._error_messages:
+            error_type = _meta.get("error") or "unknown"
             channel_name_short = getattr(message.channel, "name", "DM")
             self._queue_admin_notify(
                 f"에러 `{error_type}` — {message.author.display_name}(#{channel_name_short}): {message.content[:80]}"
             )
+
+        # 빈 에러 메시지면 무응답
+        if not reply_text and not file_to_send:
+            logger.info(f"[{guild_name}/#{channel_name}] 무응답 처리 (에러)")
+            return
 
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
@@ -950,17 +955,6 @@ class AILibrarianBot(discord.Client):
                 if re.search(r'feel\s*\([^)]*\)', text):
                     _had_inline_function = True
                 text = re.sub(r'feel\s*\([^)]*\)', '', text).strip()
-                # /feel ... 슬래시 커맨드 형태 제거
-                if re.search(r'/feel\s+\S', text):
-                    _had_inline_function = True
-                text = re.sub(r'/feel\s+[^\n]*', '', text).strip()
-                # <br> 등 HTML 태그 제거
-                text = re.sub(r'<br\s*/?>', '\n', text).strip()
-                text = re.sub(r'<[^>]+>', '', text).strip()
-                # *(감정 기록: ...)* 형태 제거
-                if re.search(r'\*\s*[\(\（]?감정\s*기록', text):
-                    _had_inline_function = True
-                text = re.sub(r'\*\s*[\(\（]?감정\s*기록[^*]*\*', '', text, flags=re.DOTALL).strip()
                 # 잔여물 제거
                 text = re.sub(r'\[\s*\]', '', text).strip()  # []
                 text = re.sub(r'\{\s*\}', '', text).strip()  # {}
