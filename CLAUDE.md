@@ -155,8 +155,7 @@ feel 도구 + DB 기반 6축 감정 (v4):
 - user_friendly, user_lovely, user_trust — 유저별 (0~10, 중립 5)
 - self_mood, self_energy — 봇 전역
 - server_vibe — 서버 전역
-- 변화량 -3 ~ +3, AXIS_LIMITS 적용 (lovely/trust 상승 제한)
-- lovely <= trust 제약
+- 변화량 -3 ~ +3, 범위 0 ~ 10, 전 축 동일
 - 1요청당 1회만 적용
 - reaction 파라미터로 이모지 리액션 분리, response는 모드(normal/ignore) 전용
 - emotion_log 테이블에 변경 이력 기록

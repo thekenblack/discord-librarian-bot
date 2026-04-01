@@ -746,15 +746,7 @@ class LibrarianDB:
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
-    # 1회 변화량 제한: (상한, 하한)
-    AXIS_LIMITS = {
-        "friendly":    (+3, -3),
-        "lovely":      (+1, -3),
-        "trust":       (+1, -3),
-        "self_mood":   (+3, -3),
-        "self_energy":  (+3, -3),
-        "server_vibe": (+3, -3),
-    }
+    AXIS_DELTA_MAX = 3  # 1회 변화량 ±3, 범위 0~10
 
     async def get_user_emotion(self, user_id: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
@@ -802,14 +794,8 @@ class LibrarianDB:
                                                   "interaction_count": 0}
 
                 for axis, delta in user_changes.items():
-                    hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
-                    delta = max(lo, min(hi, delta))
-                    val = current.get(axis, 0) + delta
-                    current[axis] = max(0, min(10, val))
-
-                # lovely는 항상 trust 이하
-                if current["lovely"] > current["trust"]:
-                    current["lovely"] = current["trust"]
+                    delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
+                    current[axis] = max(0, min(10, current.get(axis, 0) + delta))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
@@ -833,8 +819,7 @@ class LibrarianDB:
             global_changes = {k: v for k, v in changes.items()
                               if k in self.SELF_AXES + self.SERVER_AXES}
             for axis, delta in global_changes.items():
-                hi, lo = self.AXIS_LIMITS.get(axis, (+3, -3))
-                delta = max(lo, min(hi, delta))
+                delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
                 cursor = await db.execute(
                     "SELECT value FROM bot_emotion WHERE key = ?", (axis,))
                 row = await cursor.fetchone()
