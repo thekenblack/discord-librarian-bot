@@ -6,8 +6,13 @@ import discord
 from google.genai import types
 from google.genai.errors import ClientError
 from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS
-from librarian.tools import director_tools, execute_tool, normalize_url, parse_url
-from librarian import bitcoin_data
+import importlib as _il
+_tools = _il.import_module("librarian.1_director.tools")
+director_tools = _tools.director_tools
+execute_tool = _tools.execute_tool
+normalize_url = _tools.normalize_url
+parse_url = _tools.parse_url
+bitcoin_data = _il.import_module("librarian.1_director.bitcoin_data")
 
 logger = logging.getLogger("AILibrarian")
 
@@ -297,7 +302,7 @@ async def run_director(self, user_id: str, user_name: str, user_text: str,
                     break
                 continue
 
-            from librarian.tools import google_search_tool
+            google_search_tool = _tools.google_search_tool
             web_config = types.GenerateContentConfig(
                 system_instruction=dynamic_prompt,
                 tools=google_search_tool,

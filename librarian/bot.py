@@ -92,7 +92,8 @@ logger.info("Gemini API 키 로드됨")
 
 PERSONA_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from librarian.persona import Persona
+import importlib as _il
+Persona = _il.import_module("librarian.2_character.persona").Persona
 from librarian.core import AILibrarianBot
 
 persona = Persona(PERSONA_DIR, AI_NAME, AI_STATUS_TEXT)

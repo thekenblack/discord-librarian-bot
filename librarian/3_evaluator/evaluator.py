@@ -1,7 +1,11 @@
 import json
 import logging
 from google.genai import types
-from librarian.tools import evaluator_tools, execute_tool
+import importlib as _il
+_tools = _il.import_module("librarian.1_director.tools")
+_eval_tools = _il.import_module("librarian.3_evaluator.tools")
+evaluator_tools = _eval_tools.evaluator_tools
+execute_tool = _tools.execute_tool
 
 logger = logging.getLogger("AILibrarian")
 

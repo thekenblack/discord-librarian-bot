@@ -619,7 +619,8 @@ class LibraryCog(commands.Cog):
         # 도서 학습 (백그라운드)
         import asyncio
         from librarian.db import LibrarianDB
-        from librarian.book_learning import learn_book
+        import importlib
+        learn_book = importlib.import_module("librarian.1_director.book_learning").learn_book
         async def _learn_task():
             db = LibrarianDB()
             await db.init()
