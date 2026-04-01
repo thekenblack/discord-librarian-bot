@@ -61,12 +61,15 @@ v4 초기:
 
 - 디스코드 메시지 포워드 (답글로 못 달아서 실용성 없음)
 
-## IRRELEVANT (현재 안 쓰는 시스템)
+## INEFFECTIVE (있지만 효과 미미한 것)
 
-- add_knowledge 도구 (선언만 있고 실사용 0. memorize로 통합됨)
 - add_entry_alias 도구 (라이브러리 엔트리 별칭. 사용 실적 없음)
-- customs 테이블 (knowledge_base와 별도로 존재. 패치로 초기 데이터만 넣고 이후 추가 없음)
-- web_results 테이블 (url_results로 분리 후 키워드 검색 캐시 용도만. 실사용 미미)
-- mood.py (MoodSystem 클래스. feel 도구로 완전 대체. import만 주석 처리됨)
-- server_log.py DailyFileHandler (동작은 하지만 server.log 활용 빈도 낮음)
-- error.txt (에러 메시지 풀. 빈 응답 시 무응답 처리로 변경돼서 거의 안 쓰임)
+- customs 테이블 (초기 데이터만 있고 이후 추가 없음)
+- web_results 테이블 (url_results 분리 후 키워드 검색 캐시 용도만)
+- server_log.py (동작은 하지만 server.log 활용 빈도 낮음)
+- error.txt (빈 응답 무응답 처리로 거의 안 쓰임)
+
+## IRRELEVANT (완전히 대체되어 불필요한 것)
+
+- mood.py (feel 도구로 완전 대체. import 주석 처리됨)
+- add_knowledge 도구 (memorize로 통합됨)
