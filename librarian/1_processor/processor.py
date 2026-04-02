@@ -253,7 +253,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
         return types.GenerateContentConfig(
             system_instruction=dynamic_prompt,
             tools=tools,
-            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+            max_output_tokens=1500,  # 단서 정리에 충분한 토큰
             temperature=temp,
         )
 

@@ -7,15 +7,15 @@ logger = logging.getLogger("AILibrarian")
 
 async def run_character(self, user_id: str, user_name: str,
                          user_text: str, instruction: str) -> str:
-    """Character: 지시서 + 페르소나로 대사 생성. 도구 없음."""
+    """Character: 단서 + 페르소나로 대사 생성. 도구 없음."""
     history = self.chat_histories.get(user_id, [])
 
-    # 시스템 프롬프트: character + 지시서
+    # 시스템 프롬프트: character + 단서
     sys_parts = []
     if self.persona.character_text:
         sys_parts.append(self.persona.character_text)
     if instruction:
-        sys_parts.append(f"## 연출 지시\n{instruction}")
+        sys_parts.append(f"## 단서\n{instruction}")
     system_prompt = "\n\n".join(p for p in sys_parts if p)
 
     config = types.GenerateContentConfig(
