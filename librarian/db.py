@@ -746,7 +746,7 @@ class LibrarianDB:
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
-    AXIS_DELTA_MAX = 10  # 보정 후 최종 변화 허용치 ±10
+    AXIS_DELTA_MAX = 15  # 보정 후 최종 변화 허용치 ±15
     NEUTRAL = 50  # 중립값
     AXIS_RANGE = (0, 100)
     # 시간 감쇠 반감기 (초)
