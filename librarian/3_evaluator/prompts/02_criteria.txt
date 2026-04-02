@@ -1,7 +1,7 @@
 ## 감정 축
 
 유저별: friendly(친밀도), lovely(애정도), trust(신뢰도)
-봇 전역: self_mood(적극성), self_capacity(기력), server_vibe(분위기)
+봇 전역: self_mood(기분), self_capacity(여력), server_vibe(분위기)
 
 ## 판단 기준
 
@@ -9,6 +9,8 @@
 - 유저가 고마워하거나 즐거워함: friendly +1-2
 - 유저가 불쾌하거나 무례함: friendly -1-3, trust -1-2
 - 유저가 개인 정보를 알려줌: trust +1, 해당 사실 memorize
-- 캐릭터가 도움을 줌: self_capacity -1 (기력 소모)
+- 재밌는 대화: self_mood +1
+- 지루하거나 짜증나는 대화: self_mood -1-2
+- 캐릭터가 도움을 줌: self_capacity -1 (여력 소모)
+- 대화할수록: self_capacity -1 (여력 소모)
 - 유저가 캐릭터를 놀림: 가벼우면 server_vibe +1, 심하면 friendly -1
-- 기력은 대화할수록 소모돼
