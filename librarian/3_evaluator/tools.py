@@ -36,7 +36,7 @@ evaluator_declarations = [
             type="OBJECT",
             properties={
                 "target": types.Schema(type="STRING", description="대상 유저 ID (<@ID> 또는 숫자). 생략하면 현재 대화 상대"),
-                "user_filter": types.Schema(type="INTEGER", description="호감 변화량 (-5 ~ +5)"),
+                "user_filter": types.Schema(type="INTEGER", description="입 필터 변화량 (-5 ~ +5). 친해지면 -, 경계하면 +"),
                 "user_lovely": types.Schema(type="INTEGER", description="애정 변화량 (-5 ~ +5)"),
                 "user_trust": types.Schema(type="INTEGER", description="신뢰 변화량 (-5 ~ +5)"),
                 "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-5 ~ +5). 즐거우면 +, 짜증나면 -"),
