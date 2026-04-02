@@ -36,18 +36,18 @@ class Persona:
         self.status_text = status_text
 
         # v5 3레이어 구조
-        director_prompts = os.path.join(persona_dir, "1_director", "prompts")
+        processor_prompts = os.path.join(persona_dir, "1_director", "prompts")
         character_prompts = os.path.join(persona_dir, "2_character", "prompts")
         evaluator_prompts = os.path.join(persona_dir, "3_evaluator", "prompts")
         messages_dir = os.path.join(persona_dir, "messages")
 
         # 레이어별 프롬프트: 폴더 내 모든 .txt 합침
-        self.director_text: str = _load_prompts_dir(director_prompts, name)
+        self.processor_text: str = _load_prompts_dir(processor_prompts, name)
         self.character_text: str = _load_prompts_dir(character_prompts, name)
         self.evaluator_text: str = _load_prompts_dir(evaluator_prompts, name)
 
-        # v4 호환 (prompt_text = director, persona_text = character 첫 파일)
-        self.prompt_text: str = self.director_text
+        # v4 호환 (prompt_text = processor, persona_text = character 첫 파일)
+        self.prompt_text: str = self.processor_text
         self.persona_text: str = self.character_text
         self.reminder_text: str = ""
 

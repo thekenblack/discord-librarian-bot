@@ -463,7 +463,7 @@ class AILibrarianBot(discord.Client):
                           pre_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None) -> tuple[str, discord.File | None, dict]:
-        """v5 3레이어 오케스트레이션: Director → Character → Evaluator"""
+        """v5 3레이어 오케스트레이션: Processor → Character → Evaluator"""
         import time as _time
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
@@ -472,25 +472,25 @@ class AILibrarianBot(discord.Client):
         history = self.chat_histories[user_id]
 
         try:
-            # ── Phase 1: Director (연출가) ──
+            # ── Phase 1: Processor (연출가) ──
             _td0 = _time.monotonic()
-            instruction, file_to_send, director_meta = await self._run_director(
+            instruction, file_to_send, processor_meta = await self._run_processor(
                 user_id=user_id, user_name=user_name, user_text=user_text,
                 guild=guild, reply_chain=reply_chain, pre_context=pre_context,
                 attachments=attachments, seen_filenames=seen_filenames,
             )
-            _meta["tools_called"] = director_meta.get("tools_called", [])
-            _meta["tool_results"] = director_meta.get("tool_results", [])
-            if director_meta.get("shared_urls"):
-                _meta["shared_urls"] = director_meta["shared_urls"]
-            if director_meta.get("reaction"):
-                _meta["reaction"] = director_meta["reaction"]
-            logger.info(f"[Director] 완료 ({_time.monotonic()-_td0:.2f}s) | 지시서: {instruction[:200] if instruction else '(없음)'}")
+            _meta["tools_called"] = processor_meta.get("tools_called", [])
+            _meta["tool_results"] = processor_meta.get("tool_results", [])
+            if processor_meta.get("shared_urls"):
+                _meta["shared_urls"] = processor_meta["shared_urls"]
+            if processor_meta.get("reaction"):
+                _meta["reaction"] = processor_meta["reaction"]
+            logger.info(f"[Processor] 완료 ({_time.monotonic()-_td0:.2f}s) | 지시서: {instruction[:200] if instruction else '(없음)'}")
 
             # 응답 모드 판별
             import re as _re
             if _re.search(r'(?:응답\s*모드\s*[:：]\s*)?무응답', instruction or ""):
-                logger.info("[Director] 응답 모드: 무응답")
+                logger.info("[Processor] 응답 모드: 무응답")
                 _meta["intentional_silence"] = True
                 return "", file_to_send, _meta
 
@@ -500,7 +500,7 @@ class AILibrarianBot(discord.Client):
                 emojis = _extract_emojis(emoji_str)
                 if emojis:
                     _meta["reaction"] = emoji_str
-                    logger.info(f"[Director] 응답 모드: 리액션만 → {emoji_str}")
+                    logger.info(f"[Processor] 응답 모드: 리액션만 → {emoji_str}")
                     return "", file_to_send, _meta
 
             # ── Phase 2: Character (배우) ──
@@ -782,11 +782,11 @@ class AILibrarianBot(discord.Client):
 # ── v5: 레이어별 메서드 바인딩 ──
 import importlib as _il
 
-_director = _il.import_module("librarian.1_director.director")
-AILibrarianBot._run_director = _director.run_director
-AILibrarianBot._recognize_url_background = _director.recognize_url_background
-AILibrarianBot._build_catalog = _director.build_catalog
-AILibrarianBot._build_memories = _director.build_memories
+_processor = _il.import_module("librarian.1_director.processor")
+AILibrarianBot._run_processor = _processor.run_processor
+AILibrarianBot._recognize_url_background = _processor.recognize_url_background
+AILibrarianBot._build_catalog = _processor.build_catalog
+AILibrarianBot._build_memories = _processor.build_memories
 
 _character = _il.import_module("librarian.2_character.character")
 AILibrarianBot._run_character = _character.run_character

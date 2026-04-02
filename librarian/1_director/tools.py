@@ -65,11 +65,11 @@ def normalize_url(url: str) -> str:
 
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
-# v5 Director 도구 이름
-DIRECTOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
+# v5 Processor 도구 이름
+PROCESSOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
 
-# Director 도구 선언
-director_declarations = [
+# Processor 도구 선언
+processor_declarations = [
         types.FunctionDeclaration(
             name="search",
             description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
@@ -161,7 +161,7 @@ director_declarations = [
         ),
 ]
 
-director_tools = [types.Tool(function_declarations=director_declarations)]
+processor_tools = [types.Tool(function_declarations=processor_declarations)]
 
 # ── 도구 실행 ────────────────────────────────────────
 
