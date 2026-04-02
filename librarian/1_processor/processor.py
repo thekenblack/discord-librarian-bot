@@ -213,6 +213,12 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
     logger.info(f"[Processor][타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
     logger.info(f"[Processor][타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
 
+    # Evaluator 피드백 (이전 대화에서 남긴 것)
+    prev_feedback = await self.librarian_db.get_feedback(user_id)
+    if prev_feedback:
+        parts.append(f"## 이전 피드백\n{prev_feedback}")
+        logger.info(f"[Processor] 이전 피드백: {prev_feedback[:100]}")
+
     if pre_context:
         parts.append("## 직전 대화\n" + "\n".join(pre_context))
         logger.info(f"[Processor] 직전 대화: {len(pre_context)}건")

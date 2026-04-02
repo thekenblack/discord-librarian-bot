@@ -175,6 +175,16 @@ async def run_evaluator(self, user_id: str, user_name: str,
             except Exception:
                 break
 
+        # 피드백 추출: 도구 루프 후 마지막 텍스트 응답
+        feedback_text = ""
+        if response and response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.text and part.text.strip():
+                    feedback_text = part.text.strip()
+        if feedback_text:
+            await self.librarian_db.save_feedback(user_id, feedback_text)
+            logger.info(f"[Evaluator] 피드백 저장: {feedback_text[:100]}")
+
         logger.info("[Evaluator] 완료")
 
     except Exception as e:

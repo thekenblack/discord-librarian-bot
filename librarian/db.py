@@ -130,6 +130,15 @@ class LibrarianDB:
                 )
             """)
 
+            # Evaluator 피드백 (유저별 최신 1건)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS evaluator_feedback (
+                    user_id    TEXT PRIMARY KEY,
+                    feedback   TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # 별칭 (검색 확장용, 쌍 기반)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS aliases (
@@ -973,6 +982,25 @@ class LibrarianDB:
 
             await db.commit()
             return result
+
+    # ── Evaluator 피드백 ──────────────────────────────────
+
+    async def save_feedback(self, user_id: str, feedback: str):
+        """Evaluator 피드백 저장 (유저별 최신 1건)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO evaluator_feedback (user_id, feedback) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET feedback=excluded.feedback, created_at=datetime('now')
+            """, (user_id, feedback))
+            await db.commit()
+
+    async def get_feedback(self, user_id: str) -> str | None:
+        """유저별 최신 Evaluator 피드백 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT feedback FROM evaluator_feedback WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
     async def get_emotion_log(self, target: str = None, limit: int = 5) -> list[dict]:
         """감정 변동 기록 조회."""
