@@ -460,6 +460,26 @@ class LibrarianDB:
             if rows:
                 result["도서"] = rows
 
+            # 8. 유저 감정 (이름으로 검색)
+            cursor = await db.execute("""
+                SELECT user_id, user_name, comfort, affinity, trust,
+                       interaction_count, last_interaction
+                FROM user_emotion
+                WHERE user_name LIKE ?
+                LIMIT ?
+            """, (like, limit))
+            emo_rows = []
+            for r in await cursor.fetchall():
+                last_time = r["last_interaction"]
+                c = round(self._apply_decay(r["comfort"], "comfort", last_time), 1)
+                a = round(self._apply_decay(r["affinity"], "affinity", last_time), 1)
+                t = round(self._apply_decay(r["trust"], "trust", last_time), 1)
+                emo_rows.append(
+                    f"{r['user_name']}: comfort:{c} affinity:{a} trust:{t}"
+                    f" (대화 {r['interaction_count']}회)")
+            if emo_rows:
+                result["유저감정"] = emo_rows
+
         # 벡터 검색 결과로 덮어쓰기 (4개 카테고리)
         if self.vector_store:
             try:
