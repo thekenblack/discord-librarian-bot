@@ -499,7 +499,7 @@ class _FileModalTriggerView(BotView):
 
 class LibraryListView(BotView):
     """라이브러리 목록 페이지네이션"""
-    def __init__(self, sorted_pages, pages, page_labels, build_embed_fn, total_count):
+    def __init__(self, sorted_pages, pages, page_labels, build_embed_fn, total_count, owner_id: int):
         super().__init__(timeout=120)
         self.sorted_pages = sorted_pages
         self.pages = pages
@@ -507,7 +507,16 @@ class LibraryListView(BotView):
         self.build_embed = build_embed_fn
         self.total_count = total_count
         self.current_idx = 0
+        self.owner_id = owner_id
         self._update_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not await super().interaction_check(interaction):
+            return False
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("명령어 사용자만 조작할 수 있습니다.", ephemeral=True)
+            return False
+        return True
 
     def _update_buttons(self):
         self.prev_btn.disabled = self.current_idx <= 0
@@ -740,7 +749,7 @@ class LibraryCog(commands.Cog):
         if len(sorted_pages) <= 1:
             await interaction.response.send_message(embed=build_page_embed(sorted_pages[0]))
         else:
-            view = LibraryListView(sorted_pages, page_groups, page_labels, build_page_embed, len(books))
+            view = LibraryListView(sorted_pages, page_groups, page_labels, build_page_embed, len(books), owner_id=interaction.user.id)
             await interaction.response.send_message(
                 embed=build_page_embed(sorted_pages[0]),
                 view=view,
