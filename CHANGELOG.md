@@ -4,6 +4,51 @@
 
 ---
 
+## v5 (2026-04-03 ~)
+
+v4 로그 분석 기반. 핵심 철학 변경: 고정 성격 제거, 감정 수치가 캐릭터를 만든다.
+
+### 의도
+
+핵심:
+- v4까지 "밝고 활기찬 사서"로 성격 하드코딩 → 감정 수치가 있어도 캐릭터가 안 변함
+- v5: 성격 정의 없음. 감정 수치가 캐릭터의 톤, 태도, 말수를 결정
+- mood 높으면 수다스러운 사서, 낮으면 퉁명스러운 사서. 같은 사서인데 다른 사람처럼
+
+5레이어 구조 (layers/):
+- L1 Perception (temp 0.3): 맥락 관찰. 감정 수치를 자연어로 해석. 이전 소견 최우선 전달. 지시하지 않고 판단 재료만 넘김
+- L2 Functioning (temp 0.5): 도구 실행. L1 결과 참조. 의도 분석은 안 함
+- L3 Character (temp 1.2): 대사 생성. 역할만 정의, 성격은 L1이 넘긴 감정 해석에 의해 동적 결정
+- L4 Postprocess (temp 0.1): 시스템 용어 제거, 자연어 정제. "쉿!" 같은 과잉 연출도 잡아냄
+- L5 Evaluation (temp 0.3): 적합성 판단 + 감정 변화 + 소견. 명령이 아닌 우려 표현. 백그라운드
+
+감정 시스템 v5:
+- 6축: comfort(우정), affinity(관심/집착), trust(신뢰), self_mood(기분), self_capacity(여력), server_vibe(분위기)
+- trust가 핵심: 다음 말을 믿을지 결정. 장난치면 하락, 진지하면 상승
+- capacity: 소모 자원. 올리려면 명시적 회복만 인정. 응원은 mood지 capacity가 아님
+- 각 축 독립적. affinity 높아도 trust 낮을 수 있음 (좋아하는데 말은 안 믿는 장난꾸러기)
+- 변화량 확대: 일상 +-3-5, 사건 +-7-12, 극단 +-12-15
+- 빈도 감쇠 완화: FREQ_COOLDOWN 1800s → 300s, 최소 30% 반영 보장
+- 분산 유지 완화: TARGET_STD 15 → 20
+
+검색:
+- ChromaDB 벡터 검색 도입 (knowledge, learned, customs, book_knowledge)
+- LIKE 검색 유지 (web_results, url_results, media_results, user_emotion)
+- 유저 감정 검색 카테고리 추가
+
+### 주요 변경
+
+- 폴더: 1_processor/2_character/3_evaluator → layers/01-05
+- processor → functioning (네이밍 일괄 변경)
+- 반복 리트라이 구조 제거 (_is_repeat, 2차/3차 시도)
+- 자동 이모지 따라누르기 제거 (on_raw_reaction_add)
+- Character 프롬프트에서 성격 정의 전부 제거
+- 감정 해석 가이드를 Perception에 배치
+- Evaluation: "피드백" → "소견", 명령조 → 우려 표현
+- Perception이 이전 소견을 최우선으로 전달
+
+---
+
 ## v4 (2026-04-01 ~)
 
 v3 로그 분석(3월 31일) 기반 전면 개선. 안정성 + 성능 + 기능 확장.
