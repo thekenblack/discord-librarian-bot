@@ -36,7 +36,7 @@ class Persona:
         self.status_text = status_text
 
         # v5 3레이어 구조
-        processor_prompts = os.path.join(persona_dir, "1_director", "prompts")
+        processor_prompts = os.path.join(persona_dir, "1_processor", "prompts")
         character_prompts = os.path.join(persona_dir, "2_character", "prompts")
         evaluator_prompts = os.path.join(persona_dir, "3_evaluator", "prompts")
         messages_dir = os.path.join(persona_dir, "messages")

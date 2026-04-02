@@ -17,8 +17,8 @@ from config import ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOK
 from librarian import server_log
 import importlib as _il
 _persona_mod = _il.import_module("librarian.2_character.persona")
-_tools_mod = _il.import_module("librarian.1_director.tools")
-_btc_mod = _il.import_module("librarian.1_director.bitcoin_data")
+_tools_mod = _il.import_module("librarian.1_processor.tools")
+_btc_mod = _il.import_module("librarian.1_processor.bitcoin_data")
 Persona = _persona_mod.Persona
 parse_url = _tools_mod.parse_url
 bitcoin_data = _btc_mod
@@ -224,7 +224,7 @@ class AILibrarianBot(discord.Client):
 
     async def _learn_all_books(self):
         """미학습 도서 일괄 학습"""
-        _bl = _il.import_module("librarian.1_director.book_learning")
+        _bl = _il.import_module("librarian.1_processor.book_learning")
         learn_book = _bl.learn_book
         try:
             books = await self.library_db.list_all_books()
@@ -782,7 +782,7 @@ class AILibrarianBot(discord.Client):
 # ── v5: 레이어별 메서드 바인딩 ──
 import importlib as _il
 
-_processor = _il.import_module("librarian.1_director.processor")
+_processor = _il.import_module("librarian.1_processor.processor")
 AILibrarianBot._run_processor = _processor.run_processor
 AILibrarianBot._recognize_url_background = _processor.recognize_url_background
 AILibrarianBot._build_catalog = _processor.build_catalog

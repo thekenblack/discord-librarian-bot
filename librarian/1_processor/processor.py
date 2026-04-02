@@ -7,12 +7,12 @@ from google.genai import types
 from google.genai.errors import ClientError
 from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS
 import importlib as _il
-_tools = _il.import_module("librarian.1_director.tools")
+_tools = _il.import_module("librarian.1_processor.tools")
 processor_tools = _tools.processor_tools
 execute_tool = _tools.execute_tool
 normalize_url = _tools.normalize_url
 parse_url = _tools.parse_url
-bitcoin_data = _il.import_module("librarian.1_director.bitcoin_data")
+bitcoin_data = _il.import_module("librarian.1_processor.bitcoin_data")
 
 logger = logging.getLogger("AILibrarian")
 

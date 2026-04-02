@@ -9,7 +9,7 @@ from google.genai import types
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 import importlib as _il
-_btc = _il.import_module("librarian.1_director.bitcoin_data")
+_btc = _il.import_module("librarian.1_processor.bitcoin_data")
 get_news = _btc.get_news
 get_weather_for = _btc.get_weather_for
 

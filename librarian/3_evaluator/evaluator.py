@@ -2,7 +2,7 @@ import json
 import logging
 from google.genai import types
 import importlib as _il
-_tools = _il.import_module("librarian.1_director.tools")
+_tools = _il.import_module("librarian.1_processor.tools")
 _eval_tools = _il.import_module("librarian.3_evaluator.tools")
 evaluator_tools = _eval_tools.evaluator_tools
 execute_tool = _tools.execute_tool
