@@ -5,14 +5,13 @@ import logging
 import discord
 from google.genai import types
 from google.genai.errors import ClientError
-from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS
+from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS
 import importlib as _il
 _tools = _il.import_module("librarian.1_processor.tools")
 processor_tools = _tools.processor_tools
 execute_tool = _tools.execute_tool
 normalize_url = _tools.normalize_url
 parse_url = _tools.parse_url
-bitcoin_data = _il.import_module("librarian.1_processor.bitcoin_data")
 
 logger = logging.getLogger("AILibrarian")
 
@@ -118,122 +117,36 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
 
 
 async def run_processor(self, user_id: str, user_name: str, user_text: str,
-                        guild=None, reply_chain: list[str] = None,
-                        pre_context: list[str] = None,
+                        catalog: str, memories_text: str,
+                        memory_ids: list[int] = None,
                         attachments: list = None,
                         seen_filenames: list[str] = None,
                         ) -> tuple[str, discord.File | None, dict]:
-    """Processor: 도구 실행 + 지시서 생성. (instruction, file_to_send, meta) 반환."""
+    """Processor: 도구 실행 전용 (thin). (tool_results_text, file_to_send, meta) 반환."""
     import time as _time
     _meta = {"tools_called": [], "tool_results": []}
 
-    # ── 프롬프트 조립 ──
+    # ── 프롬프트 조립 (도구 판단에 필요한 것만) ──
     _tp0 = _time.monotonic()
     parts = []
 
-    _tp1 = _time.monotonic()
-    catalog = await self._build_catalog()
-    logger.info(f"[Processor][타이밍] catalog: {_time.monotonic()-_tp1:.2f}s")
-    _tp2 = _time.monotonic()
-    memories_text, memory_ids = await self._build_memories(user_name)
-    logger.info(f"[Processor][타이밍] memories: {_time.monotonic()-_tp2:.2f}s")
-
-    # Processor 전용 프롬프트 (director.txt + functioning.txt)
+    # Processor 전용 프롬프트 (role + functioning)
     processor_base = self.persona.processor_text or self.persona.prompt_text
     processor_prompt = processor_base.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
     parts.append(processor_prompt)
 
-    # 상황 정보
-    admin_names = []
-    if guild:
-        for aid in ADMIN_IDS:
-            member = guild.get_member(int(aid))
-            if member:
-                admin_names.append(member.display_name)
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-    _emo = await self.librarian_db.get_user_emotion(user_id)
-    _bot_emo = await self.librarian_db.get_bot_emotion()
-    _emo_parts = []
-    if _emo:
-        _emo_parts.append(" ".join(f"{k}:{_emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
-    _emo_parts.append(" ".join(f"{k}:{v:.1f}" for k, v in _bot_emo.items()))
-    logger.info(f"[Processor] 대화 상대: {user_name} (ID: {user_id}) → {role} | {' | '.join(_emo_parts) or '첫 방문'}")
-
-    from datetime import datetime as dt
-    import zoneinfo
-    try:
-        tz_name = os.getenv("TZ", "Asia/Seoul")
-        tz_info = zoneinfo.ZoneInfo(tz_name)
-        now = dt.now(tz_info)
-        utc_offset = now.strftime("%z")
-        utc_str = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
-    except Exception:
-        now = dt.now()
-        utc_str = ""
-    time_str = now.strftime('%Y년 %m월 %d일 %H:%M')
-    if utc_str:
-        time_str += f" ({utc_str})"
-    info_block = f"## 상황\n현재: {time_str}\n대화 상대: {user_name} ({role})"
-    if admin_names:
-        info_block += f"\n도서관 주인: {', '.join(admin_names)}"
-    if LIGHTNING_ADDRESS:
-        info_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
-    parts.append(info_block)
-
-    btc_block = bitcoin_data.get_prompt_block()
-    if btc_block:
-        parts.append(btc_block)
-
-    # 감정 상태
-    _te0 = _time.monotonic()
-    emo_lines = []
-    bot_emo = await self.librarian_db.get_bot_emotion()
-    emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
-    user_emo = await self.librarian_db.get_user_emotion(user_id)
-    if user_emo:
-        emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
-    else:
-        emo_lines.append(f"{user_name}: 첫 방문")
-
-    chain_user_ids = set()
-    if reply_chain:
-        import re as _re
-        for line in reply_chain:
-            m = _re.search(r'<@(\d+)>', line)
-            if m and m.group(1) != user_id:
-                chain_user_ids.add(m.group(1))
-    if chain_user_ids:
-        chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
-        for uid, emo in chain_emos.items():
-            name = emo.get("user_name", uid)
-            emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
-
-    emo_block = "## 감정 (50이 중립, 0 ~ 100)\n" + "\n".join(emo_lines)
-    parts.append(emo_block)
-    logger.info(f"[Processor][타이밍] 감정블록: {_time.monotonic()-_te0:.2f}s")
-    logger.info(f"[Processor][타이밍] 프롬프트 조립 총: {_time.monotonic()-_tp0:.2f}s")
-
-    # Evaluator 피드백 (이전 대화에서 남긴 것)
-    prev_feedback = await self.librarian_db.get_feedback(user_id)
-    if prev_feedback:
-        parts.append(f"## 이전 피드백\n{prev_feedback}")
-        logger.info(f"[Processor] 이전 피드백: {prev_feedback[:100]}")
-
-    if pre_context:
-        parts.append("## 직전 대화\n" + "\n".join(pre_context))
-        logger.info(f"[Processor] 직전 대화: {len(pre_context)}건")
-
-    if reply_chain:
-        parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
-        logger.info(f"[Processor] 답글 흐름: {len(reply_chain)}건 | {'; '.join(reply_chain)}")
+    logger.info(f"[Processor] 대화 상대: {user_name} (ID: {user_id}) → {role}")
 
     # search 중복 제거용 ID 수집
+    memory_ids = memory_ids or []
     _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)
     logger.info(f"[Processor] 프롬프트 길이: {len(dynamic_prompt)}자")
+    logger.info(f"[Processor][타이밍] 프롬프트 조립: {_time.monotonic()-_tp0:.2f}s")
 
     # ── Processor 유저 메시지 ──
     if user_text:
@@ -253,7 +166,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
         return types.GenerateContentConfig(
             system_instruction=dynamic_prompt,
             tools=tools,
-            max_output_tokens=1500,  # 단서 정리에 충분한 토큰
+            max_output_tokens=500,  # 도구 결과 요약만 (thin)
             temperature=temp,
         )
 
@@ -545,9 +458,9 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             logger.warning(f"[Processor] 도구 후 API 에러: {e}")
             break
 
-    # Processor의 최종 텍스트 = 지시서
-    instruction = self._extract_reply(response)
-    return instruction, file_to_send, _meta
+    # Processor의 최종 텍스트 = 도구 결과 요약 (짧음)
+    tool_results_text = self._extract_reply(response)
+    return tool_results_text, file_to_send, _meta
 
 
 async def build_catalog(self) -> str:

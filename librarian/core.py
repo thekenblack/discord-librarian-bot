@@ -472,11 +472,15 @@ class AILibrarianBot(discord.Client):
         history = self.chat_histories[user_id]
 
         try:
-            # ── Phase 1: Processor (연출가) ──
+            # ── Phase 1: Processor (도구 실행만) ──
             _td0 = _time.monotonic()
+            catalog = await self._build_catalog()
+            memories_text, memory_ids = await self._build_memories(user_name)
+
             instruction, file_to_send, processor_meta = await self._run_processor(
                 user_id=user_id, user_name=user_name, user_text=user_text,
-                guild=guild, reply_chain=reply_chain, pre_context=pre_context,
+                catalog=catalog, memories_text=memories_text,
+                memory_ids=memory_ids,
                 attachments=attachments, seen_filenames=seen_filenames,
             )
             _meta["tools_called"] = processor_meta.get("tools_called", [])
@@ -485,7 +489,7 @@ class AILibrarianBot(discord.Client):
                 _meta["shared_urls"] = processor_meta["shared_urls"]
             if processor_meta.get("reaction"):
                 _meta["reaction"] = processor_meta["reaction"]
-            logger.info(f"[Processor] 완료 ({_time.monotonic()-_td0:.2f}s) | 지시서: {instruction[:200] if instruction else '(없음)'}")
+            logger.info(f"[Processor] 완료 ({_time.monotonic()-_td0:.2f}s) | 도구 결과: {instruction[:200] if instruction else '(없음)'}")
 
             # 응답 모드 판별
             import re as _re
@@ -503,6 +507,89 @@ class AILibrarianBot(discord.Client):
                     logger.info(f"[Processor] 응답 모드: 리액션만 → {emoji_str}")
                     return "", file_to_send, _meta
 
+            # ── Context 조립 (Character에게 전달할 풍부한 맥락) ──
+            _tx0 = _time.monotonic()
+            context_parts = []
+
+            # 상황 정보
+            from datetime import datetime as dt
+            import zoneinfo
+            try:
+                tz_name = os.getenv("TZ", "Asia/Seoul")
+                tz_info = zoneinfo.ZoneInfo(tz_name)
+                now = dt.now(tz_info)
+                utc_offset = now.strftime("%z")
+                utc_str = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
+            except Exception:
+                now = dt.now()
+                utc_str = ""
+            time_str = now.strftime('%Y년 %m월 %d일 %H:%M')
+            if utc_str:
+                time_str += f" ({utc_str})"
+
+            admin_names = []
+            if guild:
+                for aid in ADMIN_IDS:
+                    member = guild.get_member(int(aid))
+                    if member:
+                        admin_names.append(member.display_name)
+            role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
+            situation_block = f"## 상황\n현재: {time_str}\n대화 상대: {user_name} ({role})"
+            if admin_names:
+                situation_block += f"\n도서관 주인: {', '.join(admin_names)}"
+            if LIGHTNING_ADDRESS:
+                situation_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
+            context_parts.append(situation_block)
+
+            # 비트코인 현황
+            btc_block = bitcoin_data.get_prompt_block()
+            if btc_block:
+                context_parts.append(btc_block)
+
+            # 감정 상태
+            emo_lines = []
+            bot_emo = await self.librarian_db.get_bot_emotion()
+            emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
+            user_emo = await self.librarian_db.get_user_emotion(user_id)
+            if user_emo:
+                emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
+            else:
+                emo_lines.append(f"{user_name}: 첫 방문")
+
+            chain_user_ids = set()
+            if reply_chain:
+                for line in reply_chain:
+                    m = _re.search(r'<@(\d+)>', line)
+                    if m and m.group(1) != user_id:
+                        chain_user_ids.add(m.group(1))
+            if chain_user_ids:
+                chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
+                for uid, emo in chain_emos.items():
+                    name = emo.get("user_name", uid)
+                    emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
+
+            emo_block = "## 감정 (50이 중립, 0 - 100)\n" + "\n".join(emo_lines)
+            context_parts.append(emo_block)
+
+            # Evaluator 피드백
+            prev_feedback = await self.librarian_db.get_feedback(user_id)
+            if prev_feedback:
+                context_parts.append(f"## 이전 피드백\n{prev_feedback}")
+                logger.info(f"[Context] 이전 피드백: {prev_feedback[:100]}")
+
+            # 직전 대화
+            if pre_context:
+                context_parts.append("## 직전 대화\n" + "\n".join(pre_context))
+                logger.info(f"[Context] 직전 대화: {len(pre_context)}건")
+
+            # 답글 흐름
+            if reply_chain:
+                context_parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
+                logger.info(f"[Context] 답글 흐름: {len(reply_chain)}건")
+
+            context_block = "\n\n".join(context_parts)
+            logger.info(f"[Context] 조립 완료 ({_time.monotonic()-_tx0:.2f}s) | {len(context_block)}자")
+
             # ── Phase 2: Character (배우) ──
             _tc0 = _time.monotonic()
 
@@ -516,6 +603,7 @@ class AILibrarianBot(discord.Client):
             reply = await self._run_character(
                 user_id=user_id, user_name=user_name,
                 user_text=user_text, instruction=instruction,
+                context_block=context_block,
             )
             logger.info(f"[Character] 완료 ({_time.monotonic()-_tc0:.2f}s) | 응답: {reply[:100] if reply else '(빈 응답)'}")
 
