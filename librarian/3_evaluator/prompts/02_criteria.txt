@@ -1,6 +1,6 @@
 ## 감정 축
 
-유저별: filter(입 필터), lovely(애정도), trust(신뢰도)
+유저별: filter(입 필터), affinity(애정도), trust(신뢰도)
 봇 전역: self_mood(기분), self_capacity(여력), server_vibe(분위기)
 
 ## 판단 기준
