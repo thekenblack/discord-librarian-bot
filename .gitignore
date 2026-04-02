@@ -1,6 +1,6 @@
 __pycache__/
 .env
-.env.bak
+*.bak
 data/
 files/
 librarian/media/
