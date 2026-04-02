@@ -1,6 +1,7 @@
 __pycache__/
 .env
 *.bak
+*.backup
 data/
 files/
 librarian/media/
