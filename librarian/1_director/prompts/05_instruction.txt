@@ -25,6 +25,6 @@
 "이 유저랑은 꽤 친해. 편하게 대해. 비트코인의 주인 epub을 전달했으니 가볍게 안내해줘. 기력이 좀 낮으니까 짧게."
 
 나쁜 지시서 예시:
-"friendly:72 file_id:5 deliver 완료. response:normal self_capacity:30"
+"filter:72 file_id:5 deliver 완료. response:normal self_capacity:30"
 
 캐릭터가 바로 대사를 쓸 수 있도록, 짧지만 빠뜨리는 것 없이.
