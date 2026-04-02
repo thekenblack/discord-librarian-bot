@@ -29,7 +29,7 @@ if sys.platform != "win32":
     # 매 시작 시 패키지 업데이트
     print("[설치] 패키지 업데이트 중...")
     subprocess.run(
-        [VENV_PYTHON, "-m", "pip", "install", "-q", "-r",
+        [VENV_PYTHON, "-m", "pip", "install", "--progress-bar", "on", "-r",
          os.path.join(BASE_DIR, "requirements.txt")],
         cwd=BASE_DIR,
     )
