@@ -16,9 +16,9 @@ from librarian.db import LibrarianDB
 from config import ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR
 from librarian import server_log
 import importlib as _il
-_persona_mod = _il.import_module("librarian.2_character.persona")
-_tools_mod = _il.import_module("librarian.1_processor.tools")
-_btc_mod = _il.import_module("librarian.1_processor.bitcoin_data")
+_persona_mod = _il.import_module("librarian.layers.03_character.persona")
+_tools_mod = _il.import_module("librarian.layers.02_functioning.tools")
+_btc_mod = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
 Persona = _persona_mod.Persona
 parse_url = _tools_mod.parse_url
 bitcoin_data = _btc_mod
@@ -133,6 +133,18 @@ class AILibrarianBot(discord.Client):
         await self.librarian_db.cleanup_learned()
         await self.librarian_db.reset_stale_url_results()
         await self.librarian_db.reset_stale_book_knowledge()
+
+        # 벡터 스토어 초기화 + 동기화
+        try:
+            from librarian.vector_store import VectorStore
+            from config import CHROMA_DIR
+            self.librarian_db.vector_store = VectorStore(CHROMA_DIR)
+            await self.librarian_db.sync_vector_store()
+            logger.info("벡터 스토어 초기화 완료")
+        except Exception as e:
+            logger.warning(f"벡터 스토어 초기화 실패 (LIKE 검색으로 동작): {e}")
+            self.librarian_db.vector_store = None
+
         from config import VERSION, GIT_HASH
         logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
 
@@ -224,7 +236,7 @@ class AILibrarianBot(discord.Client):
 
     async def _learn_all_books(self):
         """미학습 도서 일괄 학습"""
-        _bl = _il.import_module("librarian.1_processor.book_learning")
+        _bl = _il.import_module("librarian.layers.02_functioning.book_learning")
         learn_book = _bl.learn_book
         try:
             books = await self.library_db.list_all_books()
@@ -235,26 +247,8 @@ class AILibrarianBot(discord.Client):
         except Exception as e:
             logger.error(f"도서 일괄 학습 실패: {e}")
 
-    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        """자기 메시지에 리액션이 달리면 같은 이모지로 리액션"""
-        if not self._bot_ready or not self.user:
-            return
-        if payload.user_id == self.user.id:
-            return
-        try:
-            channel = self.get_channel(payload.channel_id)
-            if not channel:
-                return
-            message = await channel.fetch_message(payload.message_id)
-            if message.author.id != self.user.id:
-                return
-            # 이미 같은 이모지로 리액션했는지 확인
-            for reaction in message.reactions:
-                if str(reaction.emoji) == str(payload.emoji) and reaction.me:
-                    return
-            await message.add_reaction(payload.emoji)
-        except Exception:
-            pass
+    # on_raw_reaction_add 제거: 자동 이모지 따라누르기 삭제
+    # 이모지 리액션은 Character(L3)가 판단해서 직접 결정
 
     async def on_message(self, message: discord.Message):
         if not self._bot_ready:
@@ -463,8 +457,9 @@ class AILibrarianBot(discord.Client):
                           pre_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None) -> tuple[str, discord.File | None, dict]:
-        """v5 3레이어 오케스트레이션: Processor → Character → Evaluator"""
+        """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
+        import re as _re
         _meta = {"tools_called": [], "tool_results": [], "error": None}
 
         if user_id not in self.chat_histories:
@@ -472,16 +467,25 @@ class AILibrarianBot(discord.Client):
         history = self.chat_histories[user_id]
 
         try:
-            # ── Phase 1: Processor (도구 실행만) ──
-            _td0 = _time.monotonic()
+            # ── Layer 1: Perception (맥락 파악) ──
+            _t0 = _time.monotonic()
+            raw_context = await self._gather_context(
+                user_id, user_name, guild, reply_chain, pre_context)
+            perception = await self._run_perception(
+                user_id, user_name, user_text, raw_context)
+            logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
+
+            # ── Layer 2: Functioning (도구 실행) ──
+            _t0 = _time.monotonic()
             catalog = await self._build_catalog()
             memories_text, memory_ids = await self._build_memories(user_name)
 
-            instruction, file_to_send, processor_meta = await self._run_processor(
+            instruction, file_to_send, processor_meta = await self._run_functioning(
                 user_id=user_id, user_name=user_name, user_text=user_text,
                 catalog=catalog, memories_text=memories_text,
                 memory_ids=memory_ids,
                 attachments=attachments, seen_filenames=seen_filenames,
+                perception=perception,
             )
             _meta["tools_called"] = processor_meta.get("tools_called", [])
             _meta["tool_results"] = processor_meta.get("tool_results", [])
@@ -489,109 +493,26 @@ class AILibrarianBot(discord.Client):
                 _meta["shared_urls"] = processor_meta["shared_urls"]
             if processor_meta.get("reaction"):
                 _meta["reaction"] = processor_meta["reaction"]
-            logger.info(f"[Processor] 완료 ({_time.monotonic()-_td0:.2f}s) | 도구 결과: {instruction[:200] if instruction else '(없음)'}")
+            logger.info(f"[L2 Functioning] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # 응답 모드 판별
-            import re as _re
             if _re.search(r'(?:응답\s*모드\s*[:：]\s*)?무응답', instruction or ""):
-                logger.info("[Processor] 응답 모드: 무응답")
+                logger.info("[L2] 응답 모드: 무응답")
                 _meta["intentional_silence"] = True
                 return "", file_to_send, _meta
 
-            reaction_only_match = _re.search(r'(?:응답\s*모드\s*[:：]\s*)?리액션만\s*[:：]?\s*(.+)', instruction or "")
+            reaction_only_match = _re.search(
+                r'(?:응답\s*모드\s*[:：]\s*)?리액션만\s*[:：]?\s*(.+)', instruction or "")
             if reaction_only_match:
                 emoji_str = reaction_only_match.group(1).strip()
                 emojis = _extract_emojis(emoji_str)
                 if emojis:
                     _meta["reaction"] = emoji_str
-                    logger.info(f"[Processor] 응답 모드: 리액션만 → {emoji_str}")
+                    logger.info(f"[L2] 응답 모드: 리액션만 → {emoji_str}")
                     return "", file_to_send, _meta
 
-            # ── Context 조립 (Character에게 전달할 풍부한 맥락) ──
-            _tx0 = _time.monotonic()
-            context_parts = []
-
-            # 상황 정보
-            from datetime import datetime as dt
-            import zoneinfo
-            try:
-                tz_name = os.getenv("TZ", "Asia/Seoul")
-                tz_info = zoneinfo.ZoneInfo(tz_name)
-                now = dt.now(tz_info)
-                utc_offset = now.strftime("%z")
-                utc_str = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
-            except Exception:
-                now = dt.now()
-                utc_str = ""
-            time_str = now.strftime('%Y년 %m월 %d일 %H:%M')
-            if utc_str:
-                time_str += f" ({utc_str})"
-
-            admin_names = []
-            if guild:
-                for aid in ADMIN_IDS:
-                    member = guild.get_member(int(aid))
-                    if member:
-                        admin_names.append(member.display_name)
-            role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-            situation_block = f"## 상황\n현재: {time_str}\n대화 상대: {user_name} ({role})"
-            if admin_names:
-                situation_block += f"\n도서관 주인: {', '.join(admin_names)}"
-            if LIGHTNING_ADDRESS:
-                situation_block += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
-            context_parts.append(situation_block)
-
-            # 비트코인 현황
-            btc_block = bitcoin_data.get_prompt_block()
-            if btc_block:
-                context_parts.append(btc_block)
-
-            # 감정 상태
-            emo_lines = []
-            bot_emo = await self.librarian_db.get_bot_emotion()
-            emo_lines.append("자체: " + " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items()))
-            user_emo = await self.librarian_db.get_user_emotion(user_id)
-            if user_emo:
-                emo_lines.append(f"{user_name}: " + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES) + f" (대화 {user_emo['interaction_count']}회)")
-            else:
-                emo_lines.append(f"{user_name}: 첫 방문")
-
-            chain_user_ids = set()
-            if reply_chain:
-                for line in reply_chain:
-                    m = _re.search(r'<@(\d+)>', line)
-                    if m and m.group(1) != user_id:
-                        chain_user_ids.add(m.group(1))
-            if chain_user_ids:
-                chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
-                for uid, emo in chain_emos.items():
-                    name = emo.get("user_name", uid)
-                    emo_lines.append(f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
-
-            emo_block = "## 감정 (50이 중립, 0 - 100)\n" + "\n".join(emo_lines)
-            context_parts.append(emo_block)
-
-            # Evaluator 피드백
-            prev_feedback = await self.librarian_db.get_feedback(user_id)
-            if prev_feedback:
-                context_parts.append(f"## 이전 피드백\n{prev_feedback}")
-                logger.info(f"[Context] 이전 피드백: {prev_feedback[:100]}")
-
-            # 직전 대화
-            if pre_context:
-                context_parts.append("## 직전 대화\n" + "\n".join(pre_context))
-                logger.info(f"[Context] 직전 대화: {len(pre_context)}건")
-
-            # 답글 흐름
-            if reply_chain:
-                context_parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
-                logger.info(f"[Context] 답글 흐름: {len(reply_chain)}건")
-
-            context_block = "\n\n".join(context_parts)
-            logger.info(f"[Context] 조립 완료 ({_time.monotonic()-_tx0:.2f}s) | {len(context_block)}자")
-
-            # ── Phase 2: Character (배우) ──
-            _tc0 = _time.monotonic()
+            # ── Layer 3: Character (대사 생성) ──
+            _t0 = _time.monotonic()
 
             if user_text:
                 user_content = f"{user_name}: {user_text}"
@@ -600,29 +521,37 @@ class AILibrarianBot(discord.Client):
 
             history.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
-            reply = await self._run_character(
+            raw_reply = await self._run_character(
                 user_id=user_id, user_name=user_name,
                 user_text=user_text, instruction=instruction,
-                context_block=context_block,
+                context_block=perception,
             )
-            logger.info(f"[Character] 완료 ({_time.monotonic()-_tc0:.2f}s) | 응답: {reply[:100] if reply else '(빈 응답)'}")
+            logger.info(f"[L3 Character] 완료 ({_time.monotonic()-_t0:.2f}s) | {raw_reply[:100] if raw_reply else '(빈 응답)'}")
 
-            if not reply:
-                # 빈 응답 → user 턴 롤백
+            if not raw_reply:
                 if history and history[-1].role == "user":
                     history.pop()
                 _meta["intentional_silence"] = True
                 return "", file_to_send, _meta
 
-            # 히스토리에 모델 응답 추가
+            # ── Layer 4: Postprocess (자연어 정제) ──
+            _t0 = _time.monotonic()
+            reply = await self._run_postprocess(raw_reply, user_name)
+            if reply != raw_reply:
+                logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
+            else:
+                logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
+
+            # 히스토리에 최종 응답 추가
             history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
             self._trim_history(user_id)
 
-            # ── Phase 3: Evaluator (평론가) — 백그라운드 ──
+            # ── Layer 5: Evaluation (백그라운드) ──
             if reply:
                 asyncio.create_task(self._run_evaluator(
                     user_id=user_id, user_name=user_name,
                     user_text=user_text, bot_reply=reply,
+                    context=perception, tool_results=instruction,
                 ))
 
             if len(reply) > 2000:
@@ -798,37 +727,6 @@ class AILibrarianBot(discord.Client):
                     parts.append(text)
         return "\n".join(parts) if parts else ""
 
-    @staticmethod
-    def _normalize_for_compare(text: str) -> str:
-        """비교용 정규화: 이모지, 공백, 줄바꿈 정리"""
-        import re
-        text = text.replace("\ufe0f", "")
-        text = re.sub(r'[\U0001f300-\U0001f9ff\u2600-\u27bf\u200d\ufe0f]', '', text)
-        text = re.sub(r'<:\w+:\d+>', '', text)
-        text = re.sub(r'[!?.,~…·\-–—:;\'\"(){}[\]<>]', '', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-
-    def _is_repeat(self, history: list, reply: str, threshold: float = 0.9) -> bool:
-        """히스토리 내 봇 답변과 유사한 게 있는지 확인 (단어 기반 유사도)"""
-        curr = self._normalize_for_compare(reply)
-        if not curr:
-            return False
-        curr_words = set(curr.split())
-        if not curr_words:
-            return False
-        for h in history:
-            if h.role == "model" and h.parts and h.parts[0].text:
-                prev = self._normalize_for_compare(h.parts[0].text)
-                prev_words = set(prev.split())
-                if not prev_words:
-                    continue
-                overlap = len(curr_words & prev_words)
-                total = len(curr_words | prev_words)
-                if total > 0 and overlap / total >= threshold:
-                    return True
-        return False
-
     def _trim_history(self, user_id: str):
         """히스토리를 MAX_HISTORY 턴으로 제한. function_call/response 쌍 보장."""
         history = self.chat_histories.get(user_id)
@@ -870,14 +768,21 @@ class AILibrarianBot(discord.Client):
 # ── v5: 레이어별 메서드 바인딩 ──
 import importlib as _il
 
-_processor = _il.import_module("librarian.1_processor.processor")
-AILibrarianBot._run_processor = _processor.run_processor
-AILibrarianBot._recognize_url_background = _processor.recognize_url_background
-AILibrarianBot._build_catalog = _processor.build_catalog
-AILibrarianBot._build_memories = _processor.build_memories
+_perception = _il.import_module("librarian.layers.01_perception.perception")
+AILibrarianBot._gather_context = _perception.gather_context
+AILibrarianBot._run_perception = _perception.run_perception
 
-_character = _il.import_module("librarian.2_character.character")
+_functioning = _il.import_module("librarian.layers.02_functioning.functioning")
+AILibrarianBot._run_functioning = _functioning.run_functioning
+AILibrarianBot._recognize_url_background = _functioning.recognize_url_background
+AILibrarianBot._build_catalog = _functioning.build_catalog
+AILibrarianBot._build_memories = _functioning.build_memories
+
+_character = _il.import_module("librarian.layers.03_character.character")
 AILibrarianBot._run_character = _character.run_character
 
-_evaluator = _il.import_module("librarian.3_evaluator.evaluator")
-AILibrarianBot._run_evaluator = _evaluator.run_evaluator
+_postprocess = _il.import_module("librarian.layers.04_postprocess.postprocess")
+AILibrarianBot._run_postprocess = _postprocess.run_postprocess
+
+_evaluation = _il.import_module("librarian.layers.05_evaluation.evaluation")
+AILibrarianBot._run_evaluator = _evaluation.run_evaluator

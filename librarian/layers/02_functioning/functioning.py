@@ -7,8 +7,8 @@ from google.genai import types
 from google.genai.errors import ClientError
 from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS
 import importlib as _il
-_tools = _il.import_module("librarian.1_processor.tools")
-processor_tools = _tools.processor_tools
+_tools = _il.import_module("librarian.layers.02_functioning.tools")
+functioning_tools = _tools.functioning_tools
 execute_tool = _tools.execute_tool
 normalize_url = _tools.normalize_url
 parse_url = _tools.parse_url
@@ -116,27 +116,31 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
             await self.librarian_db.update_url_result(normalized, "", status="failed")
 
 
-async def run_processor(self, user_id: str, user_name: str, user_text: str,
-                        catalog: str, memories_text: str,
-                        memory_ids: list[int] = None,
-                        attachments: list = None,
-                        seen_filenames: list[str] = None,
-                        ) -> tuple[str, discord.File | None, dict]:
-    """Processor: 도구 실행 전용 (thin). (tool_results_text, file_to_send, meta) 반환."""
+async def run_functioning(self, user_id: str, user_name: str, user_text: str,
+                          catalog: str, memories_text: str,
+                          memory_ids: list[int] = None,
+                          attachments: list = None,
+                          seen_filenames: list[str] = None,
+                          perception: str = "",
+                          ) -> tuple[str, discord.File | None, dict]:
+    """Functioning: 도구 실행 + 결과 보고. (tool_results_text, file_to_send, meta) 반환."""
     import time as _time
     _meta = {"tools_called": [], "tool_results": []}
 
-    # ── 프롬프트 조립 (도구 판단에 필요한 것만) ──
+    # ── 프롬프트 조립 ──
     _tp0 = _time.monotonic()
     parts = []
 
-    # Processor 전용 프롬프트 (role + functioning)
-    processor_base = self.persona.processor_text or self.persona.prompt_text
-    processor_prompt = processor_base.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
-    parts.append(processor_prompt)
+    func_base = self.persona.functioning_text or self.persona.prompt_text
+    func_prompt = func_base.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
+    parts.append(func_prompt)
+
+    # L1 Perception 분석 결과 포함
+    if perception:
+        parts.append(f"## 상황 분석 (Perception)\n{perception}")
 
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-    logger.info(f"[Processor] 대화 상대: {user_name} (ID: {user_id}) → {role}")
+    logger.info(f"[Functioning] 대화 상대: {user_name} (ID: {user_id}) → {role}")
 
     # search 중복 제거용 ID 수집
     memory_ids = memory_ids or []
@@ -145,10 +149,9 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)
-    logger.info(f"[Processor] 프롬프트 길이: {len(dynamic_prompt)}자")
-    logger.info(f"[Processor][타이밍] 프롬프트 조립: {_time.monotonic()-_tp0:.2f}s")
+    logger.info(f"[Functioning] 프롬프트: {len(dynamic_prompt)}자 ({_time.monotonic()-_tp0:.2f}s)")
 
-    # ── Processor 유저 메시지 ──
+    # ── 유저 메시지 ──
     if user_text:
         user_content = f"{user_name}: {user_text}"
     else:
@@ -158,9 +161,9 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
     _tool_used = set()  # 도구 1회 제한
     file_to_send = None
 
-    def _make_processor_config(temp=0.8):
-        """사용한 도구를 제외한 Processor config 생성."""
-        all_decls = processor_tools[0].function_declarations
+    def _make_config(temp=0.5):
+        """사용한 도구를 제외한 config 생성."""
+        all_decls = functioning_tools[0].function_declarations
         filtered = [d for d in all_decls if d.name not in _tool_used]
         tools = [types.Tool(function_declarations=filtered)] if filtered else None
         return types.GenerateContentConfig(
@@ -170,19 +173,19 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             temperature=temp,
         )
 
-    config = _make_processor_config(0.8)
+    config = _make_config(0.5)
 
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-    logger.info(f"[Processor] API 호출 (temperature=0.8)")
+    logger.info(f"[Functioning] API 호출 (temp=0.5)")
     response = await self._call_gemini(loop_contents, config)
-    logger.info("[Processor] API 응답 수신")
+    logger.info("[Functioning] API 응답 수신")
 
     # ── 도구 루프 (최대 10회) ──
     for loop_i in range(10):
         if not response.candidates or not response.candidates[0].content.parts:
-            logger.info(f"[Processor] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
+            logger.info(f"[Functioning] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
             break
 
         fc = None
@@ -191,21 +194,21 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                 fc = part.function_call
                 break
         if not fc:
-            logger.info(f"[Processor] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
+            logger.info(f"[Functioning] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
             break
 
-        logger.info(f"[Processor] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
+        logger.info(f"[Functioning] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
         _meta["tools_called"].append(fc.name)
 
         # web_search 특수 처리
         if fc.name == "web_search":
             query = (dict(fc.args) if fc.args else {}).get("query", user_text)
-            logger.info(f"[Processor] 웹 검색: {query}")
+            logger.info(f"[Functioning] 웹 검색: {query}")
 
             # 캐시 확인
             cached = await self.librarian_db.get_web_by_query(query)
             if cached:
-                logger.info(f"[Processor] 웹 캐시 히트: {query}")
+                logger.info(f"[Functioning] 웹 캐시 히트: {query}")
                 web_ids.append(cached["id"])
                 tool_data = {"result": cached["result"]}
                 _meta["tool_results"].append(f"web_cache:{cached['result']}")
@@ -217,7 +220,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                 try:
                     response = await self._call_gemini(loop_contents, config)
                 except Exception as e:
-                    logger.warning(f"[Processor] 웹 캐시 후 API 에러: {e}")
+                    logger.warning(f"[Functioning] 웹 캐시 후 API 에러: {e}")
                     break
                 continue
 
@@ -234,10 +237,10 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                 web_response = await self._call_gemini(web_query, web_config)
                 web_result = self._extract_reply(web_response)
             except Exception as e:
-                logger.warning(f"[Processor] 웹 검색 실패: {e}")
+                logger.warning(f"[Functioning] 웹 검색 실패: {e}")
 
             if web_result:
-                logger.info(f"[Processor] 웹 검색 결과: {web_result}")
+                logger.info(f"[Functioning] 웹 검색 결과: {web_result}")
                 saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
                 if saved_id:
                     web_ids.append(saved_id)
@@ -254,7 +257,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
-                logger.warning(f"[Processor] 웹 검색 후 API 에러: {e}")
+                logger.warning(f"[Functioning] 웹 검색 후 API 에러: {e}")
                 break
             continue
 
@@ -281,12 +284,12 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                     cached = await self.librarian_db.get_media_by_filename(att.filename)
 
                 if cached:
-                    logger.info(f"[Processor] 미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
+                    logger.info(f"[Functioning] 미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
                     media_result = cached["result"]
                     stored_name = cached.get("stored_name")
                     saved_media_id = cached["id"]
                 elif ct.startswith("image/") or ct == "application/pdf":
-                    logger.info(f"[Processor] 미디어 인식: {att.filename} ({ct})")
+                    logger.info(f"[Functioning] 미디어 인식: {att.filename} ({ct})")
                     try:
                         media_parts = [
                             types.Part.from_bytes(data=data, mime_type=ct),
@@ -310,9 +313,9 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                                 stored_name = f"{uuid.uuid4().hex}{ext}"
                                 with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
                                     mf.write(data)
-                                logger.info(f"[Processor] 미디어 저장: {att.filename} → {stored_name}")
+                                logger.info(f"[Functioning] 미디어 저장: {att.filename} → {stored_name}")
                             except Exception as e:
-                                logger.warning(f"[Processor] 미디어 파일 저장 실패: {e}")
+                                logger.warning(f"[Functioning] 미디어 파일 저장 실패: {e}")
                                 stored_name = None
                             saved_media_id = await self.librarian_db.save_media_result(
                                 att.filename, media_result, user_name=user_name,
@@ -321,7 +324,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                             if saved_media_id:
                                 media_ids.append(saved_media_id)
                     except Exception as e:
-                        logger.warning(f"[Processor] 미디어 인식 실패: {e}")
+                        logger.warning(f"[Functioning] 미디어 인식 실패: {e}")
                 else:
                     media_result = f"이 파일 형식({ct})은 인식할 수 없어."
             else:
@@ -330,7 +333,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             tool_data = {"result": media_result if media_result else "인식 실패"}
             if media_result and stored_name:
                 tool_data["media_id"] = saved_media_id
-            logger.info(f"[Processor] 미디어 인식 결과: {media_result}")
+            logger.info(f"[Functioning] 미디어 인식 결과: {media_result}")
             _meta["tool_results"].append(f"media:{media_result}")
             loop_contents.append(response.candidates[0].content)
             loop_contents.append(types.Content(
@@ -340,7 +343,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
-                logger.warning(f"[Processor] 미디어 인식 후 API 에러: {e}")
+                logger.warning(f"[Functioning] 미디어 인식 후 API 에러: {e}")
                 break
             continue
 
@@ -368,23 +371,23 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                     if link_result:
                         await self.librarian_db.save_url_result(
                             normalized, url, link_result, user_name=user_name, status="done")
-                        logger.info(f"[Processor] 이미지 URL 동기 인식 완료: {url}")
+                        logger.info(f"[Functioning] 이미지 URL 동기 인식 완료: {url}")
                 except Exception as e:
-                    logger.warning(f"[Processor] 이미지 URL 인식 실패 ({url}): {e}")
+                    logger.warning(f"[Functioning] 이미지 URL 인식 실패 ({url}): {e}")
 
             if not link_result:
                 cached = await self.librarian_db.get_url_by_normalized(normalized)
                 if cached:
                     if cached.get("status") == "pending":
-                        logger.info(f"[Processor] 링크 인식 중: {url}")
+                        logger.info(f"[Functioning] 링크 인식 중: {url}")
                         link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
                     elif cached.get("status") == "failed":
                         await self.librarian_db.update_url_result(normalized, "", status="pending")
                         asyncio.create_task(self._recognize_url_background(parsed, user_name))
                         link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                        logger.info(f"[Processor] 링크 재시도: {url}")
+                        logger.info(f"[Functioning] 링크 재시도: {url}")
                     else:
-                        logger.info(f"[Processor] 링크 캐시 히트: {url}")
+                        logger.info(f"[Functioning] 링크 캐시 히트: {url}")
                         link_result = cached["result"]
 
             if not link_result:
@@ -392,10 +395,10 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
                     normalized, url, "", user_name=user_name, status="pending")
                 asyncio.create_task(self._recognize_url_background(parsed, user_name))
                 link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                logger.info(f"[Processor] 링크 인식 백그라운드 시작: {url}")
+                logger.info(f"[Functioning] 링크 인식 백그라운드 시작: {url}")
 
             tool_data = {"result": link_result if link_result else "인식 실패"}
-            logger.info(f"[Processor] 링크 인식 결과: {link_result}")
+            logger.info(f"[Functioning] 링크 인식 결과: {link_result}")
             _meta["tool_results"].append(f"link:{link_result}")
             loop_contents.append(response.candidates[0].content)
             loop_contents.append(types.Content(
@@ -405,7 +408,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
-                logger.warning(f"[Processor] 링크 인식 후 API 에러: {e}")
+                logger.warning(f"[Functioning] 링크 인식 후 API 에러: {e}")
                 break
             continue
 
@@ -420,7 +423,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
             tool_args["_exclude_media_ids"] = media_ids
         tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
         tool_data = json.loads(tool_result)
-        logger.info(f"[Processor] 도구 결과: {tool_result}")
+        logger.info(f"[Functioning] 도구 결과: {tool_result}")
         _meta["tool_results"].append(tool_result)
 
         if tool_data.get("_action") == "deliver":
@@ -444,7 +447,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
         if fc.name in ("deliver", "attach"):
             _tool_used.add("deliver")
             _tool_used.add("attach")
-        config = _make_processor_config(0.8)
+        config = _make_config(0.5)
 
         loop_contents.append(response.candidates[0].content)
         loop_contents.append(types.Content(
@@ -455,7 +458,7 @@ async def run_processor(self, user_id: str, user_name: str, user_text: str,
         try:
             response = await self._call_gemini(loop_contents, config)
         except Exception as e:
-            logger.warning(f"[Processor] 도구 후 API 에러: {e}")
+            logger.warning(f"[Functioning] 도구 후 API 에러: {e}")
             break
 
     # Processor의 최종 텍스트 = 도구 결과 요약 (짧음)

@@ -1,6 +1,6 @@
 """
 페르소나 + 시스템 프롬프트 로드 (txt 기반)
-v5: 각 레이어 폴더의 prompts/ 내 모든 .txt를 파일명 순서로 합침
+v5: 5레이어 구조. 각 레이어 폴더의 prompts/ 내 모든 .txt를 파일명 순서로 합침.
 """
 
 import os
@@ -35,19 +35,25 @@ class Persona:
         self.name = name
         self.status_text = status_text
 
-        # v5 3레이어 구조
-        processor_prompts = os.path.join(persona_dir, "1_processor", "prompts")
-        character_prompts = os.path.join(persona_dir, "2_character", "prompts")
-        evaluator_prompts = os.path.join(persona_dir, "3_evaluator", "prompts")
+        layers_dir = os.path.join(persona_dir, "layers")
         messages_dir = os.path.join(persona_dir, "messages")
 
-        # 레이어별 프롬프트: 폴더 내 모든 .txt 합침
-        self.processor_text: str = _load_prompts_dir(processor_prompts, name)
-        self.character_text: str = _load_prompts_dir(character_prompts, name)
-        self.evaluator_text: str = _load_prompts_dir(evaluator_prompts, name)
+        # 5레이어 프롬프트
+        self.perception_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "01_perception", "prompts"), name)
+        self.functioning_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "02_functioning", "prompts"), name)
+        self.character_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "03_character", "prompts"), name)
+        self.postprocess_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "04_postprocess", "prompts"), name)
+        self.evaluation_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "05_evaluation", "prompts"), name)
 
-        # v4 호환 (prompt_text = processor, persona_text = character 첫 파일)
-        self.prompt_text: str = self.processor_text
+        # 하위 호환
+        self.processor_text: str = self.functioning_text
+        self.evaluator_text: str = self.evaluation_text
+        self.prompt_text: str = self.functioning_text
         self.persona_text: str = self.character_text
         self.reminder_text: str = ""
 

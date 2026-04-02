@@ -2,8 +2,8 @@ import json
 import logging
 from google.genai import types
 import importlib as _il
-_tools = _il.import_module("librarian.1_processor.tools")
-_eval_tools = _il.import_module("librarian.3_evaluator.tools")
+_tools = _il.import_module("librarian.layers.02_functioning.tools")
+_eval_tools = _il.import_module("librarian.layers.05_evaluation.tools")
 evaluator_tools = _eval_tools.evaluator_tools
 execute_tool = _tools.execute_tool
 
@@ -11,7 +11,8 @@ logger = logging.getLogger("AILibrarian")
 
 
 async def run_evaluator(self, user_id: str, user_name: str,
-                         user_text: str, bot_reply: str):
+                         user_text: str, bot_reply: str,
+                         context: str = "", tool_results: str = ""):
     """Evaluator: 감정/기억 업데이트. 백그라운드 실행, 에러 무시."""
     try:
         # 현재 감정 상태 조회
@@ -31,6 +32,10 @@ async def run_evaluator(self, user_id: str, user_name: str,
         if self.persona.evaluator_text:
             sys_parts.append(self.persona.evaluator_text)
         sys_parts.append(emo_block)
+        if context:
+            sys_parts.append(f"## 상황 분석 (Perception)\n{context}")
+        if tool_results:
+            sys_parts.append(f"## 도구 결과 (Functioning)\n{tool_results}")
         system_prompt = "\n\n".join(p for p in sys_parts if p)
 
         # 유저 메시지 + 봇 응답을 평가 대상으로 전달
@@ -39,8 +44,8 @@ async def run_evaluator(self, user_id: str, user_name: str,
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=evaluator_tools,
-            max_output_tokens=500,
-            temperature=0.5,
+            max_output_tokens=1000,
+            temperature=0.3,
         )
 
         loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=eval_text)])]
@@ -183,7 +188,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                     feedback_text = part.text.strip()
         if feedback_text:
             await self.librarian_db.save_feedback(user_id, feedback_text)
-            logger.info(f"[Evaluator] 피드백 저장: {feedback_text[:100]}")
+            logger.info(f"[Evaluator] 피드백 저장 ({len(feedback_text)}자): {feedback_text}")
 
         logger.info("[Evaluator] 완료")
 

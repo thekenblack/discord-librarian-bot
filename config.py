@@ -42,6 +42,7 @@ BACKUP_DIR  = os.path.join(BASE_DIR, _paths.get("backups_dir", "data/backups"))
 _db = _conf.get("db", {})
 LIBRARY_DB_PATH   = os.path.join(DATA_DIR, _db.get("library", "library.db"))
 LIBRARIAN_DB_PATH = os.path.join(DATA_DIR, _db.get("librarian", "librarian.db"))
+CHROMA_DIR        = os.path.join(DATA_DIR, "chroma")
 
 # 파일
 MAX_FILE_SIZE = _conf.get("max_file_size", 10 * 1024 * 1024)

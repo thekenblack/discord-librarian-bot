@@ -2,6 +2,7 @@
 AI 사서 DB (기초지식 + 학습)
 """
 
+import asyncio
 import aiosqlite
 import logging
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ logger = logging.getLogger("LibrarianDB")
 class LibrarianDB:
     def __init__(self):
         self.path = LIBRARIAN_DB_PATH
+        self.vector_store = None  # VectorStore (core.py에서 주입)
 
     async def init(self):
         async with aiosqlite.connect(self.path) as db:
@@ -458,7 +460,134 @@ class LibrarianDB:
             if rows:
                 result["도서"] = rows
 
+        # 벡터 검색 결과로 덮어쓰기 (4개 카테고리)
+        if self.vector_store:
+            try:
+                vr = await self._search_vector(keyword, limit, _snippet)
+                for key in ("기억", "지식", "커스텀", "도서"):
+                    if key in vr:
+                        result[key] = vr[key]
+            except Exception as e:
+                logger.warning(f"벡터 검색 실패 (LIKE 결과 유지): {e}")
+
         return result
+
+    async def _search_vector(self, keyword: str, limit: int, _snippet) -> dict:
+        """벡터 검색: 기억, 지식, 커스텀, 도서"""
+        vs = self.vector_store
+        result = {}
+
+        # 1. 기억 (learned)
+        items = await asyncio.to_thread(vs.search, "learned", keyword, limit * 2)
+        if items:
+            memory_items = []
+            for r in items:
+                author = (r.get("metadata") or {}).get("author", "")
+                doc = r["document"]
+                text = f"{author}: {doc}" if author else doc
+                memory_items.append(_snippet(text))
+            if memory_items:
+                result["기억"] = memory_items[:limit]
+
+        # 2. 지식 (knowledge)
+        items = await asyncio.to_thread(vs.search, "knowledge", keyword, limit)
+        if items:
+            result["지식"] = [_snippet(r["document"]) for r in items]
+
+        # 3. 커스텀 (customs)
+        items = await asyncio.to_thread(vs.search, "customs", keyword, limit)
+        if items:
+            result["커스텀"] = [_snippet(r["document"]) for r in items]
+
+        # 4. 도서 (book_knowledge)
+        items = await asyncio.to_thread(vs.search, "book_knowledge", keyword, limit)
+        if items:
+            rows = []
+            for r in items:
+                source = (r.get("metadata") or {}).get("source", "")
+                prefix = f"《{source}》: " if source else ""
+                rows.append(prefix + _snippet(r["document"]))
+            result["도서"] = rows
+
+        return result
+
+    async def sync_vector_store(self):
+        """SQLite → ChromaDB 동기화 (최초 실행 또는 건수 불일치 시)"""
+        vs = self.vector_store
+        if not vs:
+            return
+
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+
+            # knowledge
+            cursor = await db.execute("SELECT COUNT(*) FROM knowledge_base")
+            db_count = (await cursor.fetchone())[0]
+            if db_count != vs.count("knowledge"):
+                vs.reset("knowledge")
+                cursor = await db.execute(
+                    "SELECT id, category, content, priority FROM knowledge_base")
+                rows = await cursor.fetchall()
+                if rows:
+                    await asyncio.to_thread(
+                        vs.add_batch, "knowledge",
+                        [f"k_{r['id']}" for r in rows],
+                        [r["content"] for r in rows],
+                        [{"category": r["category"] or "",
+                          "priority": r["priority"] or 50} for r in rows])
+                logger.info(f"벡터 동기화: knowledge {len(rows)}건")
+
+            # learned (forgotten 제외)
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM learned WHERE forgotten IS NULL OR forgotten = 0")
+            db_count = (await cursor.fetchone())[0]
+            if db_count != vs.count("learned"):
+                vs.reset("learned")
+                cursor = await db.execute(
+                    "SELECT id, content, author FROM learned "
+                    "WHERE forgotten IS NULL OR forgotten = 0")
+                rows = await cursor.fetchall()
+                if rows:
+                    await asyncio.to_thread(
+                        vs.add_batch, "learned",
+                        [f"l_{r['id']}" for r in rows],
+                        [r["content"] for r in rows],
+                        [{"author": r["author"] or ""} for r in rows])
+                logger.info(f"벡터 동기화: learned {len(rows)}건")
+
+            # customs
+            cursor = await db.execute("SELECT COUNT(*) FROM customs")
+            db_count = (await cursor.fetchone())[0]
+            if db_count != vs.count("customs"):
+                vs.reset("customs")
+                cursor = await db.execute(
+                    "SELECT id, category, content FROM customs")
+                rows = await cursor.fetchall()
+                if rows:
+                    await asyncio.to_thread(
+                        vs.add_batch, "customs",
+                        [f"c_{r['id']}" for r in rows],
+                        [r["content"] for r in rows],
+                        [{"category": r["category"] or ""} for r in rows])
+                logger.info(f"벡터 동기화: customs {len(rows)}건")
+
+            # book_knowledge (done만)
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM book_knowledge WHERE status = 'done'")
+            db_count = (await cursor.fetchone())[0]
+            if db_count != vs.count("book_knowledge"):
+                vs.reset("book_knowledge")
+                cursor = await db.execute(
+                    "SELECT id, source, content FROM book_knowledge "
+                    "WHERE status = 'done'")
+                rows = await cursor.fetchall()
+                if rows:
+                    await asyncio.to_thread(
+                        vs.add_batch, "book_knowledge",
+                        [f"b_{r['id']}" for r in rows],
+                        [r["content"] for r in rows],
+                        [{"source": r["source"] or ""} for r in rows])
+                logger.info(f"벡터 동기화: book_knowledge {len(rows)}건")
 
     # ── 별칭 ──────────────────────────────────────────────
 
@@ -505,11 +634,30 @@ class LibrarianDB:
         """키워드에 매칭되는 기억을 soft delete"""
         like = f"%{keyword}%"
         async with aiosqlite.connect(self.path) as db:
+            # 벡터 스토어용 ID 먼저 확보
+            affected_ids = []
+            if self.vector_store:
+                cursor = await db.execute(
+                    "SELECT id FROM learned WHERE content LIKE ? AND (forgotten IS NULL OR forgotten = 0)",
+                    (like,))
+                affected_ids = [row[0] for row in await cursor.fetchall()]
+
             cursor = await db.execute(
                 "UPDATE learned SET forgotten = 1 WHERE content LIKE ? AND (forgotten IS NULL OR forgotten = 0)",
                 (like,))
             await db.commit()
-            return cursor.rowcount
+            count = cursor.rowcount
+
+        # 벡터 스토어에서 제거
+        if self.vector_store and affected_ids:
+            for row_id in affected_ids:
+                try:
+                    await asyncio.to_thread(
+                        self.vector_store.remove, "learned", f"l_{row_id}")
+                except Exception:
+                    pass
+
+        return count
 
     async def save(self, content: str, author: str | None = None) -> int:
         """기억/지식 통합 저장 (중복 방지, 최대 건수 유지)"""
@@ -523,7 +671,18 @@ class LibrarianDB:
                 "INSERT INTO learned (content, author, created_at) VALUES (?, ?, ?)",
                 (content, author, now))
             await db.commit()
-            return cursor.lastrowid
+            new_id = cursor.lastrowid
+
+        # 벡터 스토어에 추가
+        if self.vector_store and new_id and new_id > 0:
+            try:
+                await asyncio.to_thread(
+                    self.vector_store.add, "learned", f"l_{new_id}",
+                    content, {"author": author or ""})
+            except Exception as e:
+                logger.warning(f"벡터 저장 실패 (learned): {e}")
+
+        return new_id
 
     # ── 웹 검색 캐시 ──────────────────────────────────────
 
@@ -726,12 +885,38 @@ class LibrarianDB:
                 (book_id, content, source, status))
             await db.commit()
 
+        if self.vector_store and status == "done" and content:
+            try:
+                await asyncio.to_thread(
+                    self.vector_store.add, "book_knowledge", f"b_{book_id}",
+                    content, {"source": source or ""})
+            except Exception as e:
+                logger.warning(f"벡터 저장 실패 (book): {e}")
+
     async def update_book_knowledge(self, book_id: int, content: str, status: str = "done"):
+        source = ""
         async with aiosqlite.connect(self.path) as db:
+            if self.vector_store and status == "done":
+                cursor = await db.execute(
+                    "SELECT source FROM book_knowledge WHERE book_id = ?", (book_id,))
+                row = await cursor.fetchone()
+                source = row[0] if row else ""
             await db.execute(
                 "UPDATE book_knowledge SET content = ?, status = ? WHERE book_id = ?",
                 (content, status, book_id))
             await db.commit()
+
+        if self.vector_store:
+            try:
+                if status == "done" and content:
+                    await asyncio.to_thread(
+                        self.vector_store.add, "book_knowledge", f"b_{book_id}",
+                        content, {"source": source})
+                else:
+                    await asyncio.to_thread(
+                        self.vector_store.remove, "book_knowledge", f"b_{book_id}")
+            except Exception:
+                pass
 
     async def has_book_knowledge(self, book_id: int) -> bool:
         """done 또는 pending 상태가 있으면 True"""
@@ -830,18 +1015,19 @@ class LibrarianDB:
                 result[row["key"]] = round(self._apply_decay(row["value"], row["key"], row["updated_at"]), 1)
             return result
 
-    FREQ_COOLDOWN = 1800  # 빈도 감쇠 쿨다운 (30분)
+    FREQ_COOLDOWN = 300  # 빈도 감쇠 쿨다운 (5분)
+    FREQ_MIN_MULT = 0.3  # 아무리 빨라도 최소 30% 반영
 
-    TARGET_STD = 15  # 목표 표준편차
+    TARGET_STD = 20  # 목표 표준편차 (넓은 분포 허용)
 
     def _adjust_delta(self, delta: float, axis: str, current_value: float,
                       last_interaction_str: str | None = None,
                       server_avg: float | None = None,
                       server_std: float | None = None) -> float:
-        """보정된 변화량 계산. 최종 범위 ±10."""
+        """보정된 변화량 계산."""
         delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, float(delta)))
 
-        # 1. 빈도 감쇠: 최근 대화일수록 효과 감소
+        # 1. 빈도 감쇠: 최근 대화일수록 효과 감소 (최소 30% 보장)
         if last_interaction_str:
             try:
                 last = datetime.fromisoformat(last_interaction_str)
@@ -849,25 +1035,26 @@ class LibrarianDB:
                     last = last.replace(tzinfo=timezone.utc)
                 elapsed = (datetime.now(timezone.utc) - last).total_seconds()
                 freq_mult = min(1.0, elapsed / self.FREQ_COOLDOWN)
+                freq_mult = max(self.FREQ_MIN_MULT, freq_mult)
                 delta *= freq_mult
             except Exception:
                 pass
 
-        # 2. 분산 유지: 풀 분산이 목표보다 낮으면 증폭, 높으면 감쇠
+        # 2. 분산 유지: 풀 분산이 목표보다 낮으면 증폭, 높으면 약간 감쇠
         if server_std is not None and server_std > 0:
             variance_mult = self.TARGET_STD / server_std
-            variance_mult = max(0.5, min(2.0, variance_mult))
+            variance_mult = max(0.7, min(2.0, variance_mult))
             delta *= variance_mult
 
-        # 3. 서버 평균 정규화: 평균을 50으로 되돌리는 방향 증폭
+        # 3. 서버 평균 정규화: 평균을 50으로 되돌리는 방향 약간 증폭
         if server_avg is not None:
             avg_dist = abs(server_avg - self.NEUTRAL) / self.NEUTRAL  # 0 ~ 1
             helps_avg = (server_avg > self.NEUTRAL and delta < 0) or \
                         (server_avg < self.NEUTRAL and delta > 0)
             if helps_avg:
-                delta *= 1.0 + avg_dist * 0.5  # 최대 50% 증폭
+                delta *= 1.0 + avg_dist * 0.3  # 최대 30% 증폭
             else:
-                delta *= max(0.5, 1.0 - avg_dist * 0.5)  # 최대 50% 저항
+                delta *= max(0.7, 1.0 - avg_dist * 0.3)  # 최대 30% 저항
 
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
 

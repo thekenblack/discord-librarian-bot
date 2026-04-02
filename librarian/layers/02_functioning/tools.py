@@ -9,7 +9,7 @@ from google.genai import types
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 import importlib as _il
-_btc = _il.import_module("librarian.1_processor.bitcoin_data")
+_btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
 get_news = _btc.get_news
 get_weather_for = _btc.get_weather_for
 
@@ -69,7 +69,7 @@ google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 PROCESSOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
 
 # Processor 도구 선언
-processor_declarations = [
+functioning_declarations = [
         types.FunctionDeclaration(
             name="search",
             description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
@@ -161,7 +161,7 @@ processor_declarations = [
         ),
 ]
 
-processor_tools = [types.Tool(function_declarations=processor_declarations)]
+functioning_tools = [types.Tool(function_declarations=functioning_declarations)]
 
 # ── 도구 실행 ────────────────────────────────────────
 
