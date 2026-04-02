@@ -93,12 +93,12 @@ class LibrarianDB:
                 )
             """)
 
-            # 유저별 감정 (user_filter, user_affinity, user_trust)
+            # 유저별 감정 (user_comfort, user_affinity, user_trust)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_emotion (
                     user_id    TEXT PRIMARY KEY,
                     user_name  TEXT,
-                    filter   REAL NOT NULL DEFAULT 5,
+                    comfort   REAL NOT NULL DEFAULT 5,
                     affinity     REAL NOT NULL DEFAULT 5,
                     trust      REAL NOT NULL DEFAULT 5,
                     interaction_count INTEGER NOT NULL DEFAULT 0,
@@ -741,7 +741,7 @@ class LibrarianDB:
 
     # ── 감정 시스템 v2 ─────────────────────────────────────
 
-    USER_AXES = ["filter", "affinity", "trust"]
+    USER_AXES = ["comfort", "affinity", "trust"]
     SELF_AXES = ["self_mood", "self_capacity"]
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
@@ -751,7 +751,7 @@ class LibrarianDB:
     AXIS_RANGE = (0, 100)
     # 시간 감쇠 반감기 (초)
     DECAY_HALFLIFE = {
-        "filter": 48 * 3600,    # 48시간
+        "comfort": 48 * 3600,    # 48시간
         "affinity": 48 * 3600,
         "trust": 48 * 3600,
         "self_mood": 6 * 3600,    # 6시간
@@ -910,7 +910,7 @@ class LibrarianDB:
                 cursor = await db.execute(
                     "SELECT * FROM user_emotion WHERE user_id = ?", (target_user_id,))
                 row = await cursor.fetchone()
-                current = dict(row) if row else {"filter": self.NEUTRAL, "affinity": self.NEUTRAL, "trust": self.NEUTRAL,
+                current = dict(row) if row else {"comfort": self.NEUTRAL, "affinity": self.NEUTRAL, "trust": self.NEUTRAL,
                                                   "interaction_count": 0}
                 last_interaction = current.get("last_interaction")
 
@@ -924,15 +924,15 @@ class LibrarianDB:
                 current["last_interaction"] = datetime.now(timezone.utc).isoformat()
 
                 await db.execute("""
-                    INSERT INTO user_emotion (user_id, user_name, filter, affinity, trust, interaction_count, last_interaction)
+                    INSERT INTO user_emotion (user_id, user_name, comfort, affinity, trust, interaction_count, last_interaction)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         user_name=excluded.user_name,
-                        filter=excluded.filter, affinity=excluded.affinity, trust=excluded.trust,
+                        comfort=excluded.comfort, affinity=excluded.affinity, trust=excluded.trust,
                         interaction_count=excluded.interaction_count,
                         last_interaction=excluded.last_interaction
                 """, (target_user_id, target_user_name,
-                      current["filter"], current["affinity"], current["trust"],
+                      current["comfort"], current["affinity"], current["trust"],
                       current["interaction_count"], current["last_interaction"]))
 
                 for axis in self.USER_AXES:
