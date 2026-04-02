@@ -117,22 +117,29 @@ if os.path.isdir(MIGRATIONS_DIR):
         with open(tracking_file, encoding="utf-8") as f:
             applied = set(json.load(f))
 
-    scripts = sorted(f for f in os.listdir(MIGRATIONS_DIR) if f.endswith(".py"))
-    for script in scripts:
-        if script in applied:
+    # 하위 폴더(날짜_커밋) 포함 재귀 탐색, 파일명 기준 정렬
+    scripts = []
+    for root, dirs, files in os.walk(MIGRATIONS_DIR):
+        for f in files:
+            if f.endswith(".py"):
+                scripts.append((f, os.path.join(root, f)))
+    scripts.sort(key=lambda x: x[0])
+
+    for script_name, script_path in scripts:
+        if script_name in applied:
             continue
-        print(f"[마이그레이션] {script} 실행 중...")
+        print(f"[마이그레이션] {script_name} 실행 중...")
         result = subprocess.run(
-            [sys.executable, os.path.join(MIGRATIONS_DIR, script)],
+            [sys.executable, script_path],
             cwd=BASE_DIR,
         )
         if result.returncode == 0:
-            applied.add(script)
+            applied.add(script_name)
             with open(tracking_file, "w", encoding="utf-8") as f:
                 json.dump(sorted(applied), f)
-            print(f"[마이그레이션] {script} 완료")
+            print(f"[마이그레이션] {script_name} 완료")
         else:
-            print(f"[마이그레이션] {script} 실패 (코드: {result.returncode})")
+            print(f"[마이그레이션] {script_name} 실패 (코드: {result.returncode})")
 
 # ── DB 패치 (로컬 전용, gitignore) ─────────────────
 PATCHES_DIR = os.path.join(BASE_DIR, "patches")
