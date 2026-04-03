@@ -182,287 +182,202 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     response = await self._call_gemini(loop_contents, config)
     logger.info("[Functioning] API 응답 수신")
 
-    # ── 도구 루프 (최대 10회) ──
-    for loop_i in range(10):
-        if not response.candidates or not response.candidates[0].content.parts:
-            logger.info(f"[Functioning] 루프 {loop_i+1}: 빈 응답 (candidates 없음)")
-            break
+    # ── 1회 응답에서 모든 function_call + 텍스트 추출 ──
+    result_parts = []
+    text_response = ""
 
-        fc = None
+    if response and response.candidates and response.candidates[0].content.parts:
         for part in response.candidates[0].content.parts:
-            if part.function_call:
-                fc = part.function_call
-                break
-        if not fc:
-            logger.info(f"[Functioning] 루프 {loop_i+1}: 텍스트 응답 → 루프 종료")
-            break
+            # 텍스트 응답
+            if part.text and part.text.strip():
+                text_response = part.text.strip()
 
-        logger.info(f"[Functioning] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
-        _meta["tools_called"].append(fc.name)
+            # function_call 실행
+            if not part.function_call:
+                continue
+            fc = part.function_call
+            logger.info(f"[Functioning] 도구: {fc.name}({fc.args})")
+            _meta["tools_called"].append(fc.name)
 
-        # web_search 특수 처리
-        if fc.name == "web_search":
-            query = (dict(fc.args) if fc.args else {}).get("query", user_text)
-            logger.info(f"[Functioning] 웹 검색: {query}")
-
-            # 캐시 확인
-            cached = await self.librarian_db.get_web_by_query(query)
-            if cached:
-                logger.info(f"[Functioning] 웹 캐시 히트: {query}")
-                web_ids.append(cached["id"])
-                tool_data = {"result": cached["result"]}
-                _meta["tool_results"].append(f"web_cache:{cached['result']}")
-                loop_contents.append(response.candidates[0].content)
-                loop_contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
-                ))
-                try:
-                    response = await self._call_gemini(loop_contents, config)
-                except Exception as e:
-                    logger.warning(f"[Functioning] 웹 캐시 후 API 에러: {e}")
-                    break
+            # web_search
+            if fc.name == "web_search":
+                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
+                cached = await self.librarian_db.get_web_by_query(query)
+                if cached:
+                    web_ids.append(cached["id"])
+                    result_parts.append(f"웹 검색({query}): {cached['result']}")
+                    _meta["tool_results"].append(f"web_cache:{cached['result']}")
+                else:
+                    google_search_tool = _tools.google_search_tool
+                    web_config = types.GenerateContentConfig(
+                        system_instruction=dynamic_prompt,
+                        tools=google_search_tool,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=1.0,
+                    )
+                    web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                    web_result = ""
+                    try:
+                        web_response = await self._call_gemini(web_query, web_config)
+                        web_result = self._extract_reply(web_response)
+                    except Exception as e:
+                        logger.warning(f"[Functioning] 웹 검색 실패: {e}")
+                    if web_result:
+                        saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
+                        if saved_id:
+                            web_ids.append(saved_id)
+                    result_parts.append(f"웹 검색({query}): {web_result or '결과 없음'}")
+                    _meta["tool_results"].append(f"web:{web_result}")
                 continue
 
-            google_search_tool = _tools.google_search_tool
-            web_config = types.GenerateContentConfig(
-                system_instruction=dynamic_prompt,
-                tools=google_search_tool,
-                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                temperature=1.0,
-            )
-            web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-            web_result = ""
-            try:
-                web_response = await self._call_gemini(web_query, web_config)
-                web_result = self._extract_reply(web_response)
-            except Exception as e:
-                logger.warning(f"[Functioning] 웹 검색 실패: {e}")
-
-            if web_result:
-                logger.info(f"[Functioning] 웹 검색 결과: {web_result}")
-                saved_id = await self.librarian_db.save_web_result(query, web_result, user_name)
-                if saved_id:
-                    web_ids.append(saved_id)
-                tool_data = {"result": web_result}
-            else:
-                tool_data = {"result": f"'{query}' 검색 결과 없음"}
-
-            _meta["tool_results"].append(f"web:{web_result}")
-            loop_contents.append(response.candidates[0].content)
-            loop_contents.append(types.Content(
-                role="user",
-                parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
-            ))
-            try:
-                response = await self._call_gemini(loop_contents, config)
-            except Exception as e:
-                logger.warning(f"[Functioning] 웹 검색 후 API 에러: {e}")
-                break
-            continue
-
-        # recognize_media 특수 처리
-        if fc.name == "recognize_media":
-            att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
-            media_result = ""
-            stored_name = None
-            saved_media_id = None
-            if att_idx < len(self._current_attachments):
-                att = self._current_attachments[att_idx]
-                ct = att.content_type or ""
-
-                cached = None
-                data = None
-                file_hash = None
-                if ct.startswith("image/") or ct == "application/pdf":
-                    data = await att.read()
-                    import hashlib
-                    file_hash = hashlib.sha256(data).hexdigest()
-                    cached = await self.librarian_db.get_media_by_hash(file_hash) \
-                          or await self.librarian_db.get_media_by_filename(att.filename)
-                else:
-                    cached = await self.librarian_db.get_media_by_filename(att.filename)
-
-                if cached:
-                    logger.info(f"[Functioning] 미디어 캐시 히트: {att.filename} (media_id:{cached['id']})")
-                    media_result = cached["result"]
-                    stored_name = cached.get("stored_name")
-                    saved_media_id = cached["id"]
-                elif ct.startswith("image/") or ct == "application/pdf":
-                    logger.info(f"[Functioning] 미디어 인식: {att.filename} ({ct})")
-                    try:
-                        media_parts = [
-                            types.Part.from_bytes(data=data, mime_type=ct),
-                            types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                        ]
-                        media_config = types.GenerateContentConfig(
-                            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                            temperature=0.5,
-                        )
-                        media_response = await self._call_gemini(
-                            [types.Content(role="user", parts=media_parts)],
-                            media_config,
-                        )
-                        media_result = self._extract_reply(media_response)
-                        if media_result:
-                            stored_name = None
-                            try:
-                                os.makedirs(MEDIA_DIR, exist_ok=True)
-                                import uuid
-                                ext = os.path.splitext(att.filename)[1] or ""
-                                stored_name = f"{uuid.uuid4().hex}{ext}"
-                                with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
-                                    mf.write(data)
-                                logger.info(f"[Functioning] 미디어 저장: {att.filename} → {stored_name}")
-                            except Exception as e:
-                                logger.warning(f"[Functioning] 미디어 파일 저장 실패: {e}")
-                                stored_name = None
-                            saved_media_id = await self.librarian_db.save_media_result(
-                                att.filename, media_result, user_name=user_name,
-                                uploader=user_name, stored_name=stored_name,
-                                file_hash=file_hash)
-                            if saved_media_id:
-                                media_ids.append(saved_media_id)
-                    except Exception as e:
-                        logger.warning(f"[Functioning] 미디어 인식 실패: {e}")
-                else:
-                    media_result = f"이 파일 형식({ct})은 인식할 수 없어."
-            else:
-                media_result = "첨부파일이 없어."
-
-            tool_data = {"result": media_result if media_result else "인식 실패"}
-            if media_result and stored_name:
-                tool_data["media_id"] = saved_media_id
-            logger.info(f"[Functioning] 미디어 인식 결과: {media_result}")
-            _meta["tool_results"].append(f"media:{media_result}")
-            loop_contents.append(response.candidates[0].content)
-            loop_contents.append(types.Content(
-                role="user",
-                parts=[types.Part.from_function_response(name="recognize_media", response=tool_data)],
-            ))
-            try:
-                response = await self._call_gemini(loop_contents, config)
-            except Exception as e:
-                logger.warning(f"[Functioning] 미디어 인식 후 API 에러: {e}")
-                break
-            continue
-
-        # recognize_link 특수 처리
-        if fc.name == "recognize_link":
-            url = (dict(fc.args) if fc.args else {}).get("url", "")
-            link_result = ""
-            parsed = parse_url(url)
-            normalized = parsed["normalized"]
-
-            _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
-            _url_path = url.split("?")[0].split("#")[0].lower()
-            _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
-
-            if _is_image_url:
-                try:
-                    img_parts = [
-                        types.Part(file_data=types.FileData(file_uri=url)),
-                        types.Part.from_text(text="이 이미지를 설명해."),
-                    ]
-                    img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
-                    img_response = await self._call_gemini(
-                        [types.Content(role="user", parts=img_parts)], img_config)
-                    link_result = self._extract_reply(img_response)
-                    if link_result:
-                        await self.librarian_db.save_url_result(
-                            normalized, url, link_result, user_name=user_name, status="done")
-                        logger.info(f"[Functioning] 이미지 URL 동기 인식 완료: {url}")
-                except Exception as e:
-                    logger.warning(f"[Functioning] 이미지 URL 인식 실패 ({url}): {e}")
-
-            if not link_result:
-                cached = await self.librarian_db.get_url_by_normalized(normalized)
-                if cached:
-                    if cached.get("status") == "pending":
-                        logger.info(f"[Functioning] 링크 인식 중: {url}")
-                        link_result = "status:pending 아직 읽는 중. 유저에게 잠깐 기다려달라고 해."
-                    elif cached.get("status") == "failed":
-                        await self.librarian_db.update_url_result(normalized, "", status="pending")
-                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                        link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                        logger.info(f"[Functioning] 링크 재시도: {url}")
+            # recognize_media
+            if fc.name == "recognize_media":
+                att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
+                media_result = ""
+                stored_name = None
+                saved_media_id = None
+                if att_idx < len(self._current_attachments):
+                    att = self._current_attachments[att_idx]
+                    ct = att.content_type or ""
+                    cached = None
+                    data = None
+                    file_hash = None
+                    if ct.startswith("image/") or ct == "application/pdf":
+                        data = await att.read()
+                        import hashlib
+                        file_hash = hashlib.sha256(data).hexdigest()
+                        cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                              or await self.librarian_db.get_media_by_filename(att.filename)
                     else:
-                        logger.info(f"[Functioning] 링크 캐시 히트: {url}")
-                        link_result = cached["result"]
+                        cached = await self.librarian_db.get_media_by_filename(att.filename)
 
-            if not link_result:
-                await self.librarian_db.save_url_result(
-                    normalized, url, "", user_name=user_name, status="pending")
-                asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                link_result = "status:started 방금 읽기 시작했어. 유저에게 확인해보겠다고 해."
-                logger.info(f"[Functioning] 링크 인식 백그라운드 시작: {url}")
+                    if cached:
+                        media_result = cached["result"]
+                        stored_name = cached.get("stored_name")
+                        saved_media_id = cached["id"]
+                    elif ct.startswith("image/") or ct == "application/pdf":
+                        try:
+                            media_parts = [
+                                types.Part.from_bytes(data=data, mime_type=ct),
+                                types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                            ]
+                            media_config = types.GenerateContentConfig(
+                                max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                            media_response = await self._call_gemini(
+                                [types.Content(role="user", parts=media_parts)], media_config)
+                            media_result = self._extract_reply(media_response)
+                            if media_result:
+                                try:
+                                    os.makedirs(MEDIA_DIR, exist_ok=True)
+                                    import uuid
+                                    ext = os.path.splitext(att.filename)[1] or ""
+                                    stored_name = f"{uuid.uuid4().hex}{ext}"
+                                    with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                        mf.write(data)
+                                except Exception:
+                                    stored_name = None
+                                saved_media_id = await self.librarian_db.save_media_result(
+                                    att.filename, media_result, user_name=user_name,
+                                    uploader=user_name, stored_name=stored_name, file_hash=file_hash)
+                                if saved_media_id:
+                                    media_ids.append(saved_media_id)
+                        except Exception as e:
+                            logger.warning(f"[Functioning] 미디어 인식 실패: {e}")
+                    else:
+                        media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                else:
+                    media_result = "첨부파일이 없어."
+                result_parts.append(f"미디어 인식: {media_result or '인식 실패'}")
+                _meta["tool_results"].append(f"media:{media_result}")
+                continue
 
-            tool_data = {"result": link_result if link_result else "인식 실패"}
-            logger.info(f"[Functioning] 링크 인식 결과: {link_result}")
-            _meta["tool_results"].append(f"link:{link_result}")
-            loop_contents.append(response.candidates[0].content)
-            loop_contents.append(types.Content(
-                role="user",
-                parts=[types.Part.from_function_response(name="recognize_link", response=tool_data)],
-            ))
-            try:
-                response = await self._call_gemini(loop_contents, config)
-            except Exception as e:
-                logger.warning(f"[Functioning] 링크 인식 후 API 에러: {e}")
-                break
-            continue
+            # recognize_link
+            if fc.name == "recognize_link":
+                url = (dict(fc.args) if fc.args else {}).get("url", "")
+                link_result = ""
+                parsed = parse_url(url)
+                normalized = parsed["normalized"]
+                _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                _url_path = url.split("?")[0].split("#")[0].lower()
+                _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
 
-        # 일반 도구 실행 (search, deliver, attach, memorize_alias, forget_alias)
-        tool_args = dict(fc.args) if fc.args else {}
-        if fc.name == "search":
-            tool_args["_user_id"] = user_id
-            tool_args["_user_name"] = user_name
-            tool_args["_exclude_memory_ids"] = memory_ids
-            tool_args["_exclude_web_ids"] = web_ids
-            tool_args["_exclude_url_ids"] = url_ids
-            tool_args["_exclude_media_ids"] = media_ids
-        tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-        tool_data = json.loads(tool_result)
-        logger.info(f"[Functioning] 도구 결과: {tool_result}")
-        _meta["tool_results"].append(tool_result)
+                if _is_image_url:
+                    try:
+                        img_parts = [
+                            types.Part(file_data=types.FileData(file_uri=url)),
+                            types.Part.from_text(text="이 이미지를 설명해."),
+                        ]
+                        img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                        img_response = await self._call_gemini(
+                            [types.Content(role="user", parts=img_parts)], img_config)
+                        link_result = self._extract_reply(img_response)
+                        if link_result:
+                            await self.librarian_db.save_url_result(
+                                normalized, url, link_result, user_name=user_name, status="done")
+                    except Exception as e:
+                        logger.warning(f"[Functioning] 이미지 URL 인식 실패 ({url}): {e}")
 
-        if tool_data.get("_action") == "deliver":
-            save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
-            if os.path.exists(save_path):
-                file_to_send = discord.File(save_path, filename=tool_data["filename"])
-                await self.library_db.increment_download(tool_data["file_id"])
+                if not link_result:
+                    cached = await self.librarian_db.get_url_by_normalized(normalized)
+                    if cached:
+                        if cached.get("status") == "pending":
+                            link_result = "아직 읽는 중. 잠깐 기다려달라고 해."
+                        elif cached.get("status") == "failed":
+                            await self.librarian_db.update_url_result(normalized, "", status="pending")
+                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                            link_result = "방금 읽기 시작했어. 확인해보겠다고 해."
+                        else:
+                            link_result = cached["result"]
 
-        if tool_data.get("_action") == "attach":
-            save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
-            if os.path.exists(save_path):
-                file_to_send = discord.File(save_path, filename=tool_data["filename"])
+                if not link_result:
+                    await self.librarian_db.save_url_result(
+                        normalized, url, "", user_name=user_name, status="pending")
+                    asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                    link_result = "방금 읽기 시작했어. 확인해보겠다고 해."
 
-        if tool_data.get("_action") == "share_url":
-            shared_url = tool_data.get("url", "")
-            if shared_url:
-                _meta.setdefault("shared_urls", []).append(shared_url)
+                result_parts.append(f"링크 인식({url}): {link_result or '인식 실패'}")
+                _meta["tool_results"].append(f"link:{link_result}")
+                continue
 
-        # 사용한 도구 제거 + config 갱신
-        _tool_used.add(fc.name)
-        if fc.name in ("deliver", "attach"):
-            _tool_used.add("deliver")
-            _tool_used.add("attach")
-        config = _make_config(0.5)
+            # 일반 도구 (search, deliver, attach, memorize_alias, forget_alias)
+            tool_args = dict(fc.args) if fc.args else {}
+            if fc.name == "search":
+                tool_args["_user_id"] = user_id
+                tool_args["_user_name"] = user_name
+                tool_args["_exclude_memory_ids"] = memory_ids
+                tool_args["_exclude_web_ids"] = web_ids
+                tool_args["_exclude_url_ids"] = url_ids
+                tool_args["_exclude_media_ids"] = media_ids
+            tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+            tool_data = json.loads(tool_result)
+            _meta["tool_results"].append(tool_result)
 
-        loop_contents.append(response.candidates[0].content)
-        loop_contents.append(types.Content(
-            role="user",
-            parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
-        ))
+            if tool_data.get("_action") == "deliver":
+                save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
+                if os.path.exists(save_path):
+                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
+                    await self.library_db.increment_download(tool_data["file_id"])
 
-        try:
-            response = await self._call_gemini(loop_contents, config)
-        except Exception as e:
-            logger.warning(f"[Functioning] 도구 후 API 에러: {e}")
-            break
+            if tool_data.get("_action") == "attach":
+                save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
+                if os.path.exists(save_path):
+                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
 
-    # Processor의 최종 텍스트 = 도구 결과 요약 (짧음)
-    tool_results_text = self._extract_reply(response)
+            if tool_data.get("_action") == "share_url":
+                shared_url = tool_data.get("url", "")
+                if shared_url:
+                    _meta.setdefault("shared_urls", []).append(shared_url)
+
+            result_parts.append(tool_result)
+
+    # 도구 결과 + 텍스트를 합쳐서 반환
+    if result_parts:
+        tool_results_text = "\n".join(result_parts)
+    elif text_response:
+        tool_results_text = text_response
+    else:
+        tool_results_text = ""
+
     return tool_results_text, file_to_send, _meta
 
 

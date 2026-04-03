@@ -14,8 +14,10 @@ async def run_evaluation(self, user_id: str, user_name: str,
                          user_text: str, bot_reply: str,
                          context: str = "", tool_results: str = "",
                          channel_id: str = None):
-    """Evaluation: 감정/기억/요약 업데이트. 백그라운드 실행, 에러 무시."""
+    """Evaluation: 감정/기억/요약 업데이트. 백그라운드 실행, 에러 무시. API 1회 호출."""
     try:
+        import re as _re
+
         # 현재 감정 상태 조회
         bot_emo = await self.librarian_db.get_bot_emotion()
         user_emo = await self.librarian_db.get_user_emotion(user_id)
@@ -64,198 +66,108 @@ async def run_evaluation(self, user_id: str, user_name: str,
         logger.info(f"[Evaluation] API 호출 (히스토리={len(self.evaluation_history)}턴)")
         response = await self._call_gemini(loop_contents, config)
 
-        # 도구 루프 (최대 5회 — feel, memorize, forget, update_summary, update_channel_summary)
-        _feel_done = False
-        for loop_i in range(5):
-            if not response.candidates or not response.candidates[0].content.parts:
-                break
-
-            fc = None
-            for part in response.candidates[0].content.parts:
-                if part.function_call:
-                    fc = part.function_call
-                    break
-            if not fc:
-                break
-
-            logger.info(f"[Evaluation] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
-
-            # feel 도구 (1회 호출로 여러 유저 동시 처리)
-            if fc.name == "feel":
-                if _feel_done:
-                    loop_contents.append(response.candidates[0].content)
-                    loop_contents.append(types.Content(
-                        role="user",
-                        parts=[types.Part.from_function_response(name="feel", response={"result": "already done"})],
-                    ))
-                    try:
-                        response = await self._call_gemini(loop_contents, config)
-                    except Exception:
-                        break
-                    continue
-
-                import re as _re
-                feel_args = dict(fc.args) if fc.args else {}
-                feel_msg_id = feel_args.pop("message_id", "")
-                reason = feel_args.pop("reason", "")
-                response_mode = feel_args.pop("response", "normal")
-                feel_args.pop("reaction", None)  # L2가 담당, L5에서는 무시
-
-                # 봇 전체 축 처리
-                bot_changes = {}
-                for axis in self.librarian_db.SELF_AXES + self.librarian_db.SERVER_AXES:
-                    if axis in feel_args:
-                        try:
-                            bot_changes[axis] = int(feel_args[axis])
-                        except (ValueError, TypeError):
-                            pass
-
-                # 유저별 처리
-                targets_raw = feel_args.get("targets") or []
-                results = []
-
-                if not targets_raw:
-                    # targets 생략 시 현재 대화 상대
-                    targets_raw = [{"user_id": user_id}]
-
-                for t in targets_raw:
-                    t = dict(t) if t else {}
-                    target_raw = t.get("user_id", user_id)
-                    target_id = user_id
-                    target_name = user_name
-                    if target_raw:
-                        id_match = _re.search(r'(\d{15,})', str(target_raw))
-                        if id_match:
-                            target_id = id_match.group(1)
-                            target_name = str(target_raw)
-                        else:
-                            target_name = str(target_raw)
-                            target_id = target_raw
-
-                    changes = dict(bot_changes)  # 봇 축은 첫 유저에만
-                    for axis in self.librarian_db.USER_AXES:
-                        if axis in t:
-                            try:
-                                changes[axis] = int(t[axis])
-                            except (ValueError, TypeError):
-                                pass
-
-                    current = await self.librarian_db.update_emotion(
-                        changes, target_user_id=target_id,
-                        target_user_name=target_name, reason=reason,
-                        message_id=feel_msg_id or None)
-
-                    def _fmt_delta(v):
-                        return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
-                    def _fmt_cur(v):
-                        return f"{v:.1f}" if isinstance(v, float) else str(v)
-                    changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
-                    current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
-                    logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
-                    results.append(f"{target_name}: {current_str}")
-
-                    # 봇 전체 축은 첫 유저에서만
-                    bot_changes = {}
-
-                _feel_done = True
-
-
-
-                tool_data = {"result": " | ".join(results)}
-
-                loop_contents.append(response.candidates[0].content)
-                loop_contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(name="feel", response=tool_data)],
-                ))
-                try:
-                    response = await self._call_gemini(loop_contents, config)
-                except Exception as e:
-                    logger.warning(f"[Evaluation] feel 후 API 에러: {e}")
-                    break
-                continue
-
-            # memorize / forget 도구
-            if fc.name in ("memorize", "forget"):
-                tool_args = dict(fc.args) if fc.args else {}
-                if fc.name == "memorize":
-                    tool_args["_user_id"] = user_id
-                    tool_args["_user_name"] = user_name
-                tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
-                tool_data = json.loads(tool_result)
-                logger.info(f"[Evaluation] {fc.name} 결과: {tool_result}")
-
-                loop_contents.append(response.candidates[0].content)
-                loop_contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
-                ))
-                try:
-                    response = await self._call_gemini(loop_contents, config)
-                except Exception as e:
-                    logger.warning(f"[Evaluation] {fc.name} 후 API 에러: {e}")
-                    break
-                continue
-
-            # update_summary 도구
-            if fc.name == "update_summary":
-                summary = (dict(fc.args) if fc.args else {}).get("summary", "")
-                if summary:
-                    await self.librarian_db.save_user_summary(user_id, summary)
-                    logger.info(f"[Evaluation] 유저 요약 갱신 ({len(summary)}자): {summary[:100]}")
-                tool_data = {"result": "ok"}
-                loop_contents.append(response.candidates[0].content)
-                loop_contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
-                ))
-                try:
-                    response = await self._call_gemini(loop_contents, config)
-                except Exception:
-                    break
-                continue
-
-            # update_channel_summary 도구
-            if fc.name == "update_channel_summary":
-                summary = (dict(fc.args) if fc.args else {}).get("summary", "")
-                if summary and channel_id:
-                    await self.librarian_db.save_channel_summary(channel_id, summary)
-                    logger.info(f"[Evaluation] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
-                tool_data = {"result": "ok"}
-                loop_contents.append(response.candidates[0].content)
-                loop_contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
-                ))
-                try:
-                    response = await self._call_gemini(loop_contents, config)
-                except Exception:
-                    break
-                continue
-
-            # 알 수 없는 도구 → 무시
-            logger.warning(f"[Evaluation] 알 수 없는 도구 무시: {fc.name}")
-            loop_contents.append(response.candidates[0].content)
-            loop_contents.append(types.Content(
-                role="user",
-                parts=[types.Part.from_function_response(name=fc.name, response={"result": "unknown tool"})],
-            ))
-            try:
-                response = await self._call_gemini(loop_contents, config)
-            except Exception:
-                break
-
-        # 피드백 추출: 도구 루프 후 마지막 텍스트 응답
+        # 1회 응답에서 모든 function_call + 텍스트 추출
         feedback_text = ""
         if response and response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
+                # 텍스트 (피드백/소견)
                 if part.text and part.text.strip():
                     feedback_text = part.text.strip()
+
+                # function_call 실행
+                if not part.function_call:
+                    continue
+                fc = part.function_call
+                logger.info(f"[Evaluation] 도구: {fc.name}({fc.args})")
+
+                # feel
+                if fc.name == "feel":
+                    feel_args = dict(fc.args) if fc.args else {}
+                    feel_msg_id = feel_args.pop("message_id", "")
+                    reason = feel_args.pop("reason", "")
+                    feel_args.pop("response", None)
+                    feel_args.pop("reaction", None)
+
+                    # 봇 전체 축
+                    bot_changes = {}
+                    for axis in self.librarian_db.SELF_AXES + self.librarian_db.SERVER_AXES:
+                        if axis in feel_args:
+                            try:
+                                bot_changes[axis] = int(feel_args[axis])
+                            except (ValueError, TypeError):
+                                pass
+
+                    # 유저별 처리
+                    targets_raw = feel_args.get("targets") or []
+                    if not targets_raw:
+                        targets_raw = [{"user_id": user_id}]
+
+                    for t in targets_raw:
+                        t = dict(t) if t else {}
+                        target_raw = t.get("user_id", user_id)
+                        target_id = user_id
+                        target_name = user_name
+                        if target_raw:
+                            id_match = _re.search(r'(\d{15,})', str(target_raw))
+                            if id_match:
+                                target_id = id_match.group(1)
+                                target_name = str(target_raw)
+                            else:
+                                target_name = str(target_raw)
+                                target_id = target_raw
+
+                        changes = dict(bot_changes)
+                        for axis in self.librarian_db.USER_AXES:
+                            if axis in t:
+                                try:
+                                    changes[axis] = int(t[axis])
+                                except (ValueError, TypeError):
+                                    pass
+
+                        current = await self.librarian_db.update_emotion(
+                            changes, target_user_id=target_id,
+                            target_user_name=target_name, reason=reason,
+                            message_id=feel_msg_id or None)
+
+                        if current:
+                            changes_str = " ".join(f"{k}:{v:+d}" if isinstance(v, int) else f"{k}:{v:+.1f}" for k, v in changes.items())
+                            current_str = " ".join(f"{k}:{v:.1f}" for k, v in current.items())
+                            logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+
+                        bot_changes = {}  # 봇 축은 첫 유저에서만
+
+                # memorize / forget
+                elif fc.name in ("memorize", "forget"):
+                    tool_args = dict(fc.args) if fc.args else {}
+                    if fc.name == "memorize":
+                        tool_args["_user_id"] = user_id
+                        tool_args["_user_name"] = user_name
+                    tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                    logger.info(f"[Evaluation] {fc.name}: {tool_result}")
+
+                # update_summary
+                elif fc.name == "update_summary":
+                    summary = (dict(fc.args) if fc.args else {}).get("summary", "")
+                    if summary:
+                        await self.librarian_db.save_user_summary(user_id, summary)
+                        logger.info(f"[Evaluation] 유저 요약 갱신 ({len(summary)}자): {summary[:100]}")
+
+                # update_channel_summary
+                elif fc.name == "update_channel_summary":
+                    summary = (dict(fc.args) if fc.args else {}).get("summary", "")
+                    if summary and channel_id:
+                        await self.librarian_db.save_channel_summary(channel_id, summary)
+                        logger.info(f"[Evaluation] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
+
+                else:
+                    logger.warning(f"[Evaluation] 알 수 없는 도구 무시: {fc.name}")
+
+        # 피드백 저장
         if feedback_text:
             await self.librarian_db.save_feedback(user_id, feedback_text)
             logger.info(f"[Evaluation] 피드백 저장 ({len(feedback_text)}자): {feedback_text}")
 
-        # L5 단일 히스토리에 이번 턴 추가 (큐 워커가 직렬 실행하므로 락 불필요)
+        # L5 단일 히스토리에 이번 턴 추가
         self.evaluation_history.append(types.Content(role="user", parts=[
             types.Part.from_text(text=eval_text)]))
         self.evaluation_history.append(types.Content(role="model", parts=[
