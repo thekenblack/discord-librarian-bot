@@ -99,7 +99,7 @@ async def run_evaluation(self, user_id: str, user_name: str,
                 feel_msg_id = feel_args.pop("message_id", "")
                 reason = feel_args.pop("reason", "")
                 response_mode = feel_args.pop("response", "normal")
-                reaction_emoji = feel_args.pop("reaction", None)
+                feel_args.pop("reaction", None)  # L2가 담당, L5에서는 무시
 
                 # 봇 전체 축 처리
                 bot_changes = {}
@@ -159,8 +159,7 @@ async def run_evaluation(self, user_id: str, user_name: str,
 
                 _feel_done = True
 
-                if reaction_emoji:
-                    logger.info(f"[Evaluation] 리액션 예약 (무시됨, 이미 응답 전송 후): {reaction_emoji}")
+
 
                 tool_data = {"result": " | ".join(results)}
 

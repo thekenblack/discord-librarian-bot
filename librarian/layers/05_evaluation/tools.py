@@ -54,7 +54,6 @@ evaluation_declarations = [
                 "message_id": types.Schema(type="STRING", description="감정 변화의 원인이 된 메시지 ID. 중복 방지용."),
                 "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                 "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
-                "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
             },
             required=["reason", "message_id"],
         ),
