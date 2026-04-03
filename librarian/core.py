@@ -70,6 +70,7 @@ class AILibrarianBot(discord.Client):
         self.chat_histories: dict[str, list] = {}  # user_id → history (L3)
         self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
         self.evaluator_history: list = []  # 단일 히스토리 (L5)
+        self._evaluator_lock = asyncio.Lock()  # L5 단일 히스토리 보호
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
