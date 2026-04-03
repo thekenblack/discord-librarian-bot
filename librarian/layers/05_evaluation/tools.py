@@ -1,12 +1,12 @@
 """
-Evaluator 도구 선언 (feel, memorize, forget)
+Evaluation 도구 선언 (feel, memorize, forget)
 """
 
 from google.genai import types
 
-EVALUATOR_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary"}
+EVALUATION_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary"}
 
-evaluator_declarations = [
+evaluation_declarations = [
     types.FunctionDeclaration(
         name="memorize",
         description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모, 지식 등. 수정이 필요하면 forget 후 memorize.",
@@ -51,7 +51,7 @@ evaluator_declarations = [
     ),
 ]
 
-evaluator_declarations += [
+evaluation_declarations += [
     types.FunctionDeclaration(
         name="update_summary",
         description="유저와의 대화 요약을 갱신한다. 이전 요약에 이번 대화를 반영해서 덮어쓴다. 대화 톤, 주요 주제, 관계 흐름을 포함.",
@@ -76,4 +76,4 @@ evaluator_declarations += [
     ),
 ]
 
-evaluator_tools = [types.Tool(function_declarations=evaluator_declarations)]
+evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]

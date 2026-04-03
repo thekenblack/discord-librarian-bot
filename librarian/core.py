@@ -28,7 +28,7 @@ logger = logging.getLogger("AILibrarian")
 MODEL = GEMINI_MODEL
 MAX_HISTORY = 10              # L3 유저별 (5왕복)
 MAX_PERCEPTION_HISTORY = 10   # L1 채널별 (5왕복)
-MAX_EVALUATOR_HISTORY = 10    # L5 단일 (5왕복)
+MAX_EVALUATION_HISTORY = 10    # L5 단일 (5왕복)
 
 # 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
@@ -70,9 +70,9 @@ class AILibrarianBot(discord.Client):
         self.chat_histories: dict[str, list] = {}  # user_id → history (L3)
         self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
         self._perception_locks: dict[str, asyncio.Lock] = {}  # channel_id → lock (L1)
-        self.evaluator_history: list = []  # 단일 히스토리 (L5)
-        self._evaluator_queue: asyncio.Queue = asyncio.Queue()  # L5 작업 큐
-        self._evaluator_task: asyncio.Task | None = None  # L5 워커 태스크
+        self.evaluation_history: list = []  # 단일 히스토리 (L5)
+        self._evaluation_queue: asyncio.Queue = asyncio.Queue()  # L5 작업 큐
+        self._evaluation_task: asyncio.Task | None = None  # L5 워커 태스크
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
@@ -182,18 +182,18 @@ class AILibrarianBot(discord.Client):
         asyncio.create_task(bitcoin_data.start_background_update())
         asyncio.create_task(self._learn_all_books())
         self._bot_ready = True
-        self._evaluator_task = asyncio.create_task(self._evaluator_worker())
+        self._evaluation_task = asyncio.create_task(self._evaluation_worker())
 
-    async def _evaluator_worker(self):
+    async def _evaluation_worker(self):
         """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
         while True:
             try:
-                kwargs = await self._evaluator_queue.get()
-                await self._run_evaluator(**kwargs)
+                kwargs = await self._evaluation_queue.get()
+                await self._run_evaluation(**kwargs)
             except Exception as e:
-                logger.warning(f"[Evaluator Worker] 에러 (무시): {e}")
+                logger.warning(f"[Evaluation Worker] 에러 (무시): {e}")
             finally:
-                self._evaluator_queue.task_done()
+                self._evaluation_queue.task_done()
 
     async def _flush_admin_notify(self, delay: float = 10.0):
         """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
@@ -605,7 +605,7 @@ class AILibrarianBot(discord.Client):
 
             # ── Layer 5: Evaluation (큐에 추가, 백그라운드 워커가 처리) ──
             if reply:
-                self._evaluator_queue.put_nowait({
+                self._evaluation_queue.put_nowait({
                     "user_id": user_id, "user_name": user_name,
                     "user_text": user_text, "bot_reply": reply,
                     "context": perception, "tool_results": instruction,
@@ -829,11 +829,11 @@ class AILibrarianBot(discord.Client):
             return
         self.perception_histories[channel_id] = history[-MAX_PERCEPTION_HISTORY:]
 
-    def _trim_evaluator_history(self):
-        """L5 단일 히스토리를 MAX_EVALUATOR_HISTORY로 제한."""
-        if len(self.evaluator_history) <= MAX_EVALUATOR_HISTORY:
+    def _trim_evaluation_history(self):
+        """L5 단일 히스토리를 MAX_EVALUATION_HISTORY로 제한."""
+        if len(self.evaluation_history) <= MAX_EVALUATION_HISTORY:
             return
-        self.evaluator_history[:] = self.evaluator_history[-MAX_EVALUATOR_HISTORY:]
+        self.evaluation_history[:] = self.evaluation_history[-MAX_EVALUATION_HISTORY:]
 
     async def _check_gift_message(self, message: discord.Message):
         """라이브러리 봇의 선물 메시지를 감지해서 5레이어 파이프라인으로 처리."""
@@ -904,4 +904,4 @@ _postprocess = _il.import_module("librarian.layers.04_postprocess.postprocess")
 AILibrarianBot._run_postprocess = _postprocess.run_postprocess
 
 _evaluation = _il.import_module("librarian.layers.05_evaluation.evaluation")
-AILibrarianBot._run_evaluator = _evaluation.run_evaluator
+AILibrarianBot._run_evaluation = _evaluation.run_evaluation

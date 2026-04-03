@@ -52,7 +52,7 @@ class Persona:
 
         # 하위 호환
         self.processor_text: str = self.functioning_text
-        self.evaluator_text: str = self.evaluation_text
+
         self.prompt_text: str = self.functioning_text
         self.persona_text: str = self.character_text
         self.reminder_text: str = ""

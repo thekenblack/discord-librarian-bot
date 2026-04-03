@@ -4,17 +4,17 @@ from google.genai import types
 import importlib as _il
 _tools = _il.import_module("librarian.layers.02_functioning.tools")
 _eval_tools = _il.import_module("librarian.layers.05_evaluation.tools")
-evaluator_tools = _eval_tools.evaluator_tools
+evaluation_tools = _eval_tools.evaluation_tools
 execute_tool = _tools.execute_tool
 
 logger = logging.getLogger("AILibrarian")
 
 
-async def run_evaluator(self, user_id: str, user_name: str,
+async def run_evaluation(self, user_id: str, user_name: str,
                          user_text: str, bot_reply: str,
                          context: str = "", tool_results: str = "",
                          channel_id: str = None):
-    """Evaluator: 감정/기억/요약 업데이트. 백그라운드 실행, 에러 무시."""
+    """Evaluation: 감정/기억/요약 업데이트. 백그라운드 실행, 에러 무시."""
     try:
         # 현재 감정 상태 조회
         bot_emo = await self.librarian_db.get_bot_emotion()
@@ -32,10 +32,10 @@ async def run_evaluator(self, user_id: str, user_name: str,
         prev_user_summary = await self.librarian_db.get_user_summary(user_id)
         prev_channel_summary = await self.librarian_db.get_channel_summary(channel_id) if channel_id else None
 
-        # Evaluator 프롬프트
+        # Evaluation 프롬프트
         sys_parts = []
-        if self.persona.evaluator_text:
-            sys_parts.append(self.persona.evaluator_text)
+        if self.persona.evaluation_text:
+            sys_parts.append(self.persona.evaluation_text)
         sys_parts.append(emo_block)
         if prev_user_summary:
             sys_parts.append(f"## {user_name}과의 이전 대화 요약\n{prev_user_summary}")
@@ -52,16 +52,16 @@ async def run_evaluator(self, user_id: str, user_name: str,
 
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
-            tools=evaluator_tools,
+            tools=evaluation_tools,
             max_output_tokens=1000,
             temperature=0.3,
         )
 
         # 단일 히스토리 + 이번 턴 (큐 워커가 직렬 실행하므로 락 불필요)
-        loop_contents = list(self.evaluator_history)
+        loop_contents = list(self.evaluation_history)
         loop_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=eval_text)]))
 
-        logger.info(f"[Evaluator] API 호출 (히스토리={len(self.evaluator_history)}턴)")
+        logger.info(f"[Evaluation] API 호출 (히스토리={len(self.evaluation_history)}턴)")
         response = await self._call_gemini(loop_contents, config)
 
         # 도구 루프 (최대 5회 — feel, memorize, forget, update_summary, update_channel_summary)
@@ -78,7 +78,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
             if not fc:
                 break
 
-            logger.info(f"[Evaluator] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
+            logger.info(f"[Evaluation] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
 
             # feel 도구
             if fc.name == "feel":
@@ -132,12 +132,12 @@ async def run_evaluator(self, user_id: str, user_name: str,
                     return f"{v:.1f}" if isinstance(v, float) else str(v)
                 changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
                 current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
-                logger.info(f"[Evaluator] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+                logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
                 _feel_done = True
 
                 # reaction 로그만 남김 (실제 리액션은 on_message에서 처리)
                 if reaction_emoji:
-                    logger.info(f"[Evaluator] 리액션 예약 (무시됨, 이미 응답 전송 후): {reaction_emoji}")
+                    logger.info(f"[Evaluation] 리액션 예약 (무시됨, 이미 응답 전송 후): {reaction_emoji}")
 
                 result_parts = []
                 for k, v in current.items():
@@ -153,7 +153,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                 try:
                     response = await self._call_gemini(loop_contents, config)
                 except Exception as e:
-                    logger.warning(f"[Evaluator] feel 후 API 에러: {e}")
+                    logger.warning(f"[Evaluation] feel 후 API 에러: {e}")
                     break
                 continue
 
@@ -165,7 +165,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                     tool_args["_user_name"] = user_name
                 tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
                 tool_data = json.loads(tool_result)
-                logger.info(f"[Evaluator] {fc.name} 결과: {tool_result}")
+                logger.info(f"[Evaluation] {fc.name} 결과: {tool_result}")
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
@@ -175,7 +175,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                 try:
                     response = await self._call_gemini(loop_contents, config)
                 except Exception as e:
-                    logger.warning(f"[Evaluator] {fc.name} 후 API 에러: {e}")
+                    logger.warning(f"[Evaluation] {fc.name} 후 API 에러: {e}")
                     break
                 continue
 
@@ -184,7 +184,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                 summary = (dict(fc.args) if fc.args else {}).get("summary", "")
                 if summary:
                     await self.librarian_db.save_user_summary(user_id, summary)
-                    logger.info(f"[Evaluator] 유저 요약 갱신 ({len(summary)}자): {summary[:100]}")
+                    logger.info(f"[Evaluation] 유저 요약 갱신 ({len(summary)}자): {summary[:100]}")
                 tool_data = {"result": "ok"}
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
@@ -202,7 +202,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                 summary = (dict(fc.args) if fc.args else {}).get("summary", "")
                 if summary and channel_id:
                     await self.librarian_db.save_channel_summary(channel_id, summary)
-                    logger.info(f"[Evaluator] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
+                    logger.info(f"[Evaluation] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
                 tool_data = {"result": "ok"}
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
@@ -216,7 +216,7 @@ async def run_evaluator(self, user_id: str, user_name: str,
                 continue
 
             # 알 수 없는 도구 → 무시
-            logger.warning(f"[Evaluator] 알 수 없는 도구 무시: {fc.name}")
+            logger.warning(f"[Evaluation] 알 수 없는 도구 무시: {fc.name}")
             loop_contents.append(response.candidates[0].content)
             loop_contents.append(types.Content(
                 role="user",
@@ -235,17 +235,17 @@ async def run_evaluator(self, user_id: str, user_name: str,
                     feedback_text = part.text.strip()
         if feedback_text:
             await self.librarian_db.save_feedback(user_id, feedback_text)
-            logger.info(f"[Evaluator] 피드백 저장 ({len(feedback_text)}자): {feedback_text}")
+            logger.info(f"[Evaluation] 피드백 저장 ({len(feedback_text)}자): {feedback_text}")
 
         # L5 단일 히스토리에 이번 턴 추가 (큐 워커가 직렬 실행하므로 락 불필요)
-        self.evaluator_history.append(types.Content(role="user", parts=[
+        self.evaluation_history.append(types.Content(role="user", parts=[
             types.Part.from_text(text=eval_text)]))
-        self.evaluator_history.append(types.Content(role="model", parts=[
+        self.evaluation_history.append(types.Content(role="model", parts=[
             types.Part.from_text(text=feedback_text if feedback_text else "(평가 완료)")]))
-        self._trim_evaluator_history()
+        self._trim_evaluation_history()
 
-        logger.info("[Evaluator] 완료")
+        logger.info("[Evaluation] 완료")
 
     except Exception as e:
-        # Evaluator 에러는 무시 (응답에 영향 없음)
-        logger.warning(f"[Evaluator] 에러 (무시): {type(e).__name__}: {e}")
+        # Evaluation 에러는 무시 (응답에 영향 없음)
+        logger.warning(f"[Evaluation] 에러 (무시): {type(e).__name__}: {e}")

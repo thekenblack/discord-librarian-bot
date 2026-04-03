@@ -132,7 +132,7 @@ class LibrarianDB:
                 )
             """)
 
-            # Evaluator 피드백 (유저별 최신 1건)
+            # Evaluation 피드백 (유저별 최신 1건)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS evaluator_feedback (
                     user_id    TEXT PRIMARY KEY,
@@ -1222,10 +1222,10 @@ class LibrarianDB:
             await db.commit()
             return result
 
-    # ── Evaluator 피드백 ──────────────────────────────────
+    # ── Evaluation 피드백 ──────────────────────────────────
 
     async def save_feedback(self, user_id: str, feedback: str):
-        """Evaluator 피드백 저장 (유저별 최신 1건)"""
+        """Evaluation 피드백 저장 (유저별 최신 1건)"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("""
                 INSERT INTO evaluator_feedback (user_id, feedback) VALUES (?, ?)
@@ -1234,7 +1234,7 @@ class LibrarianDB:
             await db.commit()
 
     async def get_feedback(self, user_id: str) -> str | None:
-        """유저별 최신 Evaluator 피드백 조회"""
+        """유저별 최신 Evaluation 피드백 조회"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "SELECT feedback FROM evaluator_feedback WHERE user_id = ?", (user_id,))

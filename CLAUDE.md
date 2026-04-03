@@ -232,7 +232,7 @@ emotion_log 테이블에 변경 이력 기록
 
 ### 로그
 
-- `bot.YYYY-MM-DD.log` -- 레이어별 타이밍 ([L1 Perception], [L2 Functioning], [Character], [Postprocess], [Evaluator])
+- `bot.YYYY-MM-DD.log` -- 레이어별 타이밍 ([L1 Perception], [L2 Functioning], [Character], [Postprocess], [Evaluation])
 - `server.YYYY-MM-DD.log` -- 서버 전체 메시지 (멘션 무관)
 - 시간대: .env TZ 기준 (기본 Asia/Seoul)
 - 어드민 에러 알림: 대기열 10초, 모아서 DM 1회
