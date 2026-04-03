@@ -134,7 +134,7 @@ class LibrarianDB:
 
             # Evaluation 피드백 (유저별 최신 1건)
             await db.execute("""
-                CREATE TABLE IF NOT EXISTS evaluator_feedback (
+                CREATE TABLE IF NOT EXISTS evaluation_feedback (
                     user_id    TEXT PRIMARY KEY,
                     feedback   TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1228,7 +1228,7 @@ class LibrarianDB:
         """Evaluation 피드백 저장 (유저별 최신 1건)"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("""
-                INSERT INTO evaluator_feedback (user_id, feedback) VALUES (?, ?)
+                INSERT INTO evaluation_feedback (user_id, feedback) VALUES (?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET feedback=excluded.feedback, created_at=datetime('now')
             """, (user_id, feedback))
             await db.commit()
@@ -1237,7 +1237,7 @@ class LibrarianDB:
         """유저별 최신 Evaluation 피드백 조회"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
-                "SELECT feedback FROM evaluator_feedback WHERE user_id = ?", (user_id,))
+                "SELECT feedback FROM evaluation_feedback WHERE user_id = ?", (user_id,))
             row = await cursor.fetchone()
             return row[0] if row else None
 
