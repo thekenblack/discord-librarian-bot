@@ -476,6 +476,12 @@ class AILibrarianBot(discord.Client):
                     if new_bal is None:
                         logger.info(f"[선물] 잔고 부족으로 선물 실패: {gift['item_name']}")
                         continue
+                    # 팁 아이템이면 유저 잔고에 실제 충전
+                    if gift.get("item_id", "").startswith("tip_"):
+                        await self.library_db.charge_balance(
+                            str(message.author.id),
+                            message.author.display_name,
+                            item_price)
                     # gift_log에 기록 (봇→유저)
                     await self.librarian_db.save_gift_log(
                         buyer_id=bot_id,
