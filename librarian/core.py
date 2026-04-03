@@ -492,14 +492,15 @@ class AILibrarianBot(discord.Client):
                         message=gift.get("message"),
                         recipient_id=str(message.author.id),
                         recipient_name=message.author.display_name)
-                    embed = discord.Embed(
-                        description=(
-                            f"{gift['item_emoji']} **{AI_NAME}**이(가) "
-                            f"**{message.author.display_name}** 님에게 "
-                            f"**{gift['item_name']}**을(를) 선물했습니다! ({item_price} sat)"
-                        ),
-                        color=0xF1C40F,
+                    gift_desc = (
+                        f"{gift['item_emoji']} **{AI_NAME}**이(가) "
+                        f"**{message.author.display_name}** 님에게 "
+                        f"**{gift['item_name']}**을(를) 선물했습니다! ({item_price} sat)"
                     )
+                    gift_msg = gift.get("message")
+                    if gift_msg:
+                        gift_desc += f"\n> {AI_NAME}: \"{gift_msg}\""
+                    embed = discord.Embed(description=gift_desc, color=0xF1C40F)
                     embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
                     await message.channel.send(embed=embed)
                 except Exception as e:
