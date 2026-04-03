@@ -150,7 +150,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
     # 봇 잔고 + 경제 시스템 안내 + 구매 가능 아이템
-    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2
+    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2, SHOP_ITEMS
     bot_id = str(self.user.id) if self.user else ""
     bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
 
@@ -162,10 +162,10 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     normal_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE1)
     wallet_block += f"\n일반 아이템: {normal_items}\n"
     special_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE2)
-    wallet_block += f"이상한 아이템 (유저만 구매 가능): {special_items}\n"
+    wallet_block += f"이상한 아이템: {special_items}\n"
 
     affordable = [f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)"
-                  for i in SHOP_PAGE1 if i["price"] <= bot_balance]
+                  for i in SHOP_ITEMS if i["price"] <= bot_balance and not i["id"].startswith("tip_")]
     if affordable:
         wallet_block += f"내가 선물 가능: {', '.join(affordable)}\n"
     else:
