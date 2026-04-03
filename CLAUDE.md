@@ -133,7 +133,7 @@ L5 Evaluation:
 
 레이어별 히스토리 스코프:
 - L1 Perception: 채널별 히스토리 (channel_id -> history). MAX=10
-- L2 Functioning: 히스토리 없음. 도구 루프 내 loop_contents trim 방어 (MAX_LOOP_CONTENTS=10)
+- L2 Functioning: 히스토리 없음. 단발 호출 내 도구 루프에서 오래된 fc/fr 쌍 자동 제거
 - L3 Character: 유저별 히스토리 (user_id -> history). MAX=10. trim 시 function_call/response 쌍 보장
 - L4 Postprocess: 히스토리 없음
 - L5 Evaluation: 단일 히스토리 (전 채널/유저 공유). MAX=10
