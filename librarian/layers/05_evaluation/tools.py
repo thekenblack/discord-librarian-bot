@@ -31,22 +31,32 @@ evaluation_declarations = [
     ),
     types.FunctionDeclaration(
         name="feel",
-        description="감정 변화를 기록한다. 매 답변마다 호출해.",
+        description="감정 변화를 기록한다. 1회 호출로 여러 유저를 동시에 처리할 수 있다. targets에 유저별 변화량을 지정하고, 봇 전체 축은 별도로 지정.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "target": types.Schema(type="STRING", description="대상 유저 ID (<@ID> 또는 숫자). 생략하면 현재 대화 상대"),
-                "user_comfort": types.Schema(type="INTEGER", description="편안함 변화량 (-15 ~ +15)"),
-                "user_affinity": types.Schema(type="INTEGER", description="호감도 변화량 (-15 ~ +15)"),
-                "user_trust": types.Schema(type="INTEGER", description="신뢰도 변화량 (-15 ~ +15)"),
+                "targets": types.Schema(
+                    type="ARRAY",
+                    description="유저별 감정 변화 배열. 생략하면 현재 대화 상대 1명.",
+                    items=types.Schema(
+                        type="OBJECT",
+                        properties={
+                            "user_id": types.Schema(type="STRING", description="유저 ID (<@ID> 또는 숫자)"),
+                            "comfort": types.Schema(type="INTEGER", description="편안함 변화량 (-15 ~ +15)"),
+                            "affinity": types.Schema(type="INTEGER", description="호감도 변화량 (-15 ~ +15)"),
+                            "trust": types.Schema(type="INTEGER", description="신뢰도 변화량 (-15 ~ +15)"),
+                        },
+                    ),
+                ),
                 "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-15 ~ +15)"),
                 "self_energy": types.Schema(type="INTEGER", description="에너지 변화량 (-15 ~ +15)"),
                 "server_vibe": types.Schema(type="INTEGER", description="분위기 변화량 (-15 ~ +15)"),
+                "message_id": types.Schema(type="STRING", description="감정 변화의 원인이 된 메시지 ID. 중복 방지용."),
                 "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                 "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
                 "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
             },
-            required=["reason"],
+            required=["reason", "message_id"],
         ),
     ),
 ]

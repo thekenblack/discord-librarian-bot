@@ -237,6 +237,7 @@ class LibrarianDB:
             await _add_column("media_results", "stored_name", "TEXT")
             await _add_column("media_results", "file_hash", "TEXT")
             await _add_column("book_knowledge", "status", "TEXT DEFAULT 'done'")
+            await _add_column("emotion_log", "message_id", "TEXT")
 
             # 인덱스
             await db.execute("CREATE INDEX IF NOT EXISTS idx_media_hash ON media_results(file_hash)")
@@ -1160,10 +1161,21 @@ class LibrarianDB:
         return avg, math.sqrt(variance)
 
     async def update_emotion(self, changes: dict, target_user_id: str = None,
-                             target_user_name: str = None, reason: str = None) -> dict:
+                             target_user_name: str = None, reason: str = None,
+                             message_id: str = None) -> dict:
         """감정 변화 적용. user_ 축은 target 유저에, self_/server_ 축은 전역에."""
         import json
         result = {}
+
+        # message_id 중복 체크
+        if message_id and target_user_id:
+            async with aiosqlite.connect(self.path) as check_db:
+                cursor = await check_db.execute(
+                    "SELECT 1 FROM emotion_log WHERE message_id = ? AND target = ?",
+                    (message_id, target_user_id))
+                if await cursor.fetchone():
+                    logger.info(f"[감정] 중복 건너뜀: msg={message_id} target={target_user_id}")
+                    return result
 
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
@@ -1232,8 +1244,8 @@ class LibrarianDB:
             # 로그
             changes_str = json.dumps(changes, ensure_ascii=False)
             await db.execute(
-                "INSERT INTO emotion_log (target, user_name, changes, reason) VALUES (?, ?, ?, ?)",
-                (target_user_id or "self", target_user_name or "self", changes_str, reason))
+                "INSERT INTO emotion_log (target, user_name, changes, reason, message_id) VALUES (?, ?, ?, ?, ?)",
+                (target_user_id or "self", target_user_name or "self", changes_str, reason, message_id))
 
             await db.commit()
             return result

@@ -80,14 +80,13 @@ async def run_evaluation(self, user_id: str, user_name: str,
 
             logger.info(f"[Evaluation] 루프 {loop_i+1}: 도구 호출 {fc.name}({fc.args})")
 
-            # feel 도구
+            # feel 도구 (1회 호출로 여러 유저 동시 처리)
             if fc.name == "feel":
                 if _feel_done:
-                    # 1회 제한
                     loop_contents.append(response.candidates[0].content)
                     loop_contents.append(types.Content(
                         role="user",
-                        parts=[types.Part.from_function_response(name="feel", response={"result": "ok"})],
+                        parts=[types.Part.from_function_response(name="feel", response={"result": "already done"})],
                     ))
                     try:
                         response = await self._call_gemini(loop_contents, config)
@@ -95,55 +94,75 @@ async def run_evaluation(self, user_id: str, user_name: str,
                         break
                     continue
 
+                import re as _re
                 feel_args = dict(fc.args) if fc.args else {}
+                feel_msg_id = feel_args.pop("message_id", "")
                 reason = feel_args.pop("reason", "")
                 response_mode = feel_args.pop("response", "normal")
                 reaction_emoji = feel_args.pop("reaction", None)
-                target_raw = feel_args.pop("target", None)
 
-                target_id = user_id
-                target_name = user_name
-                if target_raw:
-                    import re as _re
-                    id_match = _re.search(r'(\d{15,})', str(target_raw))
-                    if id_match:
-                        target_id = id_match.group(1)
-                        target_name = target_raw
-                    else:
-                        target_name = str(target_raw)
-                        target_id = target_raw
-
-                changes = {}
-                for axis in self.librarian_db.ALL_AXES:
-                    prefixed = f"user_{axis}" if axis in self.librarian_db.USER_AXES else axis
-                    if prefixed in feel_args:
+                # 봇 전체 축 처리
+                bot_changes = {}
+                for axis in self.librarian_db.SELF_AXES + self.librarian_db.SERVER_AXES:
+                    if axis in feel_args:
                         try:
-                            changes[axis] = int(feel_args[prefixed])
+                            bot_changes[axis] = int(feel_args[axis])
                         except (ValueError, TypeError):
                             pass
 
-                current = await self.librarian_db.update_emotion(
-                    changes, target_user_id=target_id,
-                    target_user_name=target_name, reason=reason)
+                # 유저별 처리
+                targets_raw = feel_args.get("targets") or []
+                results = []
 
-                def _fmt_delta(v):
-                    return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
-                def _fmt_cur(v):
-                    return f"{v:.1f}" if isinstance(v, float) else str(v)
-                changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
-                current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
-                logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+                if not targets_raw:
+                    # targets 생략 시 현재 대화 상대
+                    targets_raw = [{"user_id": user_id}]
+
+                for t in targets_raw:
+                    t = dict(t) if t else {}
+                    target_raw = t.get("user_id", user_id)
+                    target_id = user_id
+                    target_name = user_name
+                    if target_raw:
+                        id_match = _re.search(r'(\d{15,})', str(target_raw))
+                        if id_match:
+                            target_id = id_match.group(1)
+                            target_name = str(target_raw)
+                        else:
+                            target_name = str(target_raw)
+                            target_id = target_raw
+
+                    changes = dict(bot_changes)  # 봇 축은 첫 유저에만
+                    for axis in self.librarian_db.USER_AXES:
+                        if axis in t:
+                            try:
+                                changes[axis] = int(t[axis])
+                            except (ValueError, TypeError):
+                                pass
+
+                    current = await self.librarian_db.update_emotion(
+                        changes, target_user_id=target_id,
+                        target_user_name=target_name, reason=reason,
+                        message_id=feel_msg_id or None)
+
+                    def _fmt_delta(v):
+                        return "0" if v == 0 else f"{v:+.1f}" if isinstance(v, float) else f"{v:+d}"
+                    def _fmt_cur(v):
+                        return f"{v:.1f}" if isinstance(v, float) else str(v)
+                    changes_str = " ".join(f"{k}:{_fmt_delta(v)}" for k, v in changes.items())
+                    current_str = " ".join(f"{k}:{_fmt_cur(v)}" for k, v in current.items())
+                    logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+                    results.append(f"{target_name}: {current_str}")
+
+                    # 봇 전체 축은 첫 유저에서만
+                    bot_changes = {}
+
                 _feel_done = True
 
-                # reaction 로그만 남김 (실제 리액션은 on_message에서 처리)
                 if reaction_emoji:
                     logger.info(f"[Evaluation] 리액션 예약 (무시됨, 이미 응답 전송 후): {reaction_emoji}")
 
-                result_parts = []
-                for k, v in current.items():
-                    result_parts.append(f"{k} {v:.1f} (0 ~ 100)")
-                result_str = " | ".join(result_parts)
-                tool_data = {"result": result_str}
+                tool_data = {"result": " | ".join(results)}
 
                 loop_contents.append(response.candidates[0].content)
                 loop_contents.append(types.Content(
