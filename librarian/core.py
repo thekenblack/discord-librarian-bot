@@ -264,6 +264,9 @@ class AILibrarianBot(discord.Client):
             if self.user and message.author.id == self.user.id:
                 server_log.log(guild=guild_name, channel=channel_name,
                                author=self.persona.name, content=message.content, is_bot=True)
+            else:
+                # 선물 메시지 감지 (라이브러리 봇 → [GIFT] 마커)
+                await self._check_gift_message(message)
             return
 
         text = message.content
@@ -808,6 +811,89 @@ class AILibrarianBot(discord.Client):
         if len(self.evaluator_history) <= MAX_EVALUATOR_HISTORY:
             return
         self.evaluator_history[:] = self.evaluator_history[-MAX_EVALUATOR_HISTORY:]
+
+    async def _check_gift_message(self, message: discord.Message):
+        """라이브러리 봇의 선물 메시지를 감지해서 자체 발화 + 스탯 상승."""
+        import re as _re
+        if not message.embeds:
+            return
+        for embed in message.embeds:
+            footer = embed.footer.text if embed.footer else ""
+            if not footer.startswith("[GIFT]"):
+                continue
+
+            # footer: "[GIFT] item_id key:val,key:val user_id"
+            try:
+                parts = footer.split(" ", 3)
+                item_id = parts[1]
+                effects_str = parts[2]
+                buyer_id = parts[3]
+
+                # 스탯 상승
+                changes = {}
+                for pair in effects_str.split(","):
+                    k, v = pair.split(":")
+                    changes[k.strip()] = int(v.strip())
+
+                if changes:
+                    await self.librarian_db.update_emotion(
+                        changes, target_user_id=buyer_id,
+                        target_user_name="", reason=f"선물: {item_id}")
+                    logger.info(f"[선물] {buyer_id}가 {item_id} 선물 → 스탯 상승: {changes}")
+
+                # 자체 발화: AI가 감사 인사 생성
+                buyer_mention = f"<@{buyer_id}>"
+                # 아이템 이름을 embed description에서 추출
+                item_name = item_id
+                if embed.description:
+                    m = _re.search(r'\*\*(.+?)\*\*을\(를\)', embed.description)
+                    if m:
+                        item_name = m.group(1)
+
+                reply = await self._generate_gift_thanks(buyer_id, buyer_mention, item_name)
+                if reply:
+                    await message.channel.send(reply)
+                    logger.info(f"[선물] 자체 발화: {reply[:100]}")
+
+            except Exception as e:
+                logger.warning(f"[선물] 처리 실패: {e}")
+
+    async def _generate_gift_thanks(self, buyer_id: str, buyer_mention: str,
+                                     item_name: str) -> str:
+        """선물에 대한 감사 인사를 AI로 생성."""
+        try:
+            sys_parts = []
+            if self.persona.character_text:
+                sys_parts.append(self.persona.character_text)
+
+            # 감정 상태를 간단히 포함
+            bot_emo = await self.librarian_db.get_bot_emotion()
+            emo_str = " ".join(f"{k}:{v:.0f}" for k, v in bot_emo.items())
+            sys_parts.append(f"현재 상태: {emo_str}")
+
+            system_prompt = "\n\n".join(p for p in sys_parts if p)
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                tools=None,
+                max_output_tokens=200,
+                temperature=1.2,
+            )
+
+            prompt = (
+                f"{buyer_mention} 이 사람이 나에게 {item_name}을(를) 선물해줬다. "
+                f"감사 인사를 해. 짧고 자연스럽게. {buyer_mention}을 포함해서. "
+                f"1-2문장으로."
+            )
+            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+
+            response = await self._call_gemini(contents, config)
+            reply = self._extract_reply(response)
+            return reply.strip() if reply else ""
+
+        except Exception as e:
+            logger.warning(f"[선물] 감사 인사 생성 실패: {e}")
+            return ""
 
 
 # ── v5: 레이어별 메서드 바인딩 ──

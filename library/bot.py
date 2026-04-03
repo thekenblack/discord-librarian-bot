@@ -77,8 +77,10 @@ class LibraryBot(commands.Bot):
         logger.info("[3/5] Cog 로딩 중...")
         from library.cogs.commands import LibraryCog
         from library.cogs.admin import AdminCog
+        from library.cogs.shop import ShopCog
         await self.add_cog(LibraryCog(self))
         await self.add_cog(AdminCog(self))
+        await self.add_cog(ShopCog(self))
 
         logger.info("[4/5] 슬래시 커맨드 동기화 중...")
         if GUILD_ID:
