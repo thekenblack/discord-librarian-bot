@@ -612,15 +612,23 @@ class LibraryDB:
             await db.commit()
             return cursor.rowcount > 0
 
-    async def get_gift_history(self, user_id: str, limit: int = 10) -> list[dict]:
+    async def get_gift_history(self, user_id: str, limit: int = 5, offset: int = 0) -> list[dict]:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT item_emoji, item_name, item_price, created_at FROM transactions "
-                "WHERE user_id = ? AND type = 'buy' ORDER BY created_at DESC LIMIT ?",
-                (user_id, limit))
+                "WHERE user_id = ? AND type = 'buy' ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset))
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+    async def get_gift_count(self, user_id: str) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE user_id = ? AND type = 'buy'",
+                (user_id,))
+            row = await cursor.fetchone()
+            return row[0]
 
     async def get_total_gifted(self, user_id: str) -> int:
         async with aiosqlite.connect(self.path) as db:

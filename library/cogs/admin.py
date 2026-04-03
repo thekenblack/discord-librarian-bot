@@ -289,15 +289,15 @@ class AdminCog(commands.Cog):
         )
         view._message_ref = await interaction.original_response()
 
-    # ── /admin charge ─────────────────────────────────────
-    @admin.command(name="charge", description="잔고 직접 충전")
-    @app_commands.describe(user="충전할 유저 (비우면 본인)")
-    async def admin_charge(self, interaction: discord.Interaction, user: discord.Member = None):
+    # ── /admin set ──────────────────────────────────────
+    @admin.command(name="set", description="잔고 설정 (충전/차감)")
+    @app_commands.describe(user="대상 유저 (비우면 본인)")
+    async def admin_set(self, interaction: discord.Interaction, user: discord.Member = None):
         if not is_admin(interaction):
             return await interaction.response.send_message(
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True)
         target = user or interaction.user
-        modal = AdminChargeModal(self.bot, target)
+        modal = AdminSetBalanceModal(self.bot, target)
         await interaction.response.send_modal(modal)
 
     # ── /admin page ──────────────────────────────────────
@@ -328,9 +328,9 @@ class AdminCog(commands.Cog):
 
 # ── 페이지 모달 ─────────────────────────────────────
 
-class AdminChargeModal(discord.ui.Modal, title="잔고 충전"):
+class AdminSetBalanceModal(discord.ui.Modal, title="잔고 설정"):
     amount_input = discord.ui.TextInput(
-        label="충전할 금액 (satoshi)", placeholder="예: 1000", max_length=12)
+        label="금액 (양수: 충전, 음수: 차감)", placeholder="예: 1000 또는 -500", max_length=12)
 
     def __init__(self, bot, target: discord.Member):
         super().__init__(timeout=120)
@@ -343,18 +343,26 @@ class AdminChargeModal(discord.ui.Modal, title="잔고 충전"):
         except ValueError:
             return await interaction.response.send_message(
                 embed=error_embed("금액 오류", "숫자만 입력해주세요."), ephemeral=True)
-        if amount <= 0:
+        if amount == 0:
             return await interaction.response.send_message(
-                embed=error_embed("금액 오류", "양수만 입력할 수 있습니다."), ephemeral=True)
-        new_balance = await self.bot.db.charge_balance(
-            str(self.target.id), self.target.display_name, amount)
+                embed=error_embed("금액 오류", "0이 아닌 값을 입력해주세요."), ephemeral=True)
+        if amount > 0:
+            new_balance = await self.bot.db.charge_balance(
+                str(self.target.id), self.target.display_name, amount)
+            action = f"+{sat_fmt(amount)} 충전"
+        else:
+            new_balance = await self.bot.db.spend_balance(
+                str(self.target.id), -amount, note="어드민 차감")
+            if new_balance is None:
+                return await interaction.response.send_message(
+                    embed=error_embed("잔고 부족", "차감할 잔고가 부족합니다."), ephemeral=True)
+            action = f"-{sat_fmt(-amount)} 차감"
         await interaction.response.send_message(
             embed=success_embed(
-                "충전 완료",
-                f"{self.target.display_name} 에게 {sat_fmt(amount)} 충전\n"
-                f"현재 잔고: {sat_fmt(new_balance)}"),
+                "잔고 변경",
+                f"{self.target.display_name}: {action}\n현재 잔고: {sat_fmt(new_balance)}"),
             ephemeral=True)
-        logger.info(f"어드민 충전: {self.target.display_name} +{amount} sat by {interaction.user.display_name}")
+        logger.info(f"어드민 잔고: {self.target.display_name} {action} by {interaction.user.display_name}")
 
 
 class PageModal(discord.ui.Modal, title="페이지 추가"):

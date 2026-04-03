@@ -109,11 +109,56 @@ async def complete_gift(bot, user_id: str, user_name: str, item: dict,
 # /status — 상태 확인
 # ══════════════════════════════════════════════
 
-class StatusView(BotView):
-    def __init__(self):
-        super().__init__(timeout=60)
+PER_PAGE = 5
 
-    @discord.ui.button(label="충전하기", style=discord.ButtonStyle.primary, emoji="⚡")
+class StatusView(BotView):
+    def __init__(self, uid: str, bot):
+        super().__init__(timeout=120)
+        self.uid = uid
+        self.bot = bot
+        self.page = 0
+        self.total = 0
+
+    async def make_embed(self) -> discord.Embed:
+        bal = await self.bot.db.get_balance(self.uid)
+        total_gifted = await self.bot.db.get_total_gifted(self.uid)
+        self.total = await self.bot.db.get_gift_count(self.uid)
+        gifts = await self.bot.db.get_gift_history(self.uid, limit=PER_PAGE, offset=self.page * PER_PAGE)
+        max_page = max(0, (self.total - 1) // PER_PAGE)
+
+        lines = [f"잔고: {sat_fmt(bal)}", f"선물: {sat_fmt(total_gifted)}"]
+        if gifts:
+            lines.append("")
+            for g in gifts:
+                date = g["created_at"][:10]
+                emoji = g.get("item_emoji") or ""
+                name = g.get("item_name") or ""
+                price = g.get("item_price")
+                price_str = sat_fmt(price) if price else ""
+                lines.append(f"  {date} {emoji} {name} {price_str}")
+            if self.total > PER_PAGE:
+                lines.append(f"\n{self.page + 1}/{max_page + 1} 페이지")
+        else:
+            lines.append("\n선물 기록 없음")
+
+        embed = info_embed("내 상태", "\n".join(lines))
+        embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
+        return embed
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button):
+        if self.page > 0:
+            self.page -= 1
+        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next_btn(self, interaction: discord.Interaction, button):
+        max_page = max(0, (self.total - 1) // PER_PAGE)
+        if self.page < max_page:
+            self.page += 1
+        await interaction.response.edit_message(embed=await self.make_embed(), view=self)
+
+    @discord.ui.button(label="충전", style=discord.ButtonStyle.primary, emoji="⚡")
     async def charge_btn(self, interaction: discord.Interaction, button):
         await interaction.response.send_message(
             embed=info_embed("충전", "`/charge [금액]` 으로 Lightning 충전할 수 있습니다."),
@@ -554,28 +599,8 @@ class ShopCog(commands.Cog):
     # ── /status ────────────────────────────────────────────
     @app_commands.command(name="status", description="내 상태 확인")
     async def status(self, interaction: discord.Interaction):
-        uid = str(interaction.user.id)
-        bal = await self.bot.db.get_balance(uid)
-        total_gifted = await self.bot.db.get_total_gifted(uid)
-        gifts = await self.bot.db.get_gift_history(uid)
-
-        lines = [f"잔고: {sat_fmt(bal)}"]
-        lines.append(f"선물: {sat_fmt(total_gifted)}")
-
-        if gifts:
-            lines.append("")
-            for g in gifts:
-                date = g["created_at"][:10]
-                emoji = g.get("item_emoji") or ""
-                name = g.get("item_name") or ""
-                price = g.get("item_price")
-                price_str = sat_fmt(price) if price else ""
-                lines.append(f"  {date} {emoji} {name} {price_str}")
-
-        embed = info_embed("내 상태", "\n".join(lines))
-        embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
-
-        view = StatusView()
+        view = StatusView(str(interaction.user.id), self.bot)
+        embed = await view.make_embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ── 폴링: 인보이스 결제 확인 ───────────────────────────
