@@ -18,7 +18,8 @@ logger = logging.getLogger("AILibrarian")
 
 async def gather_context(self, user_id: str, user_name: str,
                          guild=None, reply_chain: list[str] = None,
-                         pre_context: list[str] = None) -> str:
+                         pre_context: list[str] = None,
+                         channel_id: str = None) -> str:
     """DB + 외부 데이터에서 raw context 수집. 순수 코드, API 호출 없음."""
     import re as _re
     import zoneinfo
@@ -104,6 +105,15 @@ async def gather_context(self, user_id: str, user_name: str,
         parts.append(f"## 이전 피드백\n{prev_feedback}")
         logger.info(f"[Perception] 이전 피드백 로드 ({len(prev_feedback)}자)")
 
+    # 대화 요약 (장기 맥락)
+    user_summary = await self.librarian_db.get_user_summary(user_id)
+    if user_summary:
+        parts.append(f"## {user_name}과의 대화 요약\n{user_summary}")
+    if channel_id:
+        channel_summary = await self.librarian_db.get_channel_summary(channel_id)
+        if channel_summary:
+            parts.append(f"## 이 채널 흐름 요약\n{channel_summary}")
+
     # 직전 대화
     if pre_context:
         parts.append("## 직전 대화\n" + "\n".join(pre_context))
@@ -116,8 +126,9 @@ async def gather_context(self, user_id: str, user_name: str,
 
 
 async def run_perception(self, user_id: str, user_name: str,
-                         user_text: str, raw_context: str) -> str:
-    """raw context를 Gemini에 보내서 상황 분석. 결과를 다음 레이어에 넘긴다."""
+                         user_text: str, raw_context: str,
+                         history: list = None) -> str:
+    """raw context를 Gemini에 보내서 상황 분석. 채널별 히스토리 사용."""
     sys_parts = []
     if self.persona.perception_text:
         sys_parts.append(self.persona.perception_text)
@@ -137,9 +148,11 @@ async def run_perception(self, user_id: str, user_name: str,
     else:
         user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
+    # 채널별 히스토리 + 이번 유저 메시지
+    contents = list(history) if history else []
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
-    logger.info("[Perception] API 호출")
+    logger.info(f"[Perception] API 호출 (히스토리={len(contents)-1}턴)")
     response = await self._call_gemini(contents, config)
     result = self._extract_reply(response)
 

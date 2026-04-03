@@ -4,7 +4,7 @@ Evaluator 도구 선언 (feel, memorize, forget)
 
 from google.genai import types
 
-EVALUATOR_TOOL_NAMES = {"feel", "memorize", "forget"}
+EVALUATOR_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary"}
 
 evaluator_declarations = [
     types.FunctionDeclaration(
@@ -47,6 +47,31 @@ evaluator_declarations = [
                 "reaction": types.Schema(type="STRING", description="리액션 이모지 (😊, ⚡🔥 등). 답변과 별개로 붙음. 생략 가능"),
             },
             required=["reason"],
+        ),
+    ),
+]
+
+evaluator_declarations += [
+    types.FunctionDeclaration(
+        name="update_summary",
+        description="유저와의 대화 요약을 갱신한다. 이전 요약에 이번 대화를 반영해서 덮어쓴다. 대화 톤, 주요 주제, 관계 흐름을 포함.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "summary": types.Schema(type="STRING", description="갱신된 유저 대화 요약 (200자 이내)"),
+            },
+            required=["summary"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="update_channel_summary",
+        description="채널 흐름 요약을 갱신한다. 이 채널에서 최근 벌어지고 있는 대화 흐름, 참여자, 주제를 요약.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "summary": types.Schema(type="STRING", description="갱신된 채널 흐름 요약 (200자 이내)"),
+            },
+            required=["summary"],
         ),
     ),
 ]

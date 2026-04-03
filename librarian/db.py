@@ -150,6 +150,24 @@ class LibrarianDB:
                 )
             """)
 
+            # 유저별 대화 요약 (L5가 갱신, L1이 읽음)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_summary (
+                    user_id    TEXT PRIMARY KEY,
+                    summary    TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            # 채널별 흐름 요약 (L5가 갱신, L1이 읽음)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS channel_summary (
+                    channel_id TEXT PRIMARY KEY,
+                    summary    TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # 마이그레이션: 기존 테이블들 → learned로 통합
             for old_table in ["memories", "user_memories", "long_term_memories",
                               "permanent_memories", "knowledge_learned"]:
@@ -1206,6 +1224,42 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "SELECT feedback FROM evaluator_feedback WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    # ── 대화 요약 ──────────────────────────────────────────
+
+    async def save_user_summary(self, user_id: str, summary: str):
+        """유저별 대화 요약 저장 (최신 1건 덮어쓰기)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO user_summary (user_id, summary) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET summary=excluded.summary, updated_at=datetime('now')
+            """, (user_id, summary))
+            await db.commit()
+
+    async def get_user_summary(self, user_id: str) -> str | None:
+        """유저별 대화 요약 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT summary FROM user_summary WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    async def save_channel_summary(self, channel_id: str, summary: str):
+        """채널별 흐름 요약 저장 (최신 1건 덮어쓰기)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO channel_summary (channel_id, summary) VALUES (?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET summary=excluded.summary, updated_at=datetime('now')
+            """, (channel_id, summary))
+            await db.commit()
+
+    async def get_channel_summary(self, channel_id: str) -> str | None:
+        """채널별 흐름 요약 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT summary FROM channel_summary WHERE channel_id = ?", (channel_id,))
             row = await cursor.fetchone()
             return row[0] if row else None
 

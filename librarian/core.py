@@ -26,7 +26,9 @@ bitcoin_data = _btc_mod
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
-MAX_HISTORY = 10
+MAX_HISTORY = 10              # L3 유저별 (5왕복)
+MAX_PERCEPTION_HISTORY = 10   # L1 채널별 (5왕복)
+MAX_EVALUATOR_HISTORY = 10    # L5 단일 (5왕복)
 
 # 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
@@ -65,9 +67,10 @@ class AILibrarianBot(discord.Client):
         self.library_db = LibraryDB()
         self.librarian_db = LibrarianDB()
         self._gemini_client = genai.Client(api_key=gemini_api_key)
-        self.chat_histories: dict[str, list] = {}  # user_id → history
+        self.chat_histories: dict[str, list] = {}  # user_id → history (L3)
+        self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
+        self.evaluator_history: list = []  # 단일 히스토리 (L5)
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
-        # self._mood = MoodSystem()  # v4: feel 도구 + DB로 대체
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
         self._catalog_cache: str = ""
@@ -334,6 +337,7 @@ class AILibrarianBot(discord.Client):
                     pre_context=pre_context,
                     attachments=all_attachments,
                     seen_filenames=seen_filenames,
+                    channel_id=str(message.channel.id),
                 )
 
         if not reply_text and not file_to_send:
@@ -456,7 +460,8 @@ class AILibrarianBot(discord.Client):
                           guild=None, reply_chain: list[str] = None,
                           pre_context: list[str] = None,
                           attachments: list = None,
-                          seen_filenames: list[str] = None) -> tuple[str, discord.File | None, dict]:
+                          seen_filenames: list[str] = None,
+                          channel_id: str = None) -> tuple[str, discord.File | None, dict]:
         """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
@@ -466,13 +471,27 @@ class AILibrarianBot(discord.Client):
             self.chat_histories[user_id] = []
         history = self.chat_histories[user_id]
 
+        # L1 채널별 히스토리
+        if channel_id and channel_id not in self.perception_histories:
+            self.perception_histories[channel_id] = []
+
         try:
             # ── Layer 1: Perception (맥락 파악) ──
             _t0 = _time.monotonic()
             raw_context = await self._gather_context(
-                user_id, user_name, guild, reply_chain, pre_context)
+                user_id, user_name, guild, reply_chain, pre_context,
+                channel_id=channel_id)
+            p_history = self.perception_histories.get(channel_id, []) if channel_id else []
             perception = await self._run_perception(
-                user_id, user_name, user_text, raw_context)
+                user_id, user_name, user_text, raw_context,
+                history=p_history)
+            # L1 히스토리에 이번 턴 추가
+            if channel_id is not None:
+                p_history.append(types.Content(role="user", parts=[
+                    types.Part.from_text(text=f"{user_name}: {user_text}" if user_text else f"({user_name}이 빈 멘션을 보냈다.)")]))
+                p_history.append(types.Content(role="model", parts=[
+                    types.Part.from_text(text=perception)]))
+                self._trim_perception_history(channel_id)
             logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # ── Layer 2: Functioning (도구 실행) ──
@@ -564,6 +583,7 @@ class AILibrarianBot(discord.Client):
                     user_id=user_id, user_name=user_name,
                     user_text=user_text, bot_reply=reply,
                     context=perception, tool_results=instruction,
+                    channel_id=channel_id,
                 ))
 
             if len(reply) > 2000:
@@ -775,6 +795,19 @@ class AILibrarianBot(discord.Client):
                 i += 1
 
         self.chat_histories[user_id] = clean
+
+    def _trim_perception_history(self, channel_id: str):
+        """L1 채널별 히스토리를 MAX_PERCEPTION_HISTORY로 제한."""
+        history = self.perception_histories.get(channel_id)
+        if not history or len(history) <= MAX_PERCEPTION_HISTORY:
+            return
+        self.perception_histories[channel_id] = history[-MAX_PERCEPTION_HISTORY:]
+
+    def _trim_evaluator_history(self):
+        """L5 단일 히스토리를 MAX_EVALUATOR_HISTORY로 제한."""
+        if len(self.evaluator_history) <= MAX_EVALUATOR_HISTORY:
+            return
+        self.evaluator_history[:] = self.evaluator_history[-MAX_EVALUATOR_HISTORY:]
 
 
 # ── v5: 레이어별 메서드 바인딩 ──
