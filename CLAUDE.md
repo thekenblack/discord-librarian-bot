@@ -202,7 +202,7 @@ LIKE 검색 (정확 매칭):
 
 변화량 가이드: 일상 +-3-5, 사건 +-7-12, 극단 +-12-15
 AXIS_DELTA_MAX = 15, FREQ_COOLDOWN = 300초, 최소 30% 반영
-시간 감쇠: 중립(50)을 향해 반감기 기반 복귀 (user 48h, self_mood 6h, self_energy 12h, server 12h)
+시간 감쇠: 중립(50)을 향해 반감기 기반 복귀 (user 48h, self 6h, server 12h)
 emotion_log 테이블에 변경 이력 기록
 
 ### 에러 처리
