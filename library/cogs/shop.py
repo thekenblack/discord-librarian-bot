@@ -78,6 +78,7 @@ class BuyView(BotView):
             description=f"{item['emoji']} **{interaction.user.display_name}** 님이 {AI_NAME}에게 **{item['name']}**을(를) 사줬습니다!",
             color=0xF1C40F,
         )
+        embed.set_footer(text="/buy 로 선물하기")
 
         await interaction.channel.send(embed=embed)
 
