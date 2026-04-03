@@ -969,7 +969,7 @@ class LibrarianDB:
         "affinity": 48 * 3600,
         "trust": 48 * 3600,
         "self_mood": 6 * 3600,    # 6시간
-        "self_capacity": 6 * 3600,
+        "self_capacity": 12 * 3600,
         "server_vibe": 12 * 3600, # 12시간
     }
 
