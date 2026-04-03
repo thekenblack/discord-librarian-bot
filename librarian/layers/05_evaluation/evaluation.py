@@ -57,9 +57,8 @@ async def run_evaluator(self, user_id: str, user_name: str,
             temperature=0.3,
         )
 
-        # 단일 히스토리 복사 (락으로 보호)
-        async with self._evaluator_lock:
-            loop_contents = list(self.evaluator_history)
+        # 단일 히스토리 + 이번 턴 (큐 워커가 직렬 실행하므로 락 불필요)
+        loop_contents = list(self.evaluator_history)
         loop_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=eval_text)]))
 
         logger.info(f"[Evaluator] API 호출 (히스토리={len(self.evaluator_history)}턴)")
@@ -238,13 +237,12 @@ async def run_evaluator(self, user_id: str, user_name: str,
             await self.librarian_db.save_feedback(user_id, feedback_text)
             logger.info(f"[Evaluator] 피드백 저장 ({len(feedback_text)}자): {feedback_text}")
 
-        # L5 단일 히스토리에 이번 턴 추가 (락으로 보호)
-        async with self._evaluator_lock:
-            self.evaluator_history.append(types.Content(role="user", parts=[
-                types.Part.from_text(text=eval_text)]))
-            self.evaluator_history.append(types.Content(role="model", parts=[
-                types.Part.from_text(text=feedback_text if feedback_text else "(평가 완료)")]))
-            self._trim_evaluator_history()
+        # L5 단일 히스토리에 이번 턴 추가 (큐 워커가 직렬 실행하므로 락 불필요)
+        self.evaluator_history.append(types.Content(role="user", parts=[
+            types.Part.from_text(text=eval_text)]))
+        self.evaluator_history.append(types.Content(role="model", parts=[
+            types.Part.from_text(text=feedback_text if feedback_text else "(평가 완료)")]))
+        self._trim_evaluator_history()
 
         logger.info("[Evaluator] 완료")
 

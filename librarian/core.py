@@ -71,7 +71,8 @@ class AILibrarianBot(discord.Client):
         self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
         self._perception_locks: dict[str, asyncio.Lock] = {}  # channel_id → lock (L1)
         self.evaluator_history: list = []  # 단일 히스토리 (L5)
-        self._evaluator_lock = asyncio.Lock()  # L5 단일 히스토리 보호
+        self._evaluator_queue: asyncio.Queue = asyncio.Queue()  # L5 작업 큐
+        self._evaluator_task: asyncio.Task | None = None  # L5 워커 태스크
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
@@ -181,6 +182,18 @@ class AILibrarianBot(discord.Client):
         asyncio.create_task(bitcoin_data.start_background_update())
         asyncio.create_task(self._learn_all_books())
         self._bot_ready = True
+        self._evaluator_task = asyncio.create_task(self._evaluator_worker())
+
+    async def _evaluator_worker(self):
+        """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
+        while True:
+            try:
+                kwargs = await self._evaluator_queue.get()
+                await self._run_evaluator(**kwargs)
+            except Exception as e:
+                logger.warning(f"[Evaluator Worker] 에러 (무시): {e}")
+            finally:
+                self._evaluator_queue.task_done()
 
     async def _flush_admin_notify(self, delay: float = 10.0):
         """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
@@ -590,14 +603,14 @@ class AILibrarianBot(discord.Client):
             history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
             self._trim_history(user_id)
 
-            # ── Layer 5: Evaluation (백그라운드) ──
+            # ── Layer 5: Evaluation (큐에 추가, 백그라운드 워커가 처리) ──
             if reply:
-                asyncio.create_task(self._run_evaluator(
-                    user_id=user_id, user_name=user_name,
-                    user_text=user_text, bot_reply=reply,
-                    context=perception, tool_results=instruction,
-                    channel_id=channel_id,
-                ))
+                self._evaluator_queue.put_nowait({
+                    "user_id": user_id, "user_name": user_name,
+                    "user_text": user_text, "bot_reply": reply,
+                    "context": perception, "tool_results": instruction,
+                    "channel_id": channel_id,
+                })
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
