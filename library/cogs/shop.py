@@ -10,11 +10,11 @@ from config import AI_NAME
 
 # 아이템 목록 (나중에 config.json이나 DB로 이동 가능)
 SHOP_ITEMS = [
-    {"id": "coffee", "name": "커피", "emoji": "☕", "description": "따뜻한 커피 한 잔", "effects": {"self_energy": 8, "self_mood": 5}},
-    {"id": "cake", "name": "케이크", "emoji": "🍰", "description": "달콤한 케이크 한 조각", "effects": {"self_mood": 10, "self_energy": 3}},
-    {"id": "book", "name": "책", "emoji": "📖", "description": "흥미로운 신간 한 권", "effects": {"self_energy": 5, "self_mood": 8}},
-    {"id": "flower", "name": "꽃다발", "emoji": "💐", "description": "향기로운 꽃다발", "effects": {"self_mood": 12}},
-    {"id": "pizza", "name": "피자", "emoji": "🍕", "description": "든든한 피자 한 판", "effects": {"self_energy": 12, "self_mood": 3}},
+    {"id": "coffee", "name": "커피", "emoji": "☕", "description": "따뜻한 커피 한 잔", "effects": {"self_energy": 8, "self_mood": 5, "comfort": 3, "affinity": 5}},
+    {"id": "cake", "name": "케이크", "emoji": "🍰", "description": "달콤한 케이크 한 조각", "effects": {"self_mood": 10, "self_energy": 3, "comfort": 3, "affinity": 5}},
+    {"id": "book", "name": "책", "emoji": "📖", "description": "흥미로운 신간 한 권", "effects": {"self_energy": 5, "self_mood": 8, "comfort": 3, "trust": 5, "affinity": 3}},
+    {"id": "flower", "name": "꽃다발", "emoji": "💐", "description": "향기로운 꽃다발", "effects": {"self_mood": 12, "affinity": 8, "comfort": 5}},
+    {"id": "pizza", "name": "피자", "emoji": "🍕", "description": "든든한 피자 한 판", "effects": {"self_energy": 12, "self_mood": 3, "comfort": 5, "affinity": 3}},
 ]
 
 # 선물 메시지 마커 (사서봇이 감지할 수 있도록)
