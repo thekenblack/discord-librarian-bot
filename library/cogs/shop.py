@@ -79,6 +79,12 @@ async def complete_gift(bot, user_id: str, user_name: str, item: dict,
         effects=effects_str,
     )
 
+    # 팁 아이템이면 봇 잔고에 충전
+    if item["id"].startswith("tip_"):
+        bot_id = await bot.db.get_wallet_id_by_name(AI_NAME)
+        if bot_id:
+            await bot.db.charge_balance(bot_id, AI_NAME, item["price"])
+
     # 선물 기록 (영구, 유저→봇)
     await ldb.save_gift_log(
         buyer_id=user_id, buyer_name=user_name,

@@ -1104,6 +1104,8 @@ class AILibrarianBot(discord.Client):
                             logger.info(f"[자동소비] {item['emoji']} {item['name']} ({item['price']} sat)")
 
                 # 자동 음료: 확률 = (100 - hydration)%
+                # 식사 후 갱신된 수분/잔고 반영 (라면 등 수분 보충 효과)
+                bot_emo = await self.librarian_db.get_bot_emotion()
                 hydration = bot_emo.get("hydration", 50)
                 balance = await self.library_db.get_balance(bot_id)
                 if random.randint(1, 100) > hydration:

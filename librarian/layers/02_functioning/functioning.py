@@ -149,17 +149,27 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
-    # 봇 잔고 + 구매 가능 아이템
-    from library.cogs.shop import SHOP_PAGE1
+    # 봇 잔고 + 경제 시스템 안내 + 구매 가능 아이템
+    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2
     bot_id = str(self.user.id) if self.user else ""
     bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
+
+    wallet_block = f"## 내 경제\n잔고: {bot_balance} sat\n"
+    wallet_block += f"수입: 매시 정각 시급 {AI_HOURLY_WAGE} sat + 유저가 보내는 용돈(팁)\n"
+    wallet_block += "지출: 매시 정각 배고프거나 목마르면 자동으로 식사/음료 구매\n"
+
+    # 아이템 카탈로그
+    normal_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE1)
+    wallet_block += f"\n일반 아이템: {normal_items}\n"
+    special_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE2)
+    wallet_block += f"이상한 아이템 (유저만 구매 가능): {special_items}\n"
+
     affordable = [f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)"
                   for i in SHOP_PAGE1 if i["price"] <= bot_balance]
-    wallet_block = f"## 내 지갑\n잔고: {bot_balance} sat (시급 {AI_HOURLY_WAGE} sat)\n"
     if affordable:
-        wallet_block += f"구매 가능: {', '.join(affordable)}\n"
+        wallet_block += f"내가 선물 가능: {', '.join(affordable)}\n"
     else:
-        wallet_block += "구매 가능한 아이템 없음\n"
+        wallet_block += "선물 가능한 아이템 없음 (잔고 부족)\n"
     wallet_block += "선물은 정말 주고 싶을 때만. 아끼는 돈이다."
 
     # 봇 자체 스탯

@@ -470,6 +470,14 @@ class LibraryDB:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
+    async def get_wallet_id_by_name(self, username: str) -> str | None:
+        """username으로 지갑 user_id 조회."""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT user_id FROM wallets WHERE username = ?", (username,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
     async def set_balance(self, user_id: str, username: str, amount: int):
         """잔고를 지정한 값으로 설정."""
         await self.get_or_create_wallet(user_id, username)
