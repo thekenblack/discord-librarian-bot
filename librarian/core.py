@@ -701,13 +701,13 @@ class AILibrarianBot(discord.Client):
         return text[:150]
 
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
-        """답글 체인을 끝까지 거슬러 올라감. 5건 초과 시 앞2+뒤3. anchor도 반환."""
+        """답글 체인 최근 5건만 거슬러 올라감. anchor도 반환."""
         chain = []
         seen_filenames = []
         chain_attachments = []
         raw_msgs = []
         current = message
-        while current.reference:
+        while current.reference and len(raw_msgs) < 5:
             ref = current.reference.resolved
             if not ref and current.reference.message_id:
                 try:
@@ -741,11 +741,6 @@ class AILibrarianBot(discord.Client):
 
         anchor = raw_msgs[-1] if raw_msgs else message
         chain.reverse()
-
-        if len(chain) > 5:
-            head = chain[:2]
-            tail = chain[-3:]
-            chain = head + [f"... ({len(chain) - 5}건 생략) ..."] + tail
 
         return chain, seen_filenames, chain_attachments, anchor
 
