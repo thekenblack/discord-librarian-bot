@@ -850,8 +850,23 @@ class AILibrarianBot(discord.Client):
                     if m:
                         item_name = m.group(1)
 
-                reply = await self._generate_gift_thanks(buyer_id, buyer_mention, item_name)
-                if reply:
+                raw_reply = await self._generate_gift_thanks(buyer_id, buyer_mention, item_name)
+                if raw_reply:
+                    # 멘션 매핑 구성
+                    mention_map = {}
+                    if message.guild:
+                        try:
+                            member = message.guild.get_member(int(buyer_id))
+                            if member:
+                                mention_map[member.display_name] = buyer_id
+                        except Exception:
+                            pass
+                    channel_map = {}
+                    if message.guild:
+                        for ch in message.guild.text_channels:
+                            channel_map[ch.name] = str(ch.id)
+                    reply = await self._run_postprocess(
+                        raw_reply, "", mention_map=mention_map, channel_map=channel_map)
                     await message.channel.send(reply)
                     logger.info(f"[선물] 자체 발화: {reply[:100]}")
 
