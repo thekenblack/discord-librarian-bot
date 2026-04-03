@@ -165,7 +165,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     wallet_block += f"이상한 아이템: {special_items}\n"
 
     affordable = [f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)"
-                  for i in SHOP_ITEMS if i["price"] <= bot_balance and not i["id"].startswith("tip_")]
+                  for i in SHOP_ITEMS if i["price"] <= bot_balance]
     if affordable:
         wallet_block += f"내가 선물 가능: {', '.join(affordable)}\n"
     else:
