@@ -40,7 +40,7 @@ evaluator_declarations = [
                 "user_affinity": types.Schema(type="INTEGER", description="호감도 변화량 (-15 ~ +15)"),
                 "user_trust": types.Schema(type="INTEGER", description="신뢰도 변화량 (-15 ~ +15)"),
                 "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-15 ~ +15)"),
-                "self_capacity": types.Schema(type="INTEGER", description="여력 변화량 (-15 ~ +15)"),
+                "self_energy": types.Schema(type="INTEGER", description="에너지 변화량 (-15 ~ +15)"),
                 "server_vibe": types.Schema(type="INTEGER", description="분위기 변화량 (-15 ~ +15)"),
                 "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
                 "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),

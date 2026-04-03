@@ -66,7 +66,7 @@ async def gather_context(self, user_id: str, user_name: str,
     # 기본 상태 (봇 전체)
     bot_lines = []
     bot_lines.append(f"self_mood:{bot_emo.get('self_mood', 50):.1f}")
-    bot_lines.append(f"self_capacity:{bot_emo.get('self_capacity', 50):.1f}")
+    bot_lines.append(f"self_energy:{bot_emo.get('self_energy', 50):.1f}")
     bot_lines.append(f"server_vibe:{bot_emo.get('server_vibe', 50):.1f}")
 
     # 유저별 상태
