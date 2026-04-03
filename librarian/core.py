@@ -292,15 +292,20 @@ class AILibrarianBot(discord.Client):
         server_log.log(guild=guild_name, channel=channel_name,
                        author=message.author.display_name, content=text)
 
-        # 멘션 체크
+        # 멘션 체크 (직접 멘션 + 역할 멘션 + 봇 메시지에 답글)
         bot_mentioned = self.user and self.user in message.mentions
+        reply_to_bot = False
+        if not bot_mentioned and self.user and message.reference:
+            ref = message.reference.resolved
+            if ref and ref.author.id == self.user.id:
+                reply_to_bot = True
         role_mentioned = False
-        if not bot_mentioned and self.user and message.guild:
+        if not bot_mentioned and not reply_to_bot and self.user and message.guild:
             bot_member = message.guild.get_member(self.user.id)
             if bot_member:
                 role_mentioned = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
 
-        if not bot_mentioned and not role_mentioned:
+        if not bot_mentioned and not reply_to_bot and not role_mentioned:
             return
 
         import time as _time
