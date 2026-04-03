@@ -573,19 +573,27 @@ class AILibrarianBot(discord.Client):
 
             # ── Layer 4: Postprocess (자연어 정제) ──
             _t0 = _time.monotonic()
-            # 멘션 매핑 구성: reply_chain + pre_context에서 이름(<@id>) 패턴 추출
+            # 멘션 매핑 구성: 맥락에서 이름(<@id>) 패턴 추출
             mention_map = {}
-            for line in (reply_chain or []) + (pre_context or []):
+            for line in (reply_chain or []) + (anchor_context or []) + (recent_context or []):
                 for m in _re.finditer(r'(\S+?)\(<@(\d+)>\)', line):
                     mention_map[m.group(1)] = m.group(2)
-            # 채널 매핑 구성: guild의 텍스트 채널 이름 → ID
+            # 채널/역할/이모지 매핑 구성
             channel_map = {}
+            role_map = {}
+            emoji_map = {}
             if guild:
                 for ch in guild.text_channels:
                     channel_map[ch.name] = str(ch.id)
+                for role in guild.roles:
+                    if role.name != "@everyone":
+                        role_map[role.name] = str(role.id)
+                for emoji in guild.emojis:
+                    emoji_map[emoji.name] = str(emoji.id)
             reply = await self._run_postprocess(
                 raw_reply, user_name,
-                mention_map=mention_map, channel_map=channel_map)
+                mention_map=mention_map, channel_map=channel_map,
+                role_map=role_map, emoji_map=emoji_map)
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
             else:
