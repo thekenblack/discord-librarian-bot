@@ -182,6 +182,22 @@ class LibrarianDB:
                 )
             """)
 
+            # 메시지 로그 (맥락 수집용)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS message_log (
+                    message_id   TEXT PRIMARY KEY,
+                    channel_id   TEXT NOT NULL,
+                    author_id    TEXT NOT NULL,
+                    author_name  TEXT NOT NULL,
+                    content      TEXT NOT NULL DEFAULT '',
+                    reference_id TEXT,
+                    is_bot       INTEGER NOT NULL DEFAULT 0,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_msglog_channel ON message_log(channel_id, created_at)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_msglog_ref ON message_log(reference_id)")
+
             # 마이그레이션: 기존 테이블들 → learned로 통합
             for old_table in ["memories", "user_memories", "long_term_memories",
                               "permanent_memories", "knowledge_learned"]:
@@ -1276,6 +1292,90 @@ class LibrarianDB:
                 "SELECT summary FROM channel_summary WHERE channel_id = ?", (channel_id,))
             row = await cursor.fetchone()
             return row[0] if row else None
+
+    # ── 메시지 로그 ──────────────────────────────────────
+
+    async def save_message(self, message_id: str, channel_id: str,
+                           author_id: str, author_name: str, content: str,
+                           reference_id: str | None = None, is_bot: bool = False):
+        """메시지 저장."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT OR IGNORE INTO message_log
+                (message_id, channel_id, author_id, author_name, content, reference_id, is_bot, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """, (message_id, channel_id, author_id, author_name,
+                  content[:2000], reference_id, 1 if is_bot else 0))
+            await db.commit()
+
+    async def get_messages_before(self, channel_id: str, message_id: str,
+                                  limit: int = 10) -> list[dict]:
+        """특정 메시지 직전 N건 조회."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM message_log
+                WHERE channel_id = ? AND created_at < (
+                    SELECT created_at FROM message_log WHERE message_id = ?
+                )
+                ORDER BY created_at DESC LIMIT ?
+            """, (channel_id, message_id, limit))
+            rows = [dict(r) for r in await cursor.fetchall()]
+            rows.reverse()
+            return rows
+
+    async def get_messages_after(self, channel_id: str, message_id: str,
+                                 limit: int = 5) -> list[dict]:
+        """특정 메시지 직후 N건 조회."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM message_log
+                WHERE channel_id = ? AND created_at > (
+                    SELECT created_at FROM message_log WHERE message_id = ?
+                )
+                ORDER BY created_at ASC LIMIT ?
+            """, (channel_id, message_id, limit))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_messages_recent(self, channel_id: str, before_message_id: str,
+                                   limit: int = 10) -> list[dict]:
+        """현재 메시지 직전 N건 조회."""
+        return await self.get_messages_before(channel_id, before_message_id, limit)
+
+    async def get_reply_chain(self, message_id: str, limit: int = 5) -> list[dict]:
+        """답글 체인을 reference_id로 역추적. 최근 N건."""
+        chain = []
+        current_id = message_id
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            for _ in range(limit):
+                cursor = await db.execute(
+                    "SELECT * FROM message_log WHERE message_id = ?", (current_id,))
+                row = await cursor.fetchone()
+                if not row:
+                    break
+                ref_id = row["reference_id"]
+                if not ref_id:
+                    break
+                # 답글 대상 메시지 조회
+                cursor2 = await db.execute(
+                    "SELECT * FROM message_log WHERE message_id = ?", (ref_id,))
+                ref_row = await cursor2.fetchone()
+                if not ref_row:
+                    break
+                chain.append(dict(ref_row))
+                current_id = ref_id
+        chain.reverse()
+        return chain
+
+    async def cleanup_old_messages(self, days: int = 30):
+        """오래된 메시지 정리."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "DELETE FROM message_log WHERE created_at < datetime('now', ?)",
+                (f"-{days} days",))
+            await db.commit()
 
     # ── 선물 대기열 ─────────────────────────────────────
 

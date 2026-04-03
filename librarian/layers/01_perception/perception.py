@@ -18,7 +18,8 @@ logger = logging.getLogger("AILibrarian")
 
 async def gather_context(self, user_id: str, user_name: str,
                          guild=None, reply_chain: list[str] = None,
-                         pre_context: list[str] = None,
+                         anchor_context: list[str] = None,
+                         recent_context: list[str] = None,
                          channel_id: str = None) -> str:
     """DB + 외부 데이터에서 raw context 수집. 순수 코드, API 호출 없음."""
     import re as _re
@@ -114,9 +115,13 @@ async def gather_context(self, user_id: str, user_name: str,
         if channel_summary:
             parts.append(f"## 이 채널 흐름 요약\n{channel_summary}")
 
-    # 직전 대화
-    if pre_context:
-        parts.append("## 직전 대화\n" + "\n".join(pre_context))
+    # 답글 대상 주변 맥락
+    if anchor_context:
+        parts.append("## 답글 대상 주변 맥락\n" + "\n".join(anchor_context))
+
+    # 최근 채널 대화
+    if recent_context:
+        parts.append("## 최근 채널 대화\n" + "\n".join(recent_context))
 
     # 답글 흐름
     if reply_chain:

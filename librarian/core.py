@@ -3,6 +3,7 @@ AI 사서봇 - Gemini function calling으로 도서관 기능 + 잡담
 """
 
 import os
+import aiosqlite
 import re
 import asyncio
 import discord
@@ -274,6 +275,23 @@ class AILibrarianBot(discord.Client):
         channel_name = getattr(message.channel, "name", "DM")
         guild_name = message.guild.name if message.guild else "DM"
 
+        # 모든 메시지 DB 저장 (맥락 수집용)
+        try:
+            ref_id = None
+            if message.reference and message.reference.message_id:
+                ref_id = str(message.reference.message_id)
+            await self.librarian_db.save_message(
+                message_id=str(message.id),
+                channel_id=str(message.channel.id),
+                author_id=str(message.author.id),
+                author_name=message.author.display_name,
+                content=message.content or "",
+                reference_id=ref_id,
+                is_bot=message.author.bot,
+            )
+        except Exception:
+            pass  # 저장 실패해도 대화 진행에 영향 없음
+
         if message.author.bot:
             if self.user and message.author.id == self.user.id:
                 server_log.log(guild=guild_name, channel=channel_name,
@@ -329,13 +347,11 @@ class AILibrarianBot(discord.Client):
         if not text:
             text = ""
 
-        # 답글 체인 수집 + 체인 시작점 직전 맥락
+        # 맥락 수집 (DB 우선, API 폴백)
         _t2 = _time.monotonic()
-        reply_chain, seen_filenames, chain_attachments, chain_anchor = await self._build_reply_chain(message)
-        logger.info(f"[타이밍] reply_chain: {_time.monotonic()-_t2:.2f}s ({len(reply_chain)}건)")
-        _t3 = _time.monotonic()
-        pre_context = await self._build_pre_context(message)
-        logger.info(f"[타이밍] pre_context: {_time.monotonic()-_t3:.2f}s ({len(pre_context)}건)")
+        reply_chain, seen_filenames, chain_attachments, anchor_id = await self._build_reply_chain(message)
+        anchor_context, recent_context = await self._build_context_messages(message, anchor_id=anchor_id)
+        logger.info(f"[타이밍] 맥락수집: {_time.monotonic()-_t2:.2f}s (reply={len(reply_chain)} anchor={len(anchor_context)} recent={len(recent_context)})")
         logger.info(f"[타이밍] 전처리 총: {_time.monotonic()-_t0:.2f}s")
 
         # 첨부파일: 현재 메시지 + 답글 체인의 첨부파일
@@ -356,7 +372,8 @@ class AILibrarianBot(discord.Client):
                     user_text=text,
                     guild=message.guild,
                     reply_chain=reply_chain,
-                    pre_context=pre_context,
+                    anchor_context=anchor_context,
+                    recent_context=recent_context,
                     attachments=all_attachments,
                     seen_filenames=seen_filenames,
                     channel_id=str(message.channel.id),
@@ -480,7 +497,8 @@ class AILibrarianBot(discord.Client):
     async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
                           guild=None, reply_chain: list[str] = None,
-                          pre_context: list[str] = None,
+                          anchor_context: list[str] = None,
+                          recent_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
                           channel_id: str = None) -> tuple[str, discord.File | None, dict]:
@@ -501,7 +519,8 @@ class AILibrarianBot(discord.Client):
             # ── Layer 1: Perception (맥락 파악) ──
             _t0 = _time.monotonic()
             raw_context = await self._gather_context(
-                user_id, user_name, guild, reply_chain, pre_context,
+                user_id, user_name, guild, reply_chain,
+                anchor_context=anchor_context, recent_context=recent_context,
                 channel_id=channel_id)
             p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
             perception = await self._run_perception(
@@ -696,8 +715,34 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
         return text[:150]
 
-    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
-        """답글 체인 최근 5건만 거슬러 올라감. anchor도 반환."""
+    def _format_msg_row(self, row: dict) -> str:
+        """DB 메시지 행을 텍스트로 포맷."""
+        if self.user and row["author_id"] == str(self.user.id):
+            name = self.persona.name
+            content = self._clean_bot_content(row["content"][:300])
+        else:
+            name = f"{row['author_name']}(<@{row['author_id']}>)"
+            content = row["content"][:150]
+        return f"{name}: {content}"
+
+    async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, str | None]:
+        """답글 체인 최근 5건. DB 우선, API 폴백. anchor(답글 대상 원본) message_id 반환."""
+        if not message.reference or not message.reference.message_id:
+            return [], [], [], None
+
+        msg_id = str(message.id)
+        channel_id = str(message.channel.id)
+
+        # DB에서 reply_chain 조회
+        db_chain = await self.librarian_db.get_reply_chain(msg_id, limit=5)
+        if db_chain:
+            chain = [self._format_msg_row(r) for r in db_chain]
+            anchor_id = db_chain[0]["message_id"]  # 가장 오래된 메시지
+            # 첨부파일은 DB에 없으므로 빈 리스트
+            return chain, [], [], anchor_id
+
+        # API 폴백
+        logger.info("[맥락] reply_chain DB 미스 → API 폴백")
         chain = []
         seen_filenames = []
         chain_attachments = []
@@ -715,7 +760,6 @@ class AILibrarianBot(discord.Client):
             raw_msgs.append(ref)
             current = ref
 
-        # extras를 동시에 조회
         if raw_msgs:
             extras_list = await asyncio.gather(*(self._extract_extras(m) for m in raw_msgs))
         else:
@@ -735,33 +779,87 @@ class AILibrarianBot(discord.Client):
                 chain_attachments.append(att)
             chain.append(f"{name}: {content}")
 
-        anchor = raw_msgs[-1] if raw_msgs else message
+        anchor_id = str(raw_msgs[-1].id) if raw_msgs else None
         chain.reverse()
+        return chain, seen_filenames, chain_attachments, anchor_id
 
-        return chain, seen_filenames, chain_attachments, anchor
+    async def _build_context_messages(self, message, anchor_id: str | None = None) -> tuple[list[str], list[str], list[str]]:
+        """맥락 메시지 수집. anchor 주변 5건 + 현재 직전 10건. DB 우선, API 폴백.
+        반환: (anchor_context, recent_context, seen_ids)"""
+        msg_id = str(message.id)
+        channel_id = str(message.channel.id)
+        seen_ids = set()
 
-    async def _build_pre_context(self, message, limit=5, anchor=None) -> list[str]:
-        """답글 체인 시작점 직전 또는 멘션 직전 메시지들. anchor는 _build_reply_chain에서 받음."""
-        if anchor is None:
-            anchor = message
+        # ── anchor 주변 5건 ──
+        anchor_lines = []
+        if anchor_id:
+            before = await self.librarian_db.get_messages_before(channel_id, anchor_id, limit=2)
+            after = await self.librarian_db.get_messages_after(channel_id, anchor_id, limit=2)
+            # anchor 자체도 포함
+            async with aiosqlite.connect(self.librarian_db.path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT * FROM message_log WHERE message_id = ?", (anchor_id,))
+                anchor_row = await cursor.fetchone()
 
-        msgs = [msg async for msg in anchor.channel.history(limit=limit, before=anchor)]
-        if not msgs:
-            return []
-        extras_list = await asyncio.gather(*(self._extract_extras(m) for m in msgs))
-        lines = []
-        for msg, extras in zip(msgs, extras_list):
-            if self.user and msg.author.id == self.user.id:
-                name = self.persona.name
-                content = self._clean_bot_content(msg.content[:300])
+            if before or anchor_row or after:
+                for r in before:
+                    seen_ids.add(r["message_id"])
+                    anchor_lines.append(self._format_msg_row(r))
+                if anchor_row:
+                    seen_ids.add(anchor_row["message_id"])
+                    anchor_lines.append(self._format_msg_row(dict(anchor_row)))
+                for r in after:
+                    seen_ids.add(r["message_id"])
+                    anchor_lines.append(self._format_msg_row(r))
             else:
-                name = f"{msg.author.display_name}(<@{msg.author.id}>)"
-                content = msg.content[:150]
-            if extras:
-                content = f"{content} {extras}" if content else extras
-            lines.append(f"{name}: {content}")
-        lines.reverse()
-        return lines
+                # DB 미스 → API 폴백
+                logger.info("[맥락] anchor 주변 DB 미스 → API 폴백")
+                try:
+                    anchor_msg = await message.channel.fetch_message(int(anchor_id))
+                    before_msgs = [m async for m in message.channel.history(limit=2, before=anchor_msg)]
+                    after_msgs = [m async for m in message.channel.history(limit=2, after=anchor_msg)]
+                    before_msgs.reverse()
+                    for m in before_msgs + [anchor_msg] + after_msgs:
+                        seen_ids.add(str(m.id))
+                        if self.user and m.author.id == self.user.id:
+                            name = self.persona.name
+                            content = self._clean_bot_content(m.content[:300])
+                        else:
+                            name = f"{m.author.display_name}(<@{m.author.id}>)"
+                            content = m.content[:150]
+                        anchor_lines.append(f"{name}: {content}")
+                except Exception as e:
+                    logger.warning(f"[맥락] anchor API 폴백 실패: {e}")
+
+        # ── 현재 직전 10건 ──
+        recent_lines = []
+        db_recent = await self.librarian_db.get_messages_recent(channel_id, msg_id, limit=10)
+        if db_recent:
+            for r in db_recent:
+                if r["message_id"] not in seen_ids:
+                    seen_ids.add(r["message_id"])
+                    recent_lines.append(self._format_msg_row(r))
+        else:
+            # API 폴백
+            logger.info("[맥락] 직전 대화 DB 미스 → API 폴백")
+            try:
+                msgs = [m async for m in message.channel.history(limit=10, before=message)]
+                msgs.reverse()
+                for m in msgs:
+                    if str(m.id) not in seen_ids:
+                        seen_ids.add(str(m.id))
+                        if self.user and m.author.id == self.user.id:
+                            name = self.persona.name
+                            content = self._clean_bot_content(m.content[:300])
+                        else:
+                            name = f"{m.author.display_name}(<@{m.author.id}>)"
+                            content = m.content[:150]
+                        recent_lines.append(f"{name}: {content}")
+            except Exception as e:
+                logger.warning(f"[맥락] 직전 대화 API 폴백 실패: {e}")
+
+        return anchor_lines, recent_lines
 
     @staticmethod
     def _extract_reply(response) -> str:
