@@ -26,9 +26,9 @@ bitcoin_data = _btc_mod
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
-MAX_HISTORY = 10              # L3 유저별 (5왕복)
-MAX_PERCEPTION_HISTORY = 10   # L1 채널별 (5왕복)
-MAX_EVALUATION_HISTORY = 10    # L5 단일 (5왕복)
+MAX_HISTORY = 5               # L3 유저별
+MAX_PERCEPTION_HISTORY = 5    # L1 채널별
+MAX_EVALUATION_HISTORY = 5    # L5 단일
 
 # 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
