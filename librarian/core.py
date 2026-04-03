@@ -447,46 +447,8 @@ class AILibrarianBot(discord.Client):
                 def _check_emoji(m):
                     return m.group() if m.group(2) in guild_emoji_ids else ""
                 reply_text = _re.sub(r'<(a?:\w+:)(\d+)>', _check_emoji, reply_text).strip()
-            # URL이 있으면 텍스트에서 빼고 임베드로 이미지만 표시
-            _img_match = _re.search(r'(https?://\S+\.(?:gif|png|jpg|jpeg|webp)(?:\?\S*)?)', reply_text)
-            _page_match = not _img_match and _re.search(r'(https?://(?:tenor\.com|giphy\.com)/\S+)', reply_text)
-
-            if _img_match:
-                # 이미지 파일 URL → 바로 임베드
-                _url = _img_match.group()
-                _text = reply_text.replace(_url, '').strip()
-                _embed = discord.Embed()
-                _embed.set_image(url=_url)
-                await _send_reply(_text, embed=_embed)
-            elif _page_match:
-                # tenor/giphy HTML → og:image 추출 후 임베드
-                _url = _page_match.group()
-                _text = reply_text.replace(_url, '').strip()
-                _media_url = None
-                try:
-                    import aiohttp
-                    async with aiohttp.ClientSession() as _s:
-                        async with _s.get(_url, timeout=aiohttp.ClientTimeout(total=5),
-                                          headers={"User-Agent": "Mozilla/5.0"}) as _r:
-                            if _r.status == 200:
-                                _html = await _r.text(errors="replace")
-                                _og = _re.search(
-                                    r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)', _html)
-                                if not _og:
-                                    _og = _re.search(
-                                        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', _html)
-                                if _og:
-                                    _media_url = _og.group(1)
-                except Exception:
-                    pass
-                if _media_url:
-                    _embed = discord.Embed()
-                    _embed.set_image(url=_media_url)
-                    await _send_reply(_text, embed=_embed)
-                else:
-                    await _send_reply(reply_text)
-            else:
-                await _send_reply(reply_text)
+            # URL은 텍스트 그대로 전송 (디스코드 자동 프리뷰)
+            await _send_reply(reply_text)
 
         # 이모지 리액션
         if _meta.get("reaction"):
@@ -527,7 +489,8 @@ class AILibrarianBot(discord.Client):
             p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
             perception = await self._run_perception(
                 user_id, user_name, user_text, raw_context,
-                history=p_history)
+                history=p_history,
+                attachments=attachments, seen_filenames=seen_filenames)
             # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
             if channel_id is not None:
                 self.perception_histories[channel_id].append(types.Content(role="user", parts=[

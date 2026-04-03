@@ -66,21 +66,10 @@ def normalize_url(url: str) -> str:
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
 # v5 Processor 도구 이름
-PROCESSOR_TOOL_NAMES = {"search", "deliver", "attach", "web_search", "recognize_media", "recognize_link", "memorize_alias", "forget_alias"}
+PROCESSOR_TOOL_NAMES = {"deliver", "attach"}
 
 # Processor 도구 선언
 functioning_declarations = [
-        types.FunctionDeclaration(
-            name="search",
-            description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "keyword": types.Schema(type="STRING", description="검색 키워드"),
-                },
-                required=["keyword"],
-            ),
-        ),
         types.FunctionDeclaration(
             name="deliver",
             description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
@@ -90,62 +79,6 @@ functioning_declarations = [
                     "file_id": types.Schema(type="INTEGER", description="전송할 파일 ID"),
                 },
                 required=["file_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="memorize_alias",
-            description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "name": types.Schema(type="STRING", description="원래 이름"),
-                    "alias": types.Schema(type="STRING", description="별칭"),
-                },
-                required=["name", "alias"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="forget_alias",
-            description="잘못된 별칭을 삭제한다. search 결과의 aliases에 있는 id를 써.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "alias_id": types.Schema(type="INTEGER", description="삭제할 별칭 ID (search 결과에서 확인)"),
-                },
-                required=["alias_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="web_search",
-            description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "query": types.Schema(type="STRING", description="검색할 내용"),
-                },
-                required=["query"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="recognize_media",
-            description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 '이거 뭐야', '읽어봐' 같은 요청을 하면 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "attachment_index": types.Schema(type="INTEGER", description="첨부파일 번호 (0부터)"),
-                },
-                required=["attachment_index"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="recognize_link",
-            description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 '이거 뭐야', '요약해줘' 같은 요청을 하면 사용.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "url": types.Schema(type="STRING", description="확인할 URL"),
-                },
-                required=["url"],
             ),
         ),
         types.FunctionDeclaration(

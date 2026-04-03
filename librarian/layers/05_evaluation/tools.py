@@ -83,6 +83,31 @@ evaluation_declarations += [
             required=["summary"],
         ),
     ),
+    types.FunctionDeclaration(
+        name="memorize_alias",
+        description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "name": types.Schema(type="STRING", description="원래 이름"),
+                "alias": types.Schema(type="STRING", description="별칭"),
+            },
+            required=["name", "alias"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="forget_alias",
+        description="잘못된 별칭을 삭제한다.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "alias_id": types.Schema(type="INTEGER", description="삭제할 별칭 ID"),
+            },
+            required=["alias_id"],
+        ),
+    ),
 ]
+
+EVALUATION_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary", "memorize_alias", "forget_alias"}
 
 evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]

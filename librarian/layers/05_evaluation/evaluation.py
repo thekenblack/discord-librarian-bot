@@ -159,6 +159,12 @@ async def run_evaluation(self, user_id: str, user_name: str,
                         await self.librarian_db.save_channel_summary(channel_id, summary)
                         logger.info(f"[Evaluation] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
 
+                # memorize_alias / forget_alias
+                elif fc.name in ("memorize_alias", "forget_alias"):
+                    tool_args = dict(fc.args) if fc.args else {}
+                    tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
+                    logger.info(f"[Evaluation] {fc.name}: {tool_result}")
+
                 else:
                     logger.warning(f"[Evaluation] 알 수 없는 도구 무시: {fc.name}")
 

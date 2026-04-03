@@ -1,19 +1,72 @@
 """
 Layer 01: Perception (인식)
-맥락 수집 + Gemini API 호출로 상황 분석.
+맥락 수집 + Gemini API 호출로 상황 분석 + 검색/인식 도구 실행.
 결과를 Functioning과 Character에 넘긴다.
 """
 
 import os
+import json
 import logging
 from datetime import datetime as dt
 from google.genai import types
-from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS
+from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR
 
 import importlib as _il
 _btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
+_tools = _il.import_module("librarian.layers.02_functioning.tools")
+execute_tool = _tools.execute_tool
+parse_url = _tools.parse_url
 
 logger = logging.getLogger("AILibrarian")
+
+# L1 검색/인식 도구 선언
+perception_declarations = [
+    types.FunctionDeclaration(
+        name="search",
+        description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "keyword": types.Schema(type="STRING", description="검색 키워드"),
+            },
+            required=["keyword"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="web_search",
+        description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "query": types.Schema(type="STRING", description="검색할 내용"),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="recognize_media",
+        description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 '이거 뭐야', '읽어봐' 같은 요청을 하면 사용.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "attachment_index": types.Schema(type="INTEGER", description="첨부파일 번호 (0부터)"),
+            },
+            required=["attachment_index"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="recognize_link",
+        description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 '이거 뭐야', '요약해줘' 같은 요청을 하면 사용.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "url": types.Schema(type="STRING", description="확인할 URL"),
+            },
+            required=["url"],
+        ),
+    ),
+]
+perception_tools = [types.Tool(function_declarations=perception_declarations)]
 
 
 async def gather_context(self, user_id: str, user_name: str,
@@ -132,8 +185,12 @@ async def gather_context(self, user_id: str, user_name: str,
 
 async def run_perception(self, user_id: str, user_name: str,
                          user_text: str, raw_context: str,
-                         history: list = None) -> str:
-    """raw context를 Gemini에 보내서 상황 분석. 채널별 히스토리 사용."""
+                         history: list = None,
+                         attachments: list = None,
+                         seen_filenames: list = None) -> str:
+    """raw context를 Gemini에 보내서 상황 분석 + 검색/인식 도구 실행. 1회 호출."""
+    import asyncio
+
     sys_parts = []
     if self.persona.perception_text:
         sys_parts.append(self.persona.perception_text)
@@ -143,7 +200,7 @@ async def run_perception(self, user_id: str, user_name: str,
 
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
-        tools=None,
+        tools=perception_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=0.3,
     )
@@ -159,7 +216,164 @@ async def run_perception(self, user_id: str, user_name: str,
 
     logger.info(f"[Perception] API 호출 (히스토리={len(contents)-1}턴)")
     response = await self._call_gemini(contents, config)
-    result = self._extract_reply(response)
+
+    # 1회 응답에서 텍스트 + function_call 모두 추출
+    result = ""
+    tool_results = []
+
+    if response and response.candidates and response.candidates[0].content.parts:
+        for part in response.candidates[0].content.parts:
+            if part.text and part.text.strip():
+                result = part.text.strip()
+
+            if not part.function_call:
+                continue
+            fc = part.function_call
+            logger.info(f"[Perception] 도구: {fc.name}({fc.args})")
+
+            # search
+            if fc.name == "search":
+                tool_args = dict(fc.args) if fc.args else {}
+                tool_args["_user_id"] = user_id
+                tool_args["_user_name"] = user_name
+                search_result = await execute_tool(
+                    self.library_db, self.librarian_db, "search", tool_args)
+                logger.info(f"[Perception] search 결과: {search_result[:200]}")
+                tool_results.append(f"검색 결과:\n{search_result}")
+
+            # web_search
+            elif fc.name == "web_search":
+                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
+                cached = await self.librarian_db.get_web_by_query(query)
+                if cached:
+                    tool_results.append(f"웹 검색({query}): {cached['result']}")
+                else:
+                    google_search_tool = _tools.google_search_tool
+                    web_config = types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        tools=google_search_tool,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=1.0,
+                    )
+                    web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                    web_result = ""
+                    try:
+                        web_response = await self._call_gemini(web_query, web_config)
+                        web_result = self._extract_reply(web_response)
+                    except Exception as e:
+                        logger.warning(f"[Perception] 웹 검색 실패: {e}")
+                    if web_result:
+                        await self.librarian_db.save_web_result(query, web_result, user_name)
+                    tool_results.append(f"웹 검색({query}): {web_result or '결과 없음'}")
+
+            # recognize_media
+            elif fc.name == "recognize_media":
+                att_idx = (dict(fc.args) if fc.args else {}).get("attachment_index", 0)
+                media_result = ""
+                current_attachments = attachments or []
+                if att_idx < len(current_attachments):
+                    att = current_attachments[att_idx]
+                    ct = att.content_type or ""
+                    cached = None
+                    data = None
+                    file_hash = None
+                    if ct.startswith("image/") or ct == "application/pdf":
+                        data = await att.read()
+                        import hashlib
+                        file_hash = hashlib.sha256(data).hexdigest()
+                        cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                              or await self.librarian_db.get_media_by_filename(att.filename)
+                    else:
+                        cached = await self.librarian_db.get_media_by_filename(att.filename)
+
+                    if cached:
+                        media_result = cached["result"]
+                    elif ct.startswith("image/") or ct == "application/pdf":
+                        try:
+                            media_parts = [
+                                types.Part.from_bytes(data=data, mime_type=ct),
+                                types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                            ]
+                            media_config = types.GenerateContentConfig(
+                                max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                            media_response = await self._call_gemini(
+                                [types.Content(role="user", parts=media_parts)], media_config)
+                            media_result = self._extract_reply(media_response)
+                            if media_result:
+                                stored_name = None
+                                try:
+                                    os.makedirs(MEDIA_DIR, exist_ok=True)
+                                    import uuid
+                                    ext = os.path.splitext(att.filename)[1] or ""
+                                    stored_name = f"{uuid.uuid4().hex}{ext}"
+                                    with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                        mf.write(data)
+                                except Exception:
+                                    stored_name = None
+                                await self.librarian_db.save_media_result(
+                                    att.filename, media_result, user_name=user_name,
+                                    uploader=user_name, stored_name=stored_name, file_hash=file_hash)
+                        except Exception as e:
+                            logger.warning(f"[Perception] 미디어 인식 실패: {e}")
+                    else:
+                        media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                else:
+                    media_result = "첨부파일이 없어."
+                tool_results.append(f"미디어 인식: {media_result or '인식 실패'}")
+
+            # recognize_link
+            elif fc.name == "recognize_link":
+                url = (dict(fc.args) if fc.args else {}).get("url", "")
+                link_result = ""
+                parsed = parse_url(url)
+                normalized = parsed["normalized"]
+                _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                _url_path = url.split("?")[0].split("#")[0].lower()
+                _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
+
+                if _is_image_url:
+                    try:
+                        img_parts = [
+                            types.Part(file_data=types.FileData(file_uri=url)),
+                            types.Part.from_text(text="이 이미지를 설명해."),
+                        ]
+                        img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                        img_response = await self._call_gemini(
+                            [types.Content(role="user", parts=img_parts)], img_config)
+                        link_result = self._extract_reply(img_response)
+                        if link_result:
+                            await self.librarian_db.save_url_result(
+                                normalized, url, link_result, user_name=user_name, status="done")
+                    except Exception as e:
+                        logger.warning(f"[Perception] 이미지 URL 인식 실패 ({url}): {e}")
+
+                if not link_result:
+                    cached = await self.librarian_db.get_url_by_normalized(normalized)
+                    if cached:
+                        if cached.get("status") == "pending":
+                            link_result = "아직 읽는 중."
+                        elif cached.get("status") == "failed":
+                            await self.librarian_db.update_url_result(normalized, "", status="pending")
+                            asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                            link_result = "방금 읽기 시작했어."
+                        else:
+                            link_result = cached["result"]
+
+                if not link_result:
+                    await self.librarian_db.save_url_result(
+                        normalized, url, "", user_name=user_name, status="pending")
+                    asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                    link_result = "방금 읽기 시작했어."
+
+                tool_results.append(f"링크 인식({url}): {link_result or '인식 실패'}")
+
+    # 분석 텍스트 + 도구 결과 합침
+    if tool_results:
+        tool_block = "\n\n".join(tool_results)
+        if result:
+            result = f"{result}\n\n## 도구 결과\n{tool_block}"
+        else:
+            result = f"## 도구 결과\n{tool_block}"
 
     if result:
         logger.info(f"[Perception] 분석 완료 ({len(result)}자): {result[:150]}")
