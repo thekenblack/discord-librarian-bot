@@ -115,8 +115,9 @@ functioning_declarations = [
                 type="OBJECT",
                 properties={
                     "item_id": types.Schema(type="STRING", description="아이템 ID (예: coffee, cake, book)"),
+                    "reason": types.Schema(type="STRING", description="선물하는 이유 (캐릭터에게 전달됨)"),
                 },
-                required=["item_id"],
+                required=["item_id", "reason"],
             ),
         ),
 ]
@@ -302,6 +303,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         user_id = args.get("_user_id")
         user_name = args.get("_user_name", "")
         channel_id = args.get("_channel_id")
+        reason = args.get("reason", "")
         return json.dumps({
             "_action": "gift_user",
             "item_id": item["id"],
@@ -310,6 +312,7 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
             "user_id": user_id,
             "user_name": user_name,
             "channel_id": channel_id,
+            "reason": reason,
         }, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)
