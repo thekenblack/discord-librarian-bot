@@ -7,6 +7,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 from google.genai import types
 
 from library.db import LibraryDB
+from library.cogs.shop import SHOP_ITEMS, SHOP_MAP
 from librarian.db import LibrarianDB
 import importlib as _il
 _btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
@@ -66,7 +67,7 @@ def normalize_url(url: str) -> str:
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
 # v5 Processor 도구 이름
-PROCESSOR_TOOL_NAMES = {"deliver", "attach"}
+PROCESSOR_TOOL_NAMES = {"deliver", "attach", "gift_user", "web_search"}
 
 # Processor 도구 선언
 functioning_declarations = [
@@ -90,6 +91,32 @@ functioning_declarations = [
                     "media_id": types.Schema(type="INTEGER", description="미디어 ID"),
                     "url_id": types.Schema(type="INTEGER", description="URL ID"),
                 },
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="web_search",
+            description="웹 검색. 최신 정보, 실시간 데이터, 로컬 검색에 없는 것을 찾을 때 사용.",
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "query": types.Schema(type="STRING", description="검색 쿼리"),
+                },
+                required=["query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="gift_user",
+            description=(
+                "유저에게 선물을 준다. 고마울 때, 축하할 때, 위로할 때 등 감정적으로 주고 싶을 때 사용. "
+                "사용 가능한 아이템: " + ", ".join(
+                    f"{item['emoji']}{item['name']}({item['id']})" for item in SHOP_ITEMS)
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "item_id": types.Schema(type="STRING", description="아이템 ID (예: coffee, cake, book)"),
+                },
+                required=["item_id"],
             ),
         ),
 ]
@@ -184,6 +211,17 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
             if _web:
                 result["웹"] = _web
 
+        # 선물 기록 (항상 포함)
+        _g_rows = []
+        gifts = await librarian_db.get_gift_log(limit=5)
+        for g in gifts:
+            line = f"{g['buyer_name']}: {g['item_emoji']} {g['item_name']} ({g['item_price']} sat)"
+            if g.get("message"):
+                line += f' "{g["message"]}"'
+            _g_rows.append(line)
+        if _g_rows:
+            result["선물 기록"] = _g_rows
+
         if not result:
             result["info"] = f"'{keyword}'에 대해 아는 게 없음."
         if aliases_used:
@@ -255,5 +293,23 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 "description": url["result"][:200],
             }, ensure_ascii=False)
         return json.dumps({"result": "media_id 또는 url_id를 지정해주세요."}, ensure_ascii=False)
+
+    elif name == "gift_user":
+        item_id = args.get("item_id", "")
+        item = SHOP_MAP.get(item_id)
+        if not item:
+            return json.dumps({"result": f"'{item_id}' 아이템을 찾을 수 없습니다."}, ensure_ascii=False)
+        user_id = args.get("_user_id")
+        user_name = args.get("_user_name", "")
+        channel_id = args.get("_channel_id")
+        return json.dumps({
+            "_action": "gift_user",
+            "item_id": item["id"],
+            "item_name": item["name"],
+            "item_emoji": item["emoji"],
+            "user_id": user_id,
+            "user_name": user_name,
+            "channel_id": channel_id,
+        }, ensure_ascii=False)
 
     return json.dumps({"error": f"알 수 없는 도구: {name}"}, ensure_ascii=False)

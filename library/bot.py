@@ -9,6 +9,7 @@ import logging
 import traceback
 import sys
 from library.db import LibraryDB
+from library.lightning import LightningManager
 from config import BOT_TOKEN, GUILD_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -39,6 +40,7 @@ class LibraryBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents, tree_cls=BotCommandTree)
         self.db = LibraryDB()
+        self.ln = LightningManager()
         self.stopped = False
 
     async def on_ready(self):

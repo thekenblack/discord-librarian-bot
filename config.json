@@ -1,5 +1,5 @@
 {
-  "version": "5",
+  "version": "6",
   "bots": [
     {"name": "라이브러리 봇", "module": "library.bot"},
     {"name": "AI 사서봇", "module": "librarian.bot"}

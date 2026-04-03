@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime as dt
 from google.genai import types
-from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR
+from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR, TEMP_L1
 
 import importlib as _il
 _btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
@@ -30,17 +30,6 @@ perception_declarations = [
                 "keyword": types.Schema(type="STRING", description="검색 키워드"),
             },
             required=["keyword"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="web_search",
-        description="웹 검색이 필요할 때 호출. 최신 정보, 실시간 데이터, 내 지식에 없는 것을 찾을 때 사용.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "query": types.Schema(type="STRING", description="검색할 내용"),
-            },
-            required=["query"],
         ),
     ),
     types.FunctionDeclaration(
@@ -123,6 +112,8 @@ async def gather_context(self, user_id: str, user_name: str,
     bot_lines.append(f"self_mood:{bot_emo.get('self_mood', 50):.1f}")
     bot_lines.append(f"self_energy:{bot_emo.get('self_energy', 50):.1f}")
     bot_lines.append(f"server_vibe:{bot_emo.get('server_vibe', 50):.1f}")
+    bot_lines.append(f"fullness:{bot_emo.get('fullness', 50):.0f}")
+    bot_lines.append(f"hydration:{bot_emo.get('hydration', 50):.0f}")
 
     # 유저별 상태
     user_lines = []
@@ -202,7 +193,7 @@ async def run_perception(self, user_id: str, user_name: str,
         system_instruction=system_prompt,
         tools=perception_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-        temperature=0.3,
+        temperature=TEMP_L1,
     )
 
     if user_text:
@@ -240,31 +231,6 @@ async def run_perception(self, user_id: str, user_name: str,
                     self.library_db, self.librarian_db, "search", tool_args)
                 logger.info(f"[Perception] search 결과: {search_result[:200]}")
                 tool_results.append(f"검색 결과:\n{search_result}")
-
-            # web_search
-            elif fc.name == "web_search":
-                query = (dict(fc.args) if fc.args else {}).get("query", user_text)
-                cached = await self.librarian_db.get_web_by_query(query)
-                if cached:
-                    tool_results.append(f"웹 검색({query}): {cached['result']}")
-                else:
-                    google_search_tool = _tools.google_search_tool
-                    web_config = types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        tools=google_search_tool,
-                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=1.0,
-                    )
-                    web_query = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
-                    web_result = ""
-                    try:
-                        web_response = await self._call_gemini(web_query, web_config)
-                        web_result = self._extract_reply(web_response)
-                    except Exception as e:
-                        logger.warning(f"[Perception] 웹 검색 실패: {e}")
-                    if web_result:
-                        await self.librarian_db.save_web_result(query, web_result, user_name)
-                    tool_results.append(f"웹 검색({query}): {web_result or '결과 없음'}")
 
             # recognize_media
             elif fc.name == "recognize_media":

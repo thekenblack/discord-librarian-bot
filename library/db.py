@@ -87,6 +87,52 @@ class LibraryDB:
             await _add_column("books", "hidden", "INTEGER DEFAULT 0")
             await _add_column("files", "hidden", "INTEGER DEFAULT 0")
 
+            # ── 지갑 (경제 시스템) ─────────────────────────────
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS wallets (
+                    user_id    TEXT PRIMARY KEY,
+                    username   TEXT NOT NULL,
+                    balance    INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    TEXT NOT NULL,
+                    type       TEXT NOT NULL,
+                    amount     INTEGER NOT NULL,
+                    note       TEXT,
+                    item_emoji TEXT,
+                    item_name  TEXT,
+                    item_price INTEGER,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
+            await _add_column("transactions", "item_emoji", "TEXT")
+            await _add_column("transactions", "item_name", "TEXT")
+            await _add_column("transactions", "item_price", "TEXT")
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS invoices (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payment_hash TEXT UNIQUE NOT NULL,
+                    user_id      TEXT NOT NULL,
+                    amount       INTEGER NOT NULL,
+                    bolt11       TEXT NOT NULL,
+                    status       TEXT NOT NULL DEFAULT 'pending',
+                    created_at   TEXT NOT NULL,
+                    paid_at      TEXT,
+                    message_id   TEXT,
+                    channel_id   TEXT,
+                    buy_item_id  TEXT
+                )
+            """)
+
+            await _add_column("invoices", "buy_item_id", "TEXT")
+
             await db.commit()
             logger.info("도서관 DB 초기화 완료")
 
@@ -395,3 +441,191 @@ class LibraryDB:
                 (page_id, sort_order, book_id))
             await self.touch_catalog(db)
             await db.commit()
+
+    # ── 지갑 ──────────────────────────────────────────────
+
+    async def get_or_create_wallet(self, user_id: str, username: str) -> dict:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM wallets WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            if row:
+                await db.execute(
+                    "UPDATE wallets SET username = ? WHERE user_id = ?",
+                    (username, user_id))
+                await db.commit()
+                return dict(row)
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "INSERT INTO wallets (user_id, username, balance, created_at) VALUES (?,?,0,?)",
+                (user_id, username, now))
+            await db.commit()
+            return {"user_id": user_id, "username": username, "balance": 0, "created_at": now}
+
+    async def get_balance(self, user_id: str) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def charge_balance(self, user_id: str, username: str, amount: int) -> int:
+        """잔고 충전. 새 잔고 반환."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            try:
+                # 지갑 없으면 생성
+                cursor = await db.execute(
+                    "SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+                row = await cursor.fetchone()
+                if row is None:
+                    now = datetime.now(timezone.utc).isoformat()
+                    await db.execute(
+                        "INSERT INTO wallets (user_id, username, balance, created_at) VALUES (?,?,0,?)",
+                        (user_id, username, now))
+                await db.execute(
+                    "UPDATE wallets SET balance = balance + ?, username = ? WHERE user_id = ?",
+                    (amount, username, user_id))
+                await db.execute(
+                    "INSERT INTO transactions (user_id, type, amount, note, created_at) VALUES (?,?,?,?,?)",
+                    (user_id, "charge", amount, "충전", datetime.now(timezone.utc).isoformat()))
+                await db.commit()
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+            cursor = await db.execute(
+                "SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0]
+
+    async def spend_balance(self, user_id: str, amount: int, note: str = "",
+                            item_emoji: str = None, item_name: str = None,
+                            item_price: int = None) -> int | None:
+        """잔고 차감. 잔고 부족 시 None, 성공 시 새 잔고 반환."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            try:
+                cursor = await db.execute(
+                    "SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+                row = await cursor.fetchone()
+                if row is None or row[0] < amount:
+                    await db.execute("ROLLBACK")
+                    return None
+                await db.execute(
+                    "UPDATE wallets SET balance = balance - ? WHERE user_id = ?",
+                    (amount, user_id))
+                await db.execute(
+                    "INSERT INTO transactions (user_id, type, amount, note, item_emoji, item_name, item_price, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (user_id, "buy", amount, note, item_emoji, item_name, item_price,
+                     datetime.now(timezone.utc).isoformat()))
+                await db.commit()
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+            cursor = await db.execute(
+                "SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0]
+
+    # ── 인보이스 ──────────────────────────────────────────
+
+    async def save_invoice(self, payment_hash: str, user_id: str, amount: int,
+                           bolt11: str, message_id: str = None, channel_id: str = None,
+                           buy_item_id: str = None):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO invoices (payment_hash, user_id, amount, bolt11, status, created_at, message_id, channel_id, buy_item_id) "
+                "VALUES (?,?,?,?,'pending',?,?,?,?)",
+                (payment_hash, user_id, amount, bolt11,
+                 datetime.now(timezone.utc).isoformat(), message_id, channel_id, buy_item_id))
+            await db.commit()
+
+    async def mark_invoice_paid(self, payment_hash: str) -> dict | None:
+        """인보이스 paid 처리 + 잔고 추가. 이중처리 방지."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            try:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT * FROM invoices WHERE payment_hash = ? AND status = 'pending'",
+                    (payment_hash,))
+                inv = await cursor.fetchone()
+                if not inv:
+                    await db.execute("ROLLBACK")
+                    return None
+                inv = dict(inv)
+                now = datetime.now(timezone.utc).isoformat()
+                cur2 = await db.execute(
+                    "UPDATE invoices SET status='paid', paid_at=? WHERE payment_hash=? AND status='pending'",
+                    (now, payment_hash))
+                if cur2.rowcount == 0:
+                    await db.execute("ROLLBACK")
+                    return None
+                # 잔고 추가
+                cursor = await db.execute(
+                    "SELECT balance FROM wallets WHERE user_id = ?", (inv["user_id"],))
+                row = await cursor.fetchone()
+                if row is None:
+                    await db.execute(
+                        "INSERT INTO wallets (user_id, username, balance, created_at) VALUES (?,?,0,?)",
+                        (inv["user_id"], "", now))
+                await db.execute(
+                    "UPDATE wallets SET balance = balance + ? WHERE user_id = ?",
+                    (inv["amount"], inv["user_id"]))
+                await db.execute(
+                    "INSERT INTO transactions (user_id, type, amount, note, created_at) VALUES (?,?,?,?,?)",
+                    (inv["user_id"], "charge", inv["amount"], "Lightning 충전", now))
+                await db.commit()
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+            return inv
+
+    async def get_pending_invoices(self, expire_seconds: int = 3600) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            # 만료된 것 정리
+            await db.execute(
+                "UPDATE invoices SET status='expired' WHERE status='pending' "
+                "AND datetime(created_at) <= datetime('now', ? || ' seconds')",
+                (f"-{expire_seconds}",))
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT * FROM invoices WHERE status = 'pending'")
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def cancel_user_pending_invoices(self, user_id: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE invoices SET status='cancelled' WHERE user_id = ? AND status = 'pending'",
+                (user_id,))
+            await db.commit()
+
+    async def cancel_invoice(self, user_id: str, payment_hash: str) -> bool:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "UPDATE invoices SET status='cancelled' WHERE user_id = ? AND payment_hash = ? AND status = 'pending'",
+                (user_id, payment_hash))
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def get_gift_history(self, user_id: str, limit: int = 10) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT item_emoji, item_name, item_price, created_at FROM transactions "
+                "WHERE user_id = ? AND type = 'buy' ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_total_gifted(self, user_id: str) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id = ? AND type = 'buy'",
+                (user_id,))
+            row = await cursor.fetchone()
+            return row[0]

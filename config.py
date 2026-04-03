@@ -58,9 +58,39 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("GEMINI_API_KEYS", "").sp
 ADMIN_IDS = [uid.strip() for uid in os.getenv("ADMIN_USER_IDS", "").split(",") if uid.strip()]
 LIGHTNING_ADDRESS = os.getenv("LIGHTNING_ADDRESS", "")
 
-# ── AI 설정 (config.json) ──────────────────────
+# ── Blink Lightning (충전 시스템) ──────────────
+BLINK_API_KEY = os.getenv("BLINK_API_KEY", "")
+BLINK_API_URL = os.getenv("BLINK_API_URL", "https://api.blink.sv/graphql")
+MIN_CHARGE_SAT = int(os.getenv("MIN_CHARGE_SAT", "100"))
+INVOICE_EXPIRE = int(os.getenv("INVOICE_EXPIRE", "3600"))
+
+# ── 자발적 발화 ────────────────────────────────
+SPONTANEOUS_CHANNEL_ID = os.getenv("SPONTANEOUS_CHANNEL_ID", "")
+SPONTANEOUS_QUIET_HOURS = int(os.getenv("SPONTANEOUS_QUIET_HOURS", "3"))      # 최소 침묵 시��
+SPONTANEOUS_CHECK_HOURS = int(os.getenv("SPONTANEOUS_CHECK_HOURS", "3"))      # 체크 간격
+SPONTANEOUS_CHANCE = int(os.getenv("SPONTANEOUS_CHANCE", "25"))               # 발화 확률 (%)
+
+# ── AI 설정 ───────────────────────────────────
 _ai = _conf.get("ai", {})
 GEMINI_MODEL     = _ai.get("model", "gemini-2.5-flash-lite")
 AI_NAME          = os.getenv("AI_NAME", _ai.get("name", "사서봇"))
 AI_STATUS_TEXT   = os.getenv("AI_STATUS_TEXT", _ai.get("status_text", "Library"))
 AI_MAX_OUTPUT_TOKENS = _ai.get("max_output_tokens", 500)
+
+# ── 프롬프트 ──────────────────────────────────
+AI_HOURLY_WAGE   = int(os.getenv("AI_HOURLY_WAGE", "210"))
+AI_CREATOR       = os.getenv("AI_CREATOR", "Ken")
+AI_COMMUNITY     = os.getenv("AI_COMMUNITY", "시타델")
+AI_COMMUNITY_DESC = os.getenv("AI_COMMUNITY_DESC", "비트코인 맥시멀리스트들의 요새")
+
+# ── 레이어 온도 ───────────────────────────────
+TEMP_L1 = float(os.getenv("TEMP_L1", "0.3"))
+TEMP_L2 = float(os.getenv("TEMP_L2", "0.5"))
+TEMP_L3 = float(os.getenv("TEMP_L3", "1.2"))
+TEMP_L4 = float(os.getenv("TEMP_L4", "0.1"))
+TEMP_L5 = float(os.getenv("TEMP_L5", "0.3"))
+
+# ── 히스토리 ──────────────────────────────────
+MAX_HISTORY_L1 = int(os.getenv("MAX_HISTORY_L1", "5"))
+MAX_HISTORY_L3 = int(os.getenv("MAX_HISTORY_L3", "5"))
+MAX_HISTORY_L5 = int(os.getenv("MAX_HISTORY_L5", "5"))

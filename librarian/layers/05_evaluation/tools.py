@@ -53,7 +53,6 @@ evaluation_declarations = [
                 "server_vibe": types.Schema(type="INTEGER", description="분위기 변화량 (-15 ~ +15)"),
                 "message_id": types.Schema(type="STRING", description="감정 변화의 원인이 된 메시지 ID. 중복 방지용."),
                 "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
-                "response": types.Schema(type="STRING", description="normal(기본 답변) 또는 ignore(무시). 생략하면 normal"),
             },
             required=["reason", "message_id"],
         ),

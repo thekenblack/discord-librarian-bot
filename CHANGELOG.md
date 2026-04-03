@@ -4,6 +4,54 @@
 
 ---
 
+## v6 (2026-04-04 ~)
+
+v5 기반. 경제 시스템, 자발적 발화, 레이어 역할 재조정.
+
+### 의도
+
+경제 시스템:
+- Lightning(Blink API) 기반 충전/구매 시스템
+- /charge: Lightning 인보이스로 잔고 충전 (QR + 입금확인 + 폴링)
+- /buy: 사서봇에게 선물. 잔고 부족 시 부족분만큼 인보이스 자동 발행, 입금 확인 후 선물 자동 전달
+- /balance: 잔고 확인
+- /admin charge: 어드민 직접 충전 (모달, user 생략 시 본인)
+- 아이템 16종 (50-2100 sat), 가격순 정렬
+- DB: wallets, transactions, invoices 테이블 (library.db)
+
+자발적 발화:
+- SPONTANEOUS_CHANNEL_ID 지정 시 랜덤 간격(30분-2시간)으로 자발적 발화
+- 해당 채널에서 멘션 없이도 4초 debounce 후 응답 가능 (답글 아닌 일반 메시지로)
+
+레이어 재조정:
+- L1: web_search 제거. 로컬 검색(search, recognize_media, recognize_link)만
+- L2: web_search 추가. L1 검색 결과 불충분 시만 사용. gift_user 도구 추가 (봇이 유저에게 선물)
+- L4: 역할 축소. 원문 보존 우선, 시스템 흔적 제거와 디스코드 포맷 교정만
+
+응답 모드:
+- "무응답" 모드 제거
+- no_comment: L3/L4 스킵, L5 실행. "듣고 있지만 끼어들지 않겠다"
+- 리액션만: 기존과 동일
+
+### 주요 변경
+
+- library/lightning.py 추가 (Blink API 래퍼, Mock 모드)
+- library/cogs/shop.py 전면 재작성 (경제 시스템)
+- library/db.py: wallets, transactions, invoices 테이블 + 관련 메서드
+- library/bot.py: LightningManager 초기화
+- library/utils.py: sat_fmt, make_qr_file, LIGHTNING_COLOR
+- library/cogs/admin.py: /admin charge (모달)
+- config.py: BLINK_API_KEY, SPONTANEOUS_CHANNEL_ID 등
+- requirements.txt: qrcode[pil]
+- L1 perception.py: web_search 제거
+- L2 tools.py: web_search, gift_user 추가
+- L2 functioning.py: web_search 실행 (google_search_tool), gift 액션 처리
+- L4 01_role.txt: 역할 축소 (원문 보존 우선)
+- L2 05_instruction.txt: 무응답 제거, no_comment 추가
+- core.py: 자발적 발화, 비멘션 응답, no_comment 처리, gift 후처리
+
+---
+
 ## v5 (2026-04-03 ~)
 
 v4 로그 분석 기반. 핵심 철학 변경: 고정 성격 제거, 감정 수치가 캐릭터를 만든다.

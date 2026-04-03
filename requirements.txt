@@ -18,3 +18,6 @@ ebooklib>=0.18
 
 # 벡터 검색
 chromadb>=0.5.0
+
+# QR 코드 (Lightning 인보이스)
+qrcode[pil]>=7.0

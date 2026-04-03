@@ -2,12 +2,15 @@
 Discord Embed 유틸리티
 """
 
+import io
 import discord
+import qrcode
 from datetime import datetime, timezone
 
-SUCCESS_COLOR = 0x2ECC71
-ERROR_COLOR   = 0xE74C3C
-INFO_COLOR    = 0x3498DB
+SUCCESS_COLOR   = 0x2ECC71
+ERROR_COLOR     = 0xE74C3C
+INFO_COLOR      = 0x3498DB
+LIGHTNING_COLOR = 0xF7931A
 
 
 def success_embed(title: str, description: str = "") -> discord.Embed:
@@ -61,3 +64,18 @@ class BotView(discord.ui.View):
                 await msg.edit(view=self)
             except Exception:
                 pass
+
+
+def sat_fmt(sat: int) -> str:
+    return f"{sat:,} sat"
+
+
+def make_qr_file(data: str) -> discord.File:
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=6, border=2)
+    qr.add_data(data.upper())
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return discord.File(buf, filename="invoice_qr.png")

@@ -14,7 +14,11 @@ from google.genai.errors import ClientError
 
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
-from config import ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR
+from config import (
+    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR,
+    SPONTANEOUS_CHANNEL_ID, SPONTANEOUS_QUIET_HOURS, SPONTANEOUS_CHECK_HOURS, SPONTANEOUS_CHANCE,
+    AI_HOURLY_WAGE,
+)
 from librarian import server_log
 import importlib as _il
 _persona_mod = _il.import_module("librarian.layers.03_character.persona")
@@ -27,9 +31,10 @@ bitcoin_data = _btc_mod
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
-MAX_HISTORY = 5               # L3 유저별
-MAX_PERCEPTION_HISTORY = 5    # L1 채널별
-MAX_EVALUATION_HISTORY = 5    # L5 단일
+from config import MAX_HISTORY_L1, MAX_HISTORY_L3, MAX_HISTORY_L5
+MAX_HISTORY = MAX_HISTORY_L3
+MAX_PERCEPTION_HISTORY = MAX_HISTORY_L1
+MAX_EVALUATION_HISTORY = MAX_HISTORY_L5
 
 # 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
@@ -184,6 +189,19 @@ class AILibrarianBot(discord.Client):
         self._bot_ready = True
         self._evaluation_task = asyncio.create_task(self._evaluation_worker())
 
+        # 봇 지갑 생성 + 시급 태스크
+        if self.user:
+            from config import AI_NAME
+            await self.library_db.get_or_create_wallet(str(self.user.id), AI_NAME)
+            asyncio.create_task(self._hourly_wage_loop())
+
+        # 자발적 발화
+        if SPONTANEOUS_CHANNEL_ID:
+            asyncio.create_task(self._spontaneous_loop())
+
+        # 자발적 채널 대기 버퍼 (비멘션 메시지 debounce)
+        self._spontaneous_pending: dict[str, asyncio.Task] = {}
+
     async def _evaluation_worker(self):
         """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
         while True:
@@ -324,6 +342,10 @@ class AILibrarianBot(discord.Client):
                 role_mentioned = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
 
         if not bot_mentioned and not reply_to_bot and not role_mentioned:
+            # 자발적 채널이면 debounce 후 응답 가능성
+            if (SPONTANEOUS_CHANNEL_ID
+                    and str(message.channel.id) == SPONTANEOUS_CHANNEL_ID):
+                await self._handle_spontaneous_channel_message(message)
             return
 
         import time as _time
@@ -389,8 +411,8 @@ class AILibrarianBot(discord.Client):
                     except Exception as e:
                         logger.warning(f"리액션 실패: {e}")
                 return
-            if _meta.get("intentional_silence"):
-                logger.info("의도적 무응답 → 메시지 안 보냄")
+            if _meta.get("no_response"):
+                logger.info("no_response → 메시지 안 보냄")
                 return
             # 에러 메시지 (비어있으면 무응답)
             error_msg = self.persona.error_message
@@ -436,6 +458,45 @@ class AILibrarianBot(discord.Client):
             for _surl in _meta["shared_urls"]:
                 if _surl not in (reply_text or ""):
                     reply_text = f"{reply_text}\n{_surl}".strip() if reply_text else _surl
+
+        # gift_user: 봇이 유저에게 선물 (잔고 차감)
+        if _meta.get("gifts"):
+            from config import AI_NAME
+            from library.cogs.shop import SHOP_MAP
+            bot_id = str(self.user.id) if self.user else ""
+            for gift in _meta["gifts"]:
+                try:
+                    item_data = SHOP_MAP.get(gift.get("item_id"))
+                    item_price = item_data["price"] if item_data else 0
+                    # 봇 잔고 차감
+                    new_bal = await self.library_db.spend_balance(
+                        bot_id, item_price, note=f"{gift['item_emoji']} {gift['item_name']}",
+                        item_emoji=gift["item_emoji"], item_name=gift["item_name"],
+                        item_price=item_price)
+                    if new_bal is None:
+                        logger.info(f"[선물] 잔고 부족으로 선물 실패: {gift['item_name']}")
+                        continue
+                    # gift_log에 기록 (봇→유저)
+                    await self.librarian_db.save_gift_log(
+                        buyer_id=bot_id,
+                        buyer_name=AI_NAME,
+                        item_emoji=gift["item_emoji"],
+                        item_name=gift["item_name"],
+                        item_price=item_price,
+                        recipient_id=str(message.author.id),
+                        recipient_name=message.author.display_name)
+                    embed = discord.Embed(
+                        description=(
+                            f"{gift['item_emoji']} **{AI_NAME}**이(가) "
+                            f"**{message.author.display_name}** 님에게 "
+                            f"**{gift['item_name']}**을(를) 선물했습니다! ({item_price} sat)"
+                        ),
+                        color=0xF1C40F,
+                    )
+                    embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
+                    await message.channel.send(embed=embed)
+                except Exception as e:
+                    logger.warning(f"선물 알림 전송 실패: {e}")
 
         if files_to_send:
             await _send_reply(reply_text, files=files_to_send)
@@ -503,14 +564,14 @@ class AILibrarianBot(discord.Client):
             # ── Layer 2: Functioning (도구 실행) ──
             _t0 = _time.monotonic()
             catalog = await self._build_catalog()
-            memories_text, memory_ids = await self._build_memories(user_name)
+            memories_text, memory_ids = await self._build_memories(user_id, user_name)
 
             instruction, files_to_send, processor_meta = await self._run_functioning(
                 user_id=user_id, user_name=user_name, user_text=user_text,
                 catalog=catalog, memories_text=memories_text,
                 memory_ids=memory_ids,
                 attachments=attachments, seen_filenames=seen_filenames,
-                perception=perception,
+                perception=perception, channel_id=channel_id,
             )
             _meta["tools_called"] = processor_meta.get("tools_called", [])
             _meta["tool_results"] = processor_meta.get("tool_results", [])
@@ -518,12 +579,21 @@ class AILibrarianBot(discord.Client):
                 _meta["shared_urls"] = processor_meta["shared_urls"]
             if processor_meta.get("reaction"):
                 _meta["reaction"] = processor_meta["reaction"]
+            if processor_meta.get("gifts"):
+                _meta["gifts"] = processor_meta["gifts"]
             logger.info(f"[L2 Functioning] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # 응답 모드 판별
-            if _re.search(r'(?:응답\s*모드\s*[:：]\s*)?무응답', instruction or ""):
-                logger.info("[L2] 응답 모드: 무응답")
-                _meta["intentional_silence"] = True
+            if _re.search(r'no_comment', instruction or "", _re.IGNORECASE):
+                logger.info("[L2] 응답 모드: no_comment (L3/L4 스킵, L5 실행)")
+                _meta["no_comment"] = True
+                # L5 Evaluation만 실행 (큐에 추가)
+                self._evaluation_queue.put_nowait({
+                    "user_id": user_id, "user_name": user_name,
+                    "user_text": user_text, "bot_reply": "(no_comment)",
+                    "context": perception, "tool_results": instruction,
+                    "channel_id": channel_id,
+                })
                 return "", files_to_send, _meta
 
             reaction_only_match = _re.search(
@@ -568,7 +638,7 @@ class AILibrarianBot(discord.Client):
             if not raw_reply:
                 if history and history[-1].role == "user":
                     history.pop()
-                _meta["intentional_silence"] = True
+                _meta["no_response"] = True
                 return "", files_to_send, _meta
 
             # ── Layer 4: Postprocess (자연어 정제) ──
@@ -923,7 +993,36 @@ class AILibrarianBot(discord.Client):
             buyer_mention = f"<@{buyer_id}>"
 
             # 선물 맥락을 유저 메시지처럼 만들어서 5레이어 파이프라인에 태움
-            gift_text = f"{buyer_mention} 님이 나에게 {item_emoji} {item_name}을(를) 선물해줬다"
+            # 가격 정보: SHOP_MAP에서 조회
+            from library.cogs.shop import SHOP_MAP, SHOP_PAGE1, SHOP_PAGE2
+            item_data = SHOP_MAP.get(gift.get("item_id"))
+            if item_data:
+                price = item_data["price"]
+                is_page2 = any(i["id"] == item_data["id"] for i in SHOP_PAGE2)
+                if is_page2:
+                    cheaper = sum(1 for i in SHOP_PAGE2 if i["price"] < price)
+                    rank = int(cheaper / len(SHOP_PAGE2) * 100)
+                    price_info = f" ({price} sat, 이상한 아이템 중 상위 {100 - rank}%)"
+                else:
+                    cheaper = sum(1 for i in SHOP_PAGE1 if i["price"] < price)
+                    rank = int(cheaper / len(SHOP_PAGE1) * 100)
+                    price_info = f" ({price} sat, 일반 아이템 중 상위 {100 - rank}%)"
+            else:
+                price_info = ""
+            gift_text = f"{buyer_mention} 님이 나에게 {item_emoji} {item_name}을(를) 선물해줬다{price_info}"
+
+            # fullness/hydration만 직접 적용 (mood/energy는 L5가 판단)
+            effects_str = gift.get("effects", "")
+            for pair in effects_str.split(","):
+                if ":" not in pair:
+                    continue
+                k, v = pair.split(":", 1)
+                k = k.strip()
+                if k in ("fullness", "hydration"):
+                    try:
+                        await self.librarian_db.update_bot_emotion(k, float(v))
+                    except Exception:
+                        pass
 
             # 멘션 매핑
             mention_map = {}
@@ -956,6 +1055,217 @@ class AILibrarianBot(discord.Client):
         except Exception as e:
             logger.warning(f"[선물] 처리 실패: {e}")
 
+    # ── 시급 지급 ─────────────────────────────────────────
+
+    async def _hourly_wage_loop(self):
+        """매시간 시급 지급 + fullness/hydration 감소 + 자동 소비."""
+        import random
+        await self.wait_until_ready()
+        await asyncio.sleep(60)
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                if not self.user:
+                    continue
+                bot_id = str(self.user.id)
+                from config import AI_NAME
+                from library.cogs.shop import SHOP_PAGE1
+
+                # 시급 지급
+                new_bal = await self.library_db.charge_balance(bot_id, AI_NAME, AI_HOURLY_WAGE)
+                logger.info(f"[시급] +{AI_HOURLY_WAGE} sat (잔고: {new_bal})")
+
+                # fullness/hydration 감소 (높을수록 빠르게)
+                bot_emo = await self.librarian_db.get_bot_emotion()
+                for axis in ("fullness", "hydration"):
+                    current = bot_emo.get(axis, 50)
+                    decay = max(1, current * 0.06)
+                    await self.librarian_db.update_bot_emotion(axis, -decay)
+                balance = await self.library_db.get_balance(bot_id)
+
+                # 자동 식사: 확률 = (100 - fullness)%
+                fullness = bot_emo.get("fullness", 50)
+                if random.randint(1, 100) > fullness:
+                    food_items = [i for i in SHOP_PAGE1 if i["effects"].get("fullness") and i["price"] <= balance]
+                    if food_items:
+                        item = self._pick_by_wealth(food_items, balance)
+                        result = await self.library_db.spend_balance(
+                            bot_id, item["price"], note=f"{item['emoji']} {item['name']}",
+                            item_emoji=item["emoji"], item_name=item["name"], item_price=item["price"])
+                        if result is not None:
+                            for ek in ("fullness", "hydration", "self_mood", "self_energy"):
+                                ev = item["effects"].get(ek)
+                                if ev:
+                                    await self.librarian_db.update_bot_emotion(ek, ev)
+                            await self.librarian_db.save_gift_log(
+                                buyer_id=bot_id, buyer_name=AI_NAME,
+                                item_emoji=item["emoji"], item_name=item["name"],
+                                item_price=item["price"])
+                            logger.info(f"[자동소비] {item['emoji']} {item['name']} ({item['price']} sat)")
+
+                # 자동 음료: 확률 = (100 - hydration)%
+                hydration = bot_emo.get("hydration", 50)
+                balance = await self.library_db.get_balance(bot_id)
+                if random.randint(1, 100) > hydration:
+                    drink_items = [i for i in SHOP_PAGE1 if i["effects"].get("hydration") and not i["effects"].get("fullness") and i["price"] <= balance]
+                    if drink_items:
+                        item = self._pick_by_wealth(drink_items, balance)
+                        result = await self.library_db.spend_balance(
+                            bot_id, item["price"], note=f"{item['emoji']} {item['name']}",
+                            item_emoji=item["emoji"], item_name=item["name"], item_price=item["price"])
+                        if result is not None:
+                            for ek in ("fullness", "hydration", "self_mood", "self_energy"):
+                                ev = item["effects"].get(ek)
+                                if ev:
+                                    await self.librarian_db.update_bot_emotion(ek, ev)
+                            await self.librarian_db.save_gift_log(
+                                buyer_id=bot_id, buyer_name=AI_NAME,
+                                item_emoji=item["emoji"], item_name=item["name"],
+                                item_price=item["price"])
+                            logger.info(f"[자동소비] {item['emoji']} {item['name']} ({item['price']} sat)")
+
+            except Exception as e:
+                logger.warning(f"[시급] 오류: {e}")
+
+    @staticmethod
+    def _pick_by_wealth(items: list[dict], balance: int) -> dict:
+        """잔고 수준에 따른 가중치 선택. 부자일수록 비싼 거 확률 올라감."""
+        import random
+        weights = [min(i["price"], balance / 3) for i in items]
+        return random.choices(items, weights=weights, k=1)[0]
+
+    # ── 자발적 발화 ─────────────────────────────────────
+
+    async def _spontaneous_loop(self):
+        """마지막 메시지 이후 일정 ��간 침묵 → 주기적 확률 체크 → 발화."""
+        import random
+        from datetime import datetime, timezone
+        await self.wait_until_ready()
+        await asyncio.sleep(60)
+
+        check_interval = SPONTANEOUS_CHECK_HOURS * 3600
+        quiet_threshold = SPONTANEOUS_QUIET_HOURS * 3600
+
+        while True:
+            await asyncio.sleep(check_interval)
+            try:
+                channel = self.get_channel(int(SPONTANEOUS_CHANNEL_ID))
+                if not channel:
+                    continue
+
+                # 마지막 메시지 시각 확인
+                last_msg = None
+                async for msg in channel.history(limit=1):
+                    last_msg = msg
+                if not last_msg:
+                    continue
+
+                elapsed = (datetime.now(timezone.utc) - last_msg.created_at).total_seconds()
+                if elapsed < quiet_threshold:
+                    continue
+
+                # 확률 체크
+                if random.randint(1, 100) > SPONTANEOUS_CHANCE:
+                    logger.info(f"[자발적 발화] 확률 미달 (침묵 {elapsed/3600:.1f}h)")
+                    continue
+
+                await self._spontaneous_speak(channel)
+            except Exception as e:
+                logger.warning(f"[자발적 발화] 오류: {e}")
+
+    async def _spontaneous_speak(self, channel):
+        """자발적 채널에서 발화. 평소 파이프라인 그대로, 프롬프트만 다름."""
+        channel_id = str(channel.id)
+
+        spontaneous_text = (
+            "(한동안 아무도 없다. 도서관이 조용하다. 심심하다.)\n"
+            "(책장을 둘러보거나, 전에 누가 했던 얘기를 떠올리거나, "
+            "요즘 세상이 어떻게 돌아가는지 궁금해지거나. "
+            "뭐라도 하고 싶은 기분이다.)\n"
+            "(혼잣말을 해도 되고, 아무 말도 안 해도 된다. no_comment 가능.)"
+        )
+        reply, files_to_send, _meta = await self._ask_gemini(
+            user_id="spontaneous",
+            user_name="system",
+            user_text=spontaneous_text,
+            guild=channel.guild if hasattr(channel, 'guild') else None,
+            channel_id=channel_id,
+        )
+
+        if _meta.get("no_response") or _meta.get("no_comment"):
+            logger.info("[자발적 발화] no_comment")
+            return
+
+        if reply:
+            await channel.send(reply)
+            logger.info(f"[자발적 발화] {reply[:100]}")
+
+    # ── 자발적 채널 비멘션 응답 (debounce) ────────────────
+
+    async def _handle_spontaneous_channel_message(self, message: discord.Message):
+        """자발적 채널에서 비멘션 메시지 처리. debounce 후 응답 여부 결정."""
+        channel_id = str(message.channel.id)
+
+        # 기존 대기 취소
+        if channel_id in self._spontaneous_pending:
+            self._spontaneous_pending[channel_id].cancel()
+
+        self._spontaneous_pending[channel_id] = asyncio.create_task(
+            self._debounced_spontaneous_reply(message))
+
+    async def _debounced_spontaneous_reply(self, message: discord.Message):
+        """debounce 대기 후 비멘션 응답."""
+        await asyncio.sleep(3)  # 3초 대기 (debounce)
+        channel_id = str(message.channel.id)
+        self._spontaneous_pending.pop(channel_id, None)
+
+        try:
+            text = message.content
+            if message.mentions:
+                for user in message.mentions:
+                    text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
+                    text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
+
+            uid = str(message.author.id)
+            if uid not in self._user_locks:
+                self._user_locks[uid] = asyncio.Lock()
+            async with self._user_locks[uid]:
+                attachments = list(message.attachments) if message.attachments else []
+                seen_filenames = [a.filename for a in attachments] if attachments else []
+                extras = await self._extract_extras(message)
+                if extras:
+                    text = f"{text} {extras}"
+
+                reply, files_to_send, _meta = await self._ask_gemini(
+                    user_id=uid,
+                    user_name=message.author.display_name,
+                    user_text=text,
+                    guild=message.guild,
+                    attachments=attachments,
+                    seen_filenames=seen_filenames,
+                    channel_id=channel_id,
+                )
+
+            if _meta.get("no_response") or _meta.get("no_comment"):
+                return
+
+            if reply:
+                # 치기로 판단한 후에만 typing 표시
+                try:
+                    await message.channel.typing()
+                except Exception:
+                    pass
+                # 비멘�� → 답글이 아닌 일반 메시지��� 전송
+                if files_to_send:
+                    await message.channel.send(reply, files=files_to_send)
+                else:
+                    await message.channel.send(reply)
+                logger.info(f"[자발적 채널] {message.author.display_name}: {text[:50]} → {reply[:100]}")
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"[자발적 채널] 응답 오류: {e}")
 
 
 # ── v5: 레이어별 메서드 바인딩 ──

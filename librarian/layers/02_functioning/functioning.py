@@ -5,7 +5,7 @@ import logging
 import discord
 from google.genai import types
 from google.genai.errors import ClientError
-from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS
+from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS, TEMP_L2, AI_HOURLY_WAGE
 import importlib as _il
 _tools = _il.import_module("librarian.layers.02_functioning.tools")
 functioning_tools = _tools.functioning_tools
@@ -122,6 +122,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
                           perception: str = "",
+                          channel_id: str = None,
                           ) -> tuple[str, discord.File | None, dict]:
     """Functioning: 도구 실행 + 결과 보고. (tool_results_text, files_to_send, meta) 반환."""
     import time as _time
@@ -148,6 +149,26 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
+    # 봇 잔고 + 구매 가능 아이템
+    from library.cogs.shop import SHOP_PAGE1
+    bot_id = str(self.user.id) if self.user else ""
+    bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
+    affordable = [f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)"
+                  for i in SHOP_PAGE1 if i["price"] <= bot_balance]
+    wallet_block = f"## 내 지갑\n잔고: {bot_balance} sat (시급 {AI_HOURLY_WAGE} sat)\n"
+    if affordable:
+        wallet_block += f"구매 가능: {', '.join(affordable)}\n"
+    else:
+        wallet_block += "구매 가능한 아이템 없음\n"
+    wallet_block += "선물은 정말 주고 싶을 때만. 아끼는 돈이다."
+
+    # 봇 자체 스탯
+    bot_emo = await self.librarian_db.get_bot_emotion()
+    fullness = bot_emo.get("fullness", 50)
+    hydration = bot_emo.get("hydration", 50)
+    wallet_block += f"\n포만감: {fullness:.0f} / 수분: {hydration:.0f}"
+    parts.append(wallet_block)
+
     dynamic_prompt = "\n\n".join(p for p in parts if p)
     logger.info(f"[Functioning] 프롬프트: {len(dynamic_prompt)}자 ({_time.monotonic()-_tp0:.2f}s)")
 
@@ -164,13 +185,13 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
         system_instruction=dynamic_prompt,
         tools=[types.Tool(function_declarations=functioning_tools[0].function_declarations)],
         max_output_tokens=500,
-        temperature=0.5,
+        temperature=TEMP_L2,
     )
 
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-    logger.info(f"[Functioning] API 호출 (temp=0.5)")
+    logger.info(f"[Functioning] API 호출 (temp={TEMP_L2})")
     response = await self._call_gemini(loop_contents, config)
     logger.info("[Functioning] API 응답 수신")
 
@@ -191,8 +212,37 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             logger.info(f"[Functioning] 도구: {fc.name}({fc.args})")
             _meta["tools_called"].append(fc.name)
 
-            # deliver / attach
+            # web_search: Gemini google_search_tool 사용
+            if fc.name == "web_search":
+                query = (dict(fc.args) if fc.args else {}).get("query", "")
+                cached = await self.librarian_db.get_web_by_query(query)
+                if cached:
+                    ws_text = f"웹 검색({query}): {cached['result']}"
+                else:
+                    ws_config = types.GenerateContentConfig(
+                        tools=_tools.google_search_tool,
+                        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                        temperature=1.0,
+                    )
+                    ws_contents = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+                    ws_result = ""
+                    try:
+                        ws_response = await self._call_gemini(ws_contents, ws_config)
+                        ws_result = self._extract_reply(ws_response)
+                    except Exception as e:
+                        logger.warning(f"[Functioning] 웹 검색 실패: {e}")
+                    if ws_result:
+                        await self.librarian_db.save_web_result(query, ws_result, user_name)
+                    ws_text = f"웹 검색({query}): {ws_result or '결과 없음'}"
+                result_parts.append(ws_text)
+                _meta["tool_results"].append(ws_text)
+                continue
+
+            # deliver / attach / gift_user
             tool_args = dict(fc.args) if fc.args else {}
+            tool_args["_user_id"] = user_id
+            tool_args["_user_name"] = user_name
+            tool_args["_channel_id"] = channel_id
             tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
             tool_data = json.loads(tool_result)
             _meta["tool_results"].append(tool_result)
@@ -212,6 +262,9 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 shared_url = tool_data.get("url", "")
                 if shared_url:
                     _meta.setdefault("shared_urls", []).append(shared_url)
+
+            if tool_data.get("_action") == "gift_user":
+                _meta.setdefault("gifts", []).append(tool_data)
 
             result_parts.append(tool_result)
 
@@ -258,8 +311,8 @@ async def build_catalog(self) -> str:
     return self._catalog_cache
 
 
-async def build_memories(self, user_name: str) -> tuple[str, list[int]]:
-    """기억(learned)을 프롬프트용 텍스트로 + 포함된 ID 반환"""
+async def build_memories(self, user_id: str, user_name: str) -> tuple[str, list[int]]:
+    """기억 + 선물 기록을 프롬프트용 텍스트로 + 포함된 memory ID 반환"""
     import aiosqlite
     from config import LIBRARIAN_DB_PATH
 
@@ -268,12 +321,10 @@ async def build_memories(self, user_name: str) -> tuple[str, list[int]]:
 
     async with aiosqlite.connect(LIBRARIAN_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-
         cursor = await db.execute(
             "SELECT id, author, content FROM learned WHERE author LIKE ? AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
             (f"{user_name}%",))
         user_rows = await cursor.fetchall()
-
         cursor = await db.execute(
             "SELECT id, author, content FROM learned WHERE (author IS NULL OR author NOT LIKE ?) AND (forgotten IS NULL OR forgotten = 0) ORDER BY id DESC LIMIT 10",
             (f"{user_name}%",))
@@ -288,6 +339,32 @@ async def build_memories(self, user_name: str) -> tuple[str, list[int]]:
     if other_rows:
         lines = [_fmt(r) for r in reversed(other_rows)]
         sections.append("[최근 기억]\n" + "\n".join(lines))
+
+    # 선물 기록 (4분류)
+    def _gift_fmt(g):
+        who = g.get("buyer_name") or ""
+        to = g.get("recipient_name") or ""
+        label = f"{who} → {to}" if to else who
+        line = f"- {label}: {g['item_emoji']} {g['item_name']} ({g['item_price']} sat)"
+        if g.get("message"):
+            line += f' "{g["message"]}"'
+        return line
+
+    bot_id = str(self.user.id) if self.user else ""
+    gift_data = await self.librarian_db.get_gifts_for_prompt(user_id, bot_id)
+
+    if gift_data["bot_self"]:
+        lines = [_gift_fmt(g) for g in reversed(gift_data["bot_self"])]
+        sections.append("[내 소비 기록]\n" + "\n".join(lines))
+    if gift_data["bot_to_user"]:
+        lines = [_gift_fmt(g) for g in reversed(gift_data["bot_to_user"])]
+        sections.append(f"[내가 {user_name}에게 준 선물]\n" + "\n".join(lines))
+    if gift_data["user_to_bot"]:
+        lines = [_gift_fmt(g) for g in reversed(gift_data["user_to_bot"])]
+        sections.append(f"[{user_name}이 나에게 준 선물]\n" + "\n".join(lines))
+    if gift_data["others"]:
+        lines = [_gift_fmt(g) for g in reversed(gift_data["others"])]
+        sections.append("[다른 사람과의 선물]\n" + "\n".join(lines))
 
     text = "\n\n".join(sections) if sections else "(기억 없음)"
     return text, memory_ids

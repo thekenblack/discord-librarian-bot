@@ -6,7 +6,7 @@ Gemini API 호출.
 
 import logging
 from google.genai import types
-from config import AI_MAX_OUTPUT_TOKENS
+from config import AI_MAX_OUTPUT_TOKENS, TEMP_L4
 
 logger = logging.getLogger("AILibrarian")
 
@@ -29,7 +29,7 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
         system_instruction=system_prompt,
         tools=None,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-        temperature=0.1,
+        temperature=TEMP_L4,
     )
 
     prompt_parts = [f"다음 대사를 검수해:\n\n{raw_reply}"]

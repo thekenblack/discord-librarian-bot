@@ -1,6 +1,6 @@
 import logging
 from google.genai import types
-from config import AI_MAX_OUTPUT_TOKENS
+from config import AI_MAX_OUTPUT_TOKENS, TEMP_L3
 
 logger = logging.getLogger("AILibrarian")
 
@@ -25,11 +25,11 @@ async def run_character(self, user_id: str, user_name: str,
         system_instruction=system_prompt,
         tools=None,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-        temperature=1.2,
+        temperature=TEMP_L3,
     )
 
     loop_contents = list(history)
-    logger.info(f"[Character] API 호출 (temp=1.2, 히스토리={len(loop_contents)}턴)")
+    logger.info(f"[Character] API 호출 (temp={TEMP_L3}, 히스토리={len(loop_contents)}턴)")
     response = await self._call_gemini(loop_contents, config)
     reply = self._extract_reply(response)
 

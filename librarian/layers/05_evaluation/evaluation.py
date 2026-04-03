@@ -1,6 +1,7 @@
 import json
 import logging
 from google.genai import types
+from config import TEMP_L5
 import importlib as _il
 _tools = _il.import_module("librarian.layers.02_functioning.tools")
 _eval_tools = _il.import_module("librarian.layers.05_evaluation.tools")
@@ -56,7 +57,7 @@ async def run_evaluation(self, user_id: str, user_name: str,
             system_instruction=system_prompt,
             tools=evaluation_tools,
             max_output_tokens=1000,
-            temperature=0.3,
+            temperature=TEMP_L5,
         )
 
         # 단일 히스토리 + 이번 턴 (큐 워커가 직렬 실행하므로 락 불필요)
@@ -78,14 +79,13 @@ async def run_evaluation(self, user_id: str, user_name: str,
                 if not part.function_call:
                     continue
                 fc = part.function_call
-                logger.info(f"[Evaluation] 도구: {fc.name}({fc.args})")
+                logger.info(f"[Evaluation] 도구: {fc.name}({dict(fc.args) if fc.args else {}})")
 
                 # feel
                 if fc.name == "feel":
                     feel_args = dict(fc.args) if fc.args else {}
                     feel_msg_id = feel_args.pop("message_id", "")
                     reason = feel_args.pop("reason", "")
-                    feel_args.pop("response", None)
                     feel_args.pop("reaction", None)
 
                     # 봇 전체 축

@@ -119,6 +119,9 @@ class LibrarianDB:
             for key in ("self_mood", "self_energy", "server_vibe"):
                 await db.execute(
                     "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 50)", (key,))
+            for key in ("fullness", "hydration"):
+                await db.execute(
+                    "INSERT OR IGNORE INTO bot_emotion (key, value) VALUES (?, 50)", (key,))
 
             # 감정 변동 기록
             await db.execute("""
@@ -163,6 +166,29 @@ class LibrarianDB:
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
+
+            # 선물 기록 (영구 보관, 프롬프트 맥락용)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS gift_log (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    buyer_id       TEXT NOT NULL,
+                    buyer_name     TEXT NOT NULL,
+                    recipient_id   TEXT,
+                    recipient_name TEXT,
+                    item_emoji     TEXT NOT NULL,
+                    item_name      TEXT NOT NULL,
+                    item_price     INTEGER NOT NULL,
+                    message        TEXT,
+                    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            # 마이그레이션: recipient 컬럼
+            for col in ("recipient_id TEXT", "recipient_name TEXT"):
+                try:
+                    await db.execute(f"ALTER TABLE gift_log ADD COLUMN {col}")
+                except Exception:
+                    pass
 
             # 유저별 대화 요약 (L5가 갱신, L1이 읽음)
             await db.execute("""
@@ -1006,6 +1032,7 @@ class LibrarianDB:
 
     USER_AXES = ["comfort", "affinity", "trust"]
     SELF_AXES = ["self_mood", "self_energy"]
+    NEEDS_AXES = ["fullness", "hydration"]  # 물리적 상태 (feel과 별개)
     SERVER_AXES = ["server_vibe"]
     ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
 
@@ -1417,6 +1444,61 @@ class LibrarianDB:
             await db.execute("DELETE FROM pending_gifts WHERE id = ?", (gift["id"],))
             await db.commit()
             return gift
+
+    async def save_gift_log(self, buyer_id: str, buyer_name: str,
+                            item_emoji: str, item_name: str, item_price: int,
+                            message: str = None,
+                            recipient_id: str = None, recipient_name: str = None):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO gift_log (buyer_id, buyer_name, recipient_id, recipient_name, "
+                "item_emoji, item_name, item_price, message) VALUES (?,?,?,?,?,?,?,?)",
+                (buyer_id, buyer_name, recipient_id, recipient_name,
+                 item_emoji, item_name, item_price, message))
+            await db.commit()
+
+    async def get_gift_log(self, limit: int = 5) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gift_log ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_gifts_for_prompt(self, user_id: str, bot_id: str, limit: int = 5) -> dict:
+        """프롬프트용 선물 기록 4분류."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            # 1. 봇 자체 소비 (recipient 없음 = 자기가 사먹은 것)
+            cursor = await db.execute(
+                "SELECT * FROM gift_log WHERE buyer_id = ? AND recipient_id IS NULL ORDER BY id DESC LIMIT ?",
+                (bot_id, limit))
+            bot_self = [dict(r) for r in await cursor.fetchall()]
+            # 2. 봇 → 상대유저
+            cursor = await db.execute(
+                "SELECT * FROM gift_log WHERE buyer_id = ? AND recipient_id = ? ORDER BY id DESC LIMIT ?",
+                (bot_id, user_id, limit))
+            bot_to_user = [dict(r) for r in await cursor.fetchall()]
+            # 3. 상대유저 → 봇
+            cursor = await db.execute(
+                "SELECT * FROM gift_log WHERE buyer_id = ? AND (recipient_id IS NULL OR recipient_id = ?) ORDER BY id DESC LIMIT ?",
+                (user_id, bot_id, limit))
+            user_to_bot = [dict(r) for r in await cursor.fetchall()]
+            # 4. 다른 유저 <-> 봇 (상대유저 제외, 자체 소비 제외)
+            cursor = await db.execute(
+                "SELECT * FROM gift_log WHERE "
+                "((buyer_id != ? AND buyer_id != ? AND (recipient_id IS NULL OR recipient_id = ?)) "
+                " OR (buyer_id = ? AND recipient_id IS NOT NULL AND recipient_id != ? AND recipient_id != ?)) "
+                "ORDER BY id DESC LIMIT ?",
+                (user_id, bot_id, bot_id,
+                 bot_id, user_id, bot_id,
+                 limit))
+            others = [dict(r) for r in await cursor.fetchall()]
+        return {
+            "bot_self": bot_self,
+            "bot_to_user": bot_to_user,
+            "user_to_bot": user_to_bot,
+            "others": others,
+        }
 
     async def get_emotion_log(self, target: str = None, limit: int = 5) -> list[dict]:
         """감정 변동 기록 조회."""
