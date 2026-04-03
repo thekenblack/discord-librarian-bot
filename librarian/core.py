@@ -334,7 +334,7 @@ class AILibrarianBot(discord.Client):
         reply_chain, seen_filenames, chain_attachments, chain_anchor = await self._build_reply_chain(message)
         logger.info(f"[타이밍] reply_chain: {_time.monotonic()-_t2:.2f}s ({len(reply_chain)}건)")
         _t3 = _time.monotonic()
-        pre_context = await self._build_pre_context(message, anchor=chain_anchor)
+        pre_context = await self._build_pre_context(message)
         logger.info(f"[타이밍] pre_context: {_time.monotonic()-_t3:.2f}s ({len(pre_context)}건)")
         logger.info(f"[타이밍] 전처리 총: {_time.monotonic()-_t0:.2f}s")
 
