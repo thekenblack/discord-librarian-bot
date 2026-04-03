@@ -330,7 +330,7 @@ class AdminCog(commands.Cog):
 
 class AdminSetBalanceModal(discord.ui.Modal, title="잔고 설정"):
     amount_input = discord.ui.TextInput(
-        label="금액 (양수: 충전, 음수: 차감)", placeholder="예: 1000 또는 -500", max_length=12)
+        label="설정할 잔고 (satoshi)", placeholder="예: 1000", max_length=12)
 
     def __init__(self, bot, target: discord.Member):
         super().__init__(timeout=120)
@@ -343,26 +343,16 @@ class AdminSetBalanceModal(discord.ui.Modal, title="잔고 설정"):
         except ValueError:
             return await interaction.response.send_message(
                 embed=error_embed("금액 오류", "숫자만 입력해주세요."), ephemeral=True)
-        if amount == 0:
+        if amount < 0:
             return await interaction.response.send_message(
-                embed=error_embed("금액 오류", "0이 아닌 값을 입력해주세요."), ephemeral=True)
-        if amount > 0:
-            new_balance = await self.bot.db.charge_balance(
-                str(self.target.id), self.target.display_name, amount)
-            action = f"+{sat_fmt(amount)} 충전"
-        else:
-            new_balance = await self.bot.db.spend_balance(
-                str(self.target.id), -amount, note="어드민 차감")
-            if new_balance is None:
-                return await interaction.response.send_message(
-                    embed=error_embed("잔고 부족", "차감할 잔고가 부족합니다."), ephemeral=True)
-            action = f"-{sat_fmt(-amount)} 차감"
+                embed=error_embed("금액 오류", "0 이상만 입력할 수 있습니다."), ephemeral=True)
+        await self.bot.db.set_balance(str(self.target.id), self.target.display_name, amount)
         await interaction.response.send_message(
             embed=success_embed(
-                "잔고 변경",
-                f"{self.target.display_name}: {action}\n현재 잔고: {sat_fmt(new_balance)}"),
+                "잔고 설정",
+                f"{self.target.display_name} 잔고: {sat_fmt(amount)}"),
             ephemeral=True)
-        logger.info(f"어드민 잔고: {self.target.display_name} {action} by {interaction.user.display_name}")
+        logger.info(f"어드민 잔고 설정: {self.target.display_name} = {amount} sat by {interaction.user.display_name}")
 
 
 class PageModal(discord.ui.Modal, title="페이지 추가"):
