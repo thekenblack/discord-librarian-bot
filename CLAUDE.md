@@ -43,7 +43,7 @@ L1 Perception (temp 0.3, 채널별 히스토리 10건)
   도구 없음.
       |
 L2 Functioning (temp 0.5, 히스토리 없음)
-  도구 실행. L1 결과 참조. 도구 루프 내 loop_contents trim 방어.
+  도구 실행. L1 결과 참조. 도구 1회 제한 + 루프 10회 제한.
   도구: search, deliver, attach, web_search, recognize_media, recognize_link, memorize_alias, forget_alias
       |
 L3 Character (temp 1.2, 유저별 히스토리 10건)
@@ -133,7 +133,7 @@ L5 Evaluation:
 
 레이어별 히스토리 스코프:
 - L1 Perception: 채널별 히스토리 (channel_id -> history). MAX=10
-- L2 Functioning: 히스토리 없음. 단발 호출 내 도구 루프에서 오래된 fc/fr 쌍 자동 제거
+- L2 Functioning: 히스토리 없음. 단발 호출. 도구 1회 제한 + 루프 10회 제한
 - L3 Character: 유저별 히스토리 (user_id -> history). MAX=10. trim 시 function_call/response 쌍 보장
 - L4 Postprocess: 히스토리 없음
 - L5 Evaluation: 단일 히스토리 (전 채널/유저 공유). MAX=10

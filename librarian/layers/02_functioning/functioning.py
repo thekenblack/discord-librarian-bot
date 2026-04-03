@@ -176,16 +176,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     config = _make_config(0.5)
 
     # Processor는 히스토리 없이 단발 호출
-    MAX_LOOP_CONTENTS = 10  # 첫 user 메시지 제외, fc/fr 쌍 최대 5회분
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
-
-    def _trim_loop():
-        """loop_contents가 너무 커지면 오래된 function_call/response 쌍 제거. 첫 메시지는 유지."""
-        while len(loop_contents) > 1 + MAX_LOOP_CONTENTS:
-            # index 1, 2 (가장 오래된 fc/fr 쌍) 제거
-            loop_contents.pop(1)
-            if len(loop_contents) > 1:
-                loop_contents.pop(1)
 
     logger.info(f"[Functioning] API 호출 (temp=0.5)")
     response = await self._call_gemini(loop_contents, config)
@@ -226,7 +217,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                     role="user",
                     parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
                 ))
-                _trim_loop()
                 try:
                     response = await self._call_gemini(loop_contents, config)
                 except Exception as e:
@@ -264,7 +254,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 role="user",
                 parts=[types.Part.from_function_response(name="web_search", response=tool_data)],
             ))
-            _trim_loop()
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
@@ -351,7 +340,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 role="user",
                 parts=[types.Part.from_function_response(name="recognize_media", response=tool_data)],
             ))
-            _trim_loop()
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
@@ -417,7 +405,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 role="user",
                 parts=[types.Part.from_function_response(name="recognize_link", response=tool_data)],
             ))
-            _trim_loop()
             try:
                 response = await self._call_gemini(loop_contents, config)
             except Exception as e:
@@ -467,7 +454,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             role="user",
             parts=[types.Part.from_function_response(name=fc.name, response=tool_data)],
         ))
-        _trim_loop()
 
         try:
             response = await self._call_gemini(loop_contents, config)
