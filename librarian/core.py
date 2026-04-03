@@ -536,7 +536,12 @@ class AILibrarianBot(discord.Client):
 
             # ── Layer 4: Postprocess (자연어 정제) ──
             _t0 = _time.monotonic()
-            reply = await self._run_postprocess(raw_reply, user_name)
+            # 멘션 매핑 구성: reply_chain + pre_context에서 이름(<@id>) 패턴 추출
+            mention_map = {}
+            for line in (reply_chain or []) + (pre_context or []):
+                for m in _re.finditer(r'(\S+?)\(<@(\d+)>\)', line):
+                    mention_map[m.group(1)] = m.group(2)
+            reply = await self._run_postprocess(raw_reply, user_name, mention_map=mention_map)
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
             else:

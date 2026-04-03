@@ -1,6 +1,6 @@
 """
 Layer 04: Postprocess (후처리)
-Character의 대사에서 시스템 아티팩트를 제거하고 순수 자연어만 남긴다.
+Character의 대사에서 시스템 아티팩트를 교체하고 멘션을 교정한다.
 Gemini API 호출.
 """
 
@@ -11,8 +11,9 @@ from config import AI_MAX_OUTPUT_TOKENS
 logger = logging.getLogger("AILibrarian")
 
 
-async def run_postprocess(self, raw_reply: str, user_name: str) -> str:
-    """대사 정제. 시스템 용어 제거 + 자연어만 반환."""
+async def run_postprocess(self, raw_reply: str, user_name: str,
+                          mention_map: dict[str, str] | None = None) -> str:
+    """대사 정제. 시스템 용어 교체 + 멘션 교정 + 대사 보완."""
     if not raw_reply or not raw_reply.strip():
         return ""
 
@@ -28,7 +29,12 @@ async def run_postprocess(self, raw_reply: str, user_name: str) -> str:
         temperature=0.1,
     )
 
-    prompt = f"다음 대사를 검수해:\n\n{raw_reply}"
+    prompt_parts = [f"다음 대사를 검수해:\n\n{raw_reply}"]
+    if mention_map:
+        lines = [f"- @{name} → <@{uid}>" for name, uid in mention_map.items()]
+        prompt_parts.append("\n멘션 매핑:\n" + "\n".join(lines))
+
+    prompt = "\n".join(prompt_parts)
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
 
     logger.info("[Postprocess] API 호출")
