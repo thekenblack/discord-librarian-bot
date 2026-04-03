@@ -813,102 +813,52 @@ class AILibrarianBot(discord.Client):
         self.evaluator_history[:] = self.evaluator_history[-MAX_EVALUATOR_HISTORY:]
 
     async def _check_gift_message(self, message: discord.Message):
-        """라이브러리 봇의 선물 메시지를 감지해서 자체 발화 + 스탯 상승."""
-        import re as _re
-        if not message.embeds:
+        """라이브러리 봇의 선물 메시지를 감지해서 5레이어 파이프라인으로 처리."""
+        channel_id = str(message.channel.id)
+        gift = await self.librarian_db.pop_pending_gift(channel_id)
+        if not gift:
             return
-        for embed in message.embeds:
-            footer = embed.footer.text if embed.footer else ""
-            if not footer.startswith("[GIFT]"):
-                continue
 
-            # footer: "[GIFT] item_id key:val,key:val user_id"
-            try:
-                parts = footer.split(" ", 3)
-                item_id = parts[1]
-                effects_str = parts[2]
-                buyer_id = parts[3]
-
-                # 스탯 상승
-                changes = {}
-                for pair in effects_str.split(","):
-                    k, v = pair.split(":")
-                    changes[k.strip()] = int(v.strip())
-
-                if changes:
-                    await self.librarian_db.update_emotion(
-                        changes, target_user_id=buyer_id,
-                        target_user_name="", reason=f"선물: {item_id}")
-                    logger.info(f"[선물] {buyer_id}가 {item_id} 선물 → 스탯 상승: {changes}")
-
-                # 자체 발화: AI가 감사 인사 생성
-                buyer_mention = f"<@{buyer_id}>"
-                # 아이템 이름을 embed description에서 추출
-                item_name = item_id
-                if embed.description:
-                    m = _re.search(r'\*\*(.+?)\*\*을\(를\)', embed.description)
-                    if m:
-                        item_name = m.group(1)
-
-                raw_reply = await self._generate_gift_thanks(buyer_id, buyer_mention, item_name)
-                if raw_reply:
-                    # 멘션 매핑 구성
-                    mention_map = {}
-                    if message.guild:
-                        try:
-                            member = message.guild.get_member(int(buyer_id))
-                            if member:
-                                mention_map[member.display_name] = buyer_id
-                        except Exception:
-                            pass
-                    channel_map = {}
-                    if message.guild:
-                        for ch in message.guild.text_channels:
-                            channel_map[ch.name] = str(ch.id)
-                    reply = await self._run_postprocess(
-                        raw_reply, "", mention_map=mention_map, channel_map=channel_map)
-                    await message.channel.send(reply)
-                    logger.info(f"[선물] 자체 발화: {reply[:100]}")
-
-            except Exception as e:
-                logger.warning(f"[선물] 처리 실패: {e}")
-
-    async def _generate_gift_thanks(self, buyer_id: str, buyer_mention: str,
-                                     item_name: str) -> str:
-        """선물에 대한 감사 인사를 AI로 생성."""
         try:
-            sys_parts = []
-            if self.persona.character_text:
-                sys_parts.append(self.persona.character_text)
+            buyer_id = gift["buyer_id"]
+            item_name = gift["item_name"]
+            item_emoji = gift["item_emoji"]
+            buyer_mention = f"<@{buyer_id}>"
 
-            # 감정 상태를 간단히 포함
-            bot_emo = await self.librarian_db.get_bot_emotion()
-            emo_str = " ".join(f"{k}:{v:.0f}" for k, v in bot_emo.items())
-            sys_parts.append(f"현재 상태: {emo_str}")
+            # 선물 맥락을 유저 메시지처럼 만들어서 5레이어 파이프라인에 태움
+            gift_text = f"{buyer_mention} 님이 나에게 {item_emoji} {item_name}을(를) 선물해줬다"
 
-            system_prompt = "\n\n".join(p for p in sys_parts if p)
+            # 멘션 매핑
+            mention_map = {}
+            if message.guild:
+                try:
+                    member = message.guild.get_member(int(buyer_id))
+                    if member:
+                        mention_map[member.display_name] = buyer_id
+                        buyer_name = member.display_name
+                    else:
+                        buyer_name = buyer_id
+                except Exception:
+                    buyer_name = buyer_id
+            else:
+                buyer_name = buyer_id
 
-            config = types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                tools=None,
-                max_output_tokens=200,
-                temperature=1.2,
+            # 5레이어 파이프라인 호출
+            reply, file_to_send, _meta = await self._ask_gemini(
+                user_id=buyer_id,
+                user_name=buyer_name,
+                user_text=gift_text,
+                guild=message.guild,
+                channel_id=channel_id,
             )
 
-            prompt = (
-                f"{buyer_mention} 이 사람이 나에게 {item_name}을(를) 선물해줬다. "
-                f"감사 인사를 해. 짧고 자연스럽게. {buyer_mention}을 포함해서. "
-                f"1-2문장으로."
-            )
-            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
-
-            response = await self._call_gemini(contents, config)
-            reply = self._extract_reply(response)
-            return reply.strip() if reply else ""
+            if reply:
+                await message.channel.send(reply)
+                logger.info(f"[선물] 자체 발화: {reply[:100]}")
 
         except Exception as e:
-            logger.warning(f"[선물] 감사 인사 생성 실패: {e}")
-            return ""
+            logger.warning(f"[선물] 처리 실패: {e}")
+
 
 
 # ── v5: 레이어별 메서드 바인딩 ──

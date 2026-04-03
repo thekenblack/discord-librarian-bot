@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 from library.utils import BotView, info_embed, success_embed
 from config import AI_NAME
+from librarian.db import LibrarianDB
 
 # 아이템 목록 (나중에 config.json이나 DB로 이동 가능)
 SHOP_ITEMS = [
@@ -16,10 +17,6 @@ SHOP_ITEMS = [
     {"id": "flower", "name": "꽃다발", "emoji": "💐", "description": "향기로운 꽃다발", "effects": {"self_mood": 12, "affinity": 8, "comfort": 5}},
     {"id": "pizza", "name": "피자", "emoji": "🍕", "description": "든든한 피자 한 판", "effects": {"self_energy": 12, "self_mood": 3, "comfort": 5, "affinity": 3}},
 ]
-
-# 선물 메시지 마커 (사서봇이 감지할 수 있도록)
-GIFT_MARKER = "[GIFT]"
-
 
 class BuyView(BotView):
     """아이템 선택 드롭다운"""
@@ -63,14 +60,24 @@ class BuyView(BotView):
             view=self,
         )
 
+        # DB에 선물 정보 저장 (사서봇이 폴링)
+        effects_str = ",".join(f"{k}:{v}" for k, v in item["effects"].items())
+        ldb = LibrarianDB()
+        await ldb.init()
+        await ldb.save_pending_gift(
+            channel_id=str(interaction.channel_id),
+            buyer_id=str(interaction.user.id),
+            item_id=item_id,
+            item_name=item["name"],
+            item_emoji=item["emoji"],
+            effects=effects_str,
+        )
+
         # 공개 메시지 전송 (화자: Citadel Library)
-        effects_json = ",".join(f"{k}:{v}" for k, v in item["effects"].items())
-        # 마커는 임베드 footer에 숨김 (사서봇이 감지용)
         embed = discord.Embed(
             description=f"{item['emoji']} **{interaction.user.display_name}** 님이 {AI_NAME}에게 **{item['name']}**을(를) 사줬습니다!",
             color=0xF1C40F,
         )
-        embed.set_footer(text=f"{GIFT_MARKER} {item_id} {effects_json} {interaction.user.id}")
 
         await interaction.channel.send(embed=embed)
 

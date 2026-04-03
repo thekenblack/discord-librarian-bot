@@ -150,6 +150,20 @@ class LibrarianDB:
                 )
             """)
 
+            # 선물 대기열 (라이브러리 봇 → 사서봇 전달용)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pending_gifts (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id TEXT NOT NULL,
+                    buyer_id   TEXT NOT NULL,
+                    item_id    TEXT NOT NULL,
+                    item_name  TEXT NOT NULL,
+                    item_emoji TEXT NOT NULL,
+                    effects    TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # 유저별 대화 요약 (L5가 갱신, L1이 읽음)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_summary (
@@ -1262,6 +1276,35 @@ class LibrarianDB:
                 "SELECT summary FROM channel_summary WHERE channel_id = ?", (channel_id,))
             row = await cursor.fetchone()
             return row[0] if row else None
+
+    # ── 선물 대기열 ─────────────────────────────────────
+
+    async def save_pending_gift(self, channel_id: str, buyer_id: str,
+                                 item_id: str, item_name: str, item_emoji: str,
+                                 effects: str) -> int:
+        """선물 대기열에 추가. 반환: gift ID"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute("""
+                INSERT INTO pending_gifts (channel_id, buyer_id, item_id, item_name, item_emoji, effects)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (channel_id, buyer_id, item_id, item_name, item_emoji, effects))
+            await db.commit()
+            return cursor.lastrowid
+
+    async def pop_pending_gift(self, channel_id: str) -> dict | None:
+        """채널의 가장 오래된 대기 선물을 꺼내고 삭제."""
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM pending_gifts WHERE channel_id = ? ORDER BY id LIMIT 1",
+                (channel_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            gift = dict(row)
+            await db.execute("DELETE FROM pending_gifts WHERE id = ?", (gift["id"],))
+            await db.commit()
+            return gift
 
     async def get_emotion_log(self, target: str = None, limit: int = 5) -> list[dict]:
         """감정 변동 기록 조회."""
