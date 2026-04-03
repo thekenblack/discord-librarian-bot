@@ -489,7 +489,7 @@ class AILibrarianBot(discord.Client):
                         item_emoji=gift["item_emoji"],
                         item_name=gift["item_name"],
                         item_price=item_price,
-                        message=gift.get("reason"),
+                        message=gift.get("message"),
                         recipient_id=str(message.author.id),
                         recipient_name=message.author.display_name)
                     embed = discord.Embed(
