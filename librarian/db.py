@@ -1060,10 +1060,10 @@ class LibrarianDB:
             except Exception:
                 pass
 
-        # 2. 분산 유지: 풀 분산이 목표보다 낮으면 증폭, 높으면 약간 감쇠
-        if server_std is not None and server_std > 0:
+        # 2. 분산 유지: 풀 분산이 목표보다 낮을 때만 증폭
+        if server_std is not None and server_std > 0 and server_std < self.TARGET_STD:
             variance_mult = self.TARGET_STD / server_std
-            variance_mult = max(0.7, min(2.0, variance_mult))
+            variance_mult = min(2.0, variance_mult)
             delta *= variance_mult
 
         # 3. 서버 평균 정규화: 평균을 50으로 되돌리는 방향 약간 증폭
