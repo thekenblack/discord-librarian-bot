@@ -701,7 +701,7 @@ class AILibrarianBot(discord.Client):
         return text[:150]
 
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, object]:
-        """답글 체인을 끝까지 거슬러 올라감. 10건 초과 시 앞5+뒤5. anchor도 반환."""
+        """답글 체인을 끝까지 거슬러 올라감. 5건 초과 시 앞2+뒤3. anchor도 반환."""
         chain = []
         seen_filenames = []
         chain_attachments = []
@@ -742,14 +742,14 @@ class AILibrarianBot(discord.Client):
         anchor = raw_msgs[-1] if raw_msgs else message
         chain.reverse()
 
-        if len(chain) > 10:
-            head = chain[:5]
-            tail = chain[-5:]
-            chain = head + [f"... ({len(chain) - 10}건 생략) ..."] + tail
+        if len(chain) > 5:
+            head = chain[:2]
+            tail = chain[-3:]
+            chain = head + [f"... ({len(chain) - 5}건 생략) ..."] + tail
 
         return chain, seen_filenames, chain_attachments, anchor
 
-    async def _build_pre_context(self, message, limit=10, anchor=None) -> list[str]:
+    async def _build_pre_context(self, message, limit=5, anchor=None) -> list[str]:
         """답글 체인 시작점 직전 또는 멘션 직전 메시지들. anchor는 _build_reply_chain에서 받음."""
         if anchor is None:
             anchor = message
