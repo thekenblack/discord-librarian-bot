@@ -541,7 +541,14 @@ class AILibrarianBot(discord.Client):
             for line in (reply_chain or []) + (pre_context or []):
                 for m in _re.finditer(r'(\S+?)\(<@(\d+)>\)', line):
                     mention_map[m.group(1)] = m.group(2)
-            reply = await self._run_postprocess(raw_reply, user_name, mention_map=mention_map)
+            # 채널 매핑 구성: guild의 텍스트 채널 이름 → ID
+            channel_map = {}
+            if guild:
+                for ch in guild.text_channels:
+                    channel_map[ch.name] = str(ch.id)
+            reply = await self._run_postprocess(
+                raw_reply, user_name,
+                mention_map=mention_map, channel_map=channel_map)
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
             else:
