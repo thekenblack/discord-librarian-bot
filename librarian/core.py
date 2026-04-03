@@ -366,7 +366,7 @@ class AILibrarianBot(discord.Client):
                 await message.channel.typing()
             except Exception:
                 pass
-            reply_text, file_to_send, _meta = await self._ask_gemini(
+            reply_text, files_to_send, _meta = await self._ask_gemini(
                     user_id=uid,
                     user_name=message.author.display_name,
                     user_text=text,
@@ -379,7 +379,7 @@ class AILibrarianBot(discord.Client):
                     channel_id=str(message.channel.id),
                 )
 
-        if not reply_text and not file_to_send:
+        if not reply_text and not files_to_send:
             # 이모지 리액션
             if _meta.get("reaction"):
                 for em in _extract_emojis(_meta["reaction"]):
@@ -407,17 +407,19 @@ class AILibrarianBot(discord.Client):
             )
 
         # 빈 에러 메시지면 무응답
-        if not reply_text and not file_to_send:
+        if not reply_text and not files_to_send:
             logger.info(f"[{guild_name}/#{channel_name}] 무응답 처리 (에러)")
             return
 
         logger.info(f"[{guild_name}/#{channel_name}] {message.author.display_name}(ID:{message.author.id}): {text}")
         logger.info(f"[{guild_name}/#{channel_name}] {self.persona.name}: {reply_text}")
 
-        async def _send_reply(text, file=None, embed=None):
+        async def _send_reply(text, file=None, files=None, embed=None):
             """reply 실패 시 무시 (원본 삭제됨)"""
             try:
-                if file:
+                if files:
+                    await message.reply(text or "", files=files)
+                elif file:
                     await message.reply(text, file=file)
                 elif embed:
                     if text:
@@ -435,8 +437,8 @@ class AILibrarianBot(discord.Client):
                 if _surl not in (reply_text or ""):
                     reply_text = f"{reply_text}\n{_surl}".strip() if reply_text else _surl
 
-        if file_to_send:
-            await _send_reply(reply_text, file=file_to_send)
+        if files_to_send:
+            await _send_reply(reply_text, files=files_to_send)
         elif reply_text:
             import re as _re
             # 커스텀 이모지: 현재 서버에 없으면 제거
@@ -501,7 +503,7 @@ class AILibrarianBot(discord.Client):
                           recent_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
-                          channel_id: str = None) -> tuple[str, discord.File | None, dict]:
+                          channel_id: str = None) -> tuple[str, list, dict]:
         """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
@@ -540,7 +542,7 @@ class AILibrarianBot(discord.Client):
             catalog = await self._build_catalog()
             memories_text, memory_ids = await self._build_memories(user_name)
 
-            instruction, file_to_send, processor_meta = await self._run_functioning(
+            instruction, files_to_send, processor_meta = await self._run_functioning(
                 user_id=user_id, user_name=user_name, user_text=user_text,
                 catalog=catalog, memories_text=memories_text,
                 memory_ids=memory_ids,
@@ -559,7 +561,7 @@ class AILibrarianBot(discord.Client):
             if _re.search(r'(?:응답\s*모드\s*[:：]\s*)?무응답', instruction or ""):
                 logger.info("[L2] 응답 모드: 무응답")
                 _meta["intentional_silence"] = True
-                return "", file_to_send, _meta
+                return "", files_to_send, _meta
 
             reaction_only_match = _re.search(
                 r'(?:응답\s*모드\s*[:：]\s*)?리액션만\s*[:：]?\s*(.+)', instruction or "")
@@ -569,7 +571,7 @@ class AILibrarianBot(discord.Client):
                 if emojis:
                     _meta["reaction"] = emoji_str
                     logger.info(f"[L2] 응답 모드: 리액션만 → {emoji_str}")
-                    return "", file_to_send, _meta
+                    return "", files_to_send, _meta
 
             # 일반 응답에 리액션이 포함된 경우 파싱 ("리액션: 😊")
             if instruction:
@@ -604,7 +606,7 @@ class AILibrarianBot(discord.Client):
                 if history and history[-1].role == "user":
                     history.pop()
                 _meta["intentional_silence"] = True
-                return "", file_to_send, _meta
+                return "", files_to_send, _meta
 
             # ── Layer 4: Postprocess (자연어 정제) ──
             _t0 = _time.monotonic()
@@ -642,7 +644,7 @@ class AILibrarianBot(discord.Client):
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
 
-            return reply, file_to_send, _meta
+            return reply, files_to_send, _meta
 
         except ClientError as e:
             logger.error(f"Gemini ClientError: status={e.status} code={getattr(e, 'code', '?')} message={e}")
@@ -652,11 +654,11 @@ class AILibrarianBot(discord.Client):
                 if "PerDay" in msg or "per_day" in msg:
                     logger.warning("일일 한도 초과 (모든 키 소진)")
                     _meta["error"] = "daily_limit"
-                    return self.persona.error_message, None, _meta
+                    return self.persona.error_message, [], _meta
                 else:
                     logger.warning("분당 한도 초과")
                     _meta["error"] = "rate_limit"
-                    return self.persona.error_message, None, _meta
+                    return self.persona.error_message, [], _meta
             if e.status == "INVALID_ARGUMENT":
                 logger.warning("INVALID_ARGUMENT → 히스토리 초기화 후 클린 재시도")
                 try:
@@ -670,17 +672,17 @@ class AILibrarianBot(discord.Client):
                     reply = self._extract_reply(response)
                     if reply:
                         logger.info(f"[클린 재시도] 응답: {reply}")
-                        return reply, None, _meta
+                        return reply, [], _meta
                 except Exception as retry_e:
                     logger.warning(f"[클린 재시도] 실패: {retry_e}")
             _meta["error"] = f"client_error:{e.status}"
-            return self.persona.error_message, None, _meta
+            return self.persona.error_message, [], _meta
 
         except Exception as e:
             self.chat_histories[user_id] = []
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             _meta["error"] = f"{type(e).__name__}"
-            return self.persona.error_message, None, _meta
+            return self.persona.error_message, [], _meta
 
     async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
         """API 호출 (비동기). 실패 시 재시도."""
@@ -968,7 +970,7 @@ class AILibrarianBot(discord.Client):
                 buyer_name = buyer_id
 
             # 5레이어 파이프라인 호출
-            reply, file_to_send, _meta = await self._ask_gemini(
+            reply, files_to_send, _meta = await self._ask_gemini(
                 user_id=buyer_id,
                 user_name=buyer_name,
                 user_text=gift_text,

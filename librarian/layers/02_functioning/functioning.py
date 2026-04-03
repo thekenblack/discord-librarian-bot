@@ -123,7 +123,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                           seen_filenames: list[str] = None,
                           perception: str = "",
                           ) -> tuple[str, discord.File | None, dict]:
-    """Functioning: 도구 실행 + 결과 보고. (tool_results_text, file_to_send, meta) 반환."""
+    """Functioning: 도구 실행 + 결과 보고. (tool_results_text, files_to_send, meta) 반환."""
     import time as _time
     _meta = {"tools_called": [], "tool_results": []}
 
@@ -158,22 +158,14 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
         user_content = f"({user_name}이 빈 멘션을 보냈다.)"
 
     self._current_attachments = attachments or []
-    _tool_used = set()  # 도구 1회 제한
-    file_to_send = None
+    files_to_send = []
 
-    def _make_config(temp=0.5):
-        """사용한 도구를 제외한 config 생성."""
-        all_decls = functioning_tools[0].function_declarations
-        filtered = [d for d in all_decls if d.name not in _tool_used]
-        tools = [types.Tool(function_declarations=filtered)] if filtered else None
-        return types.GenerateContentConfig(
-            system_instruction=dynamic_prompt,
-            tools=tools,
-            max_output_tokens=500,  # 도구 결과 요약만 (thin)
-            temperature=temp,
-        )
-
-    config = _make_config(0.5)
+    config = types.GenerateContentConfig(
+        system_instruction=dynamic_prompt,
+        tools=[types.Tool(function_declarations=functioning_tools[0].function_declarations)],
+        max_output_tokens=500,
+        temperature=0.5,
+    )
 
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
@@ -355,13 +347,13 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             if tool_data.get("_action") == "deliver":
                 save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
                 if os.path.exists(save_path):
-                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
+                    files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
                     await self.library_db.increment_download(tool_data["file_id"])
 
             if tool_data.get("_action") == "attach":
                 save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
                 if os.path.exists(save_path):
-                    file_to_send = discord.File(save_path, filename=tool_data["filename"])
+                    files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
 
             if tool_data.get("_action") == "share_url":
                 shared_url = tool_data.get("url", "")
@@ -378,7 +370,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     else:
         tool_results_text = ""
 
-    return tool_results_text, file_to_send, _meta
+    return tool_results_text, files_to_send, _meta
 
 
 async def build_catalog(self) -> str:
