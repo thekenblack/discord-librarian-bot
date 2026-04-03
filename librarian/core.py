@@ -69,6 +69,7 @@ class AILibrarianBot(discord.Client):
         self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[str, list] = {}  # user_id → history (L3)
         self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
+        self._perception_locks: dict[str, asyncio.Lock] = {}  # channel_id → lock (L1)
         self.evaluator_history: list = []  # 단일 히스토리 (L5)
         self._evaluator_lock = asyncio.Lock()  # L5 단일 히스토리 보호
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
@@ -478,6 +479,8 @@ class AILibrarianBot(discord.Client):
         # L1 채널별 히스토리
         if channel_id and channel_id not in self.perception_histories:
             self.perception_histories[channel_id] = []
+        if channel_id and channel_id not in self._perception_locks:
+            self._perception_locks[channel_id] = asyncio.Lock()
 
         try:
             # ── Layer 1: Perception (맥락 파악) ──
@@ -485,17 +488,23 @@ class AILibrarianBot(discord.Client):
             raw_context = await self._gather_context(
                 user_id, user_name, guild, reply_chain, pre_context,
                 channel_id=channel_id)
-            p_history = self.perception_histories.get(channel_id, []) if channel_id else []
+            # 히스토리 복사 (락으로 보호)
+            if channel_id:
+                async with self._perception_locks[channel_id]:
+                    p_history = list(self.perception_histories.get(channel_id, []))
+            else:
+                p_history = []
             perception = await self._run_perception(
                 user_id, user_name, user_text, raw_context,
                 history=p_history)
-            # L1 히스토리에 이번 턴 추가
+            # L1 히스토리에 이번 턴 추가 (락으로 보호)
             if channel_id is not None:
-                p_history.append(types.Content(role="user", parts=[
-                    types.Part.from_text(text=f"{user_name}: {user_text}" if user_text else f"({user_name}이 빈 멘션을 보냈다.)")]))
-                p_history.append(types.Content(role="model", parts=[
-                    types.Part.from_text(text=perception)]))
-                self._trim_perception_history(channel_id)
+                async with self._perception_locks[channel_id]:
+                    self.perception_histories[channel_id].append(types.Content(role="user", parts=[
+                        types.Part.from_text(text=f"{user_name}: {user_text}" if user_text else f"({user_name}이 빈 멘션을 보냈다.)")]))
+                    self.perception_histories[channel_id].append(types.Content(role="model", parts=[
+                        types.Part.from_text(text=perception)]))
+                    self._trim_perception_history(channel_id)
             logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # ── Layer 2: Functioning (도구 실행) ──
