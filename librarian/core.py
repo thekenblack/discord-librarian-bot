@@ -201,6 +201,7 @@ class AILibrarianBot(discord.Client):
 
         # 자발적 채널 대기 버퍼 (비멘션 메시지 debounce)
         self._spontaneous_pending: dict[str, asyncio.Task] = {}
+        self._spontaneous_gen: dict[str, int] = {}
 
     async def _evaluation_worker(self):
         """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
@@ -1216,17 +1217,26 @@ class AILibrarianBot(discord.Client):
         """자발적 채널에서 비멘션 메시지 처리. debounce 후 응답 여부 결정."""
         channel_id = str(message.channel.id)
 
-        # 기존 대기 취소
-        if channel_id in self._spontaneous_pending:
-            self._spontaneous_pending[channel_id].cancel()
+        # generation 카운터로 최신 메시지만 처리
+        gen = self._spontaneous_gen.get(channel_id, 0) + 1
+        self._spontaneous_gen[channel_id] = gen
+
+        # 기존 대기 취소 (best effort)
+        old_task = self._spontaneous_pending.get(channel_id)
+        if old_task and not old_task.done():
+            old_task.cancel()
 
         self._spontaneous_pending[channel_id] = asyncio.create_task(
-            self._debounced_spontaneous_reply(message))
+            self._debounced_spontaneous_reply(message, gen))
 
-    async def _debounced_spontaneous_reply(self, message: discord.Message):
-        """debounce 대기 후 비멘션 응답."""
-        await asyncio.sleep(5)  # 5초 대기 (debounce)
+    async def _debounced_spontaneous_reply(self, message: discord.Message, gen: int):
+        """debounce 대기 후 비멘션 응답. gen이 최신이 아니면 중단."""
         channel_id = str(message.channel.id)
+        await asyncio.sleep(5)  # 5초 대기 (debounce)
+
+        # sleep 후 자기가 최신인지 확인
+        if self._spontaneous_gen.get(channel_id) != gen:
+            return
         self._spontaneous_pending.pop(channel_id, None)
 
         try:
