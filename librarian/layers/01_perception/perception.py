@@ -310,10 +310,7 @@ async def run_perception(self, user_id: str, user_name: str,
                             data = await att.read()
                             import hashlib
                             file_hash = hashlib.sha256(data).hexdigest()
-                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
-                                  or await self.librarian_db.get_media_by_filename(att.filename)
-                        else:
-                            cached = await self.librarian_db.get_media_by_filename(att.filename)
+                            cached = await self.librarian_db.get_media_by_hash(file_hash)
 
                         if cached:
                             media_result = cached["result"]
@@ -464,8 +461,7 @@ async def run_perception(self, user_id: str, user_name: str,
                             data = await att.read()
                             import hashlib
                             file_hash = hashlib.sha256(data).hexdigest()
-                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
-                                  or await self.librarian_db.get_media_by_filename(att.filename)
+                            cached = await self.librarian_db.get_media_by_hash(file_hash)
                             if cached and cached.get("result"):
                                 file_result = cached["result"]
                                 media_id = cached.get("id")
