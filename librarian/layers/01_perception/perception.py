@@ -460,20 +460,23 @@ async def run_perception(self, user_id: str, user_name: str,
                         if ext not in _allowed_exts:
                             file_result = f"이 파일 형식({ext})은 지원하지 않는다. (txt, epub, md만 가능)"
                         else:
-                            cached = await self.librarian_db.get_media_by_filename(att.filename)
-                            if cached:
+                            # 해시 → 파일명 순서로 캐시 조회
+                            data = await att.read()
+                            import hashlib
+                            file_hash = hashlib.sha256(data).hexdigest()
+                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                                  or await self.librarian_db.get_media_by_filename(att.filename)
+                            if cached and cached.get("result"):
                                 file_result = cached["result"]
                                 media_id = cached.get("id")
                             else:
                                 # 파일 저장 후 백그라운드 처리
                                 try:
-                                    data = await att.read()
                                     os.makedirs(MEDIA_DIR, exist_ok=True)
-                                    import uuid, hashlib
+                                    import uuid
                                     stored_name = f"{uuid.uuid4().hex}{ext}"
                                     with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
                                         mf.write(data)
-                                    file_hash = hashlib.sha256(data).hexdigest()
                                     media_id = await self.librarian_db.save_media_result(
                                         att.filename, "", user_name=user_name,
                                         uploader=user_name, stored_name=stored_name, file_hash=file_hash)
