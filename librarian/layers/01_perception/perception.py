@@ -19,7 +19,7 @@ parse_url = _tools.parse_url
 
 logger = logging.getLogger("AILibrarian")
 
-# L1 도구 선언 (로컬 검색만)
+# L1 도구 선언 (로컬 검색 + 인식)
 perception_declarations = [
     types.FunctionDeclaration(
         name="search",
@@ -30,6 +30,28 @@ perception_declarations = [
                 "keyword": types.Schema(type="STRING", description="검색 키워드"),
             },
             required=["keyword"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="recognize_media",
+        description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 물어보면 사용. 여러 개면 인덱스를 배열로.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "indices": types.Schema(type="ARRAY", items=types.Schema(type="INTEGER"), description="첨부파일 번호 배열 (0부터)"),
+            },
+            required=["indices"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="recognize_link",
+        description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 물어보면 사용. 여러 개면 URL을 배열로.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "urls": types.Schema(type="ARRAY", items=types.Schema(type="STRING"), description="확인할 URL 배열"),
+            },
+            required=["urls"],
         ),
     ),
 ]
@@ -258,6 +280,119 @@ async def run_perception(self, user_id: str, user_name: str,
                 logger.info(f"[Perception] search 결과: {search_result[:200]}")
                 tool_results.append(f"검색 결과:\n{search_result}")
 
+            # recognize_media
+            elif fc.name == "recognize_media":
+                fc_args = dict(fc.args) if fc.args else {}
+                indices = fc_args.get("indices") or [fc_args.get("attachment_index", 0)]
+                current_attachments = attachments or []
+                for att_idx in indices:
+                    att_idx = int(att_idx)
+                    media_result = ""
+                    media_id = None
+                    if att_idx < len(current_attachments):
+                        att = current_attachments[att_idx]
+                        ct = att.content_type or ""
+                        cached = None
+                        data = None
+                        file_hash = None
+                        if ct.startswith("image/") or ct == "application/pdf":
+                            data = await att.read()
+                            import hashlib
+                            file_hash = hashlib.sha256(data).hexdigest()
+                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                                  or await self.librarian_db.get_media_by_filename(att.filename)
+                        else:
+                            cached = await self.librarian_db.get_media_by_filename(att.filename)
+
+                        if cached:
+                            media_result = cached["result"]
+                            media_id = cached.get("id")
+                        elif ct.startswith("image/") or ct == "application/pdf":
+                            try:
+                                media_parts = [
+                                    types.Part.from_bytes(data=data, mime_type=ct),
+                                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                                ]
+                                media_config = types.GenerateContentConfig(
+                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                media_response = await self._call_gemini(
+                                    [types.Content(role="user", parts=media_parts)], media_config)
+                                media_result = self._extract_reply(media_response)
+                                if media_result:
+                                    stored_name = None
+                                    try:
+                                        os.makedirs(MEDIA_DIR, exist_ok=True)
+                                        import uuid
+                                        ext = os.path.splitext(att.filename)[1] or ""
+                                        stored_name = f"{uuid.uuid4().hex}{ext}"
+                                        with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                            mf.write(data)
+                                    except Exception:
+                                        stored_name = None
+                                    media_id = await self.librarian_db.save_media_result(
+                                        att.filename, media_result, user_name=user_name,
+                                        uploader=user_name, stored_name=stored_name, file_hash=file_hash)
+                            except Exception as e:
+                                logger.warning(f"[Perception] 미디어 인식 실패 ({att_idx}): {e}")
+                        else:
+                            media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                    else:
+                        media_result = "첨부파일이 없어."
+                    id_tag = f" (media_id:{media_id})" if media_id else ""
+                    tool_results.append(f"미디어 인식 ({att_idx}){id_tag}: {media_result or '인식 실패'}")
+
+            # recognize_link
+            elif fc.name == "recognize_link":
+                fc_args = dict(fc.args) if fc.args else {}
+                urls = fc_args.get("urls") or [fc_args.get("url", "")]
+                for url in urls:
+                    if not url:
+                        continue
+                    link_result = ""
+                    url_id = None
+                    parsed = parse_url(url)
+                    normalized = parsed["normalized"]
+                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                    _url_path = url.split("?")[0].split("#")[0].lower()
+                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
+
+                    if _is_image_url:
+                        try:
+                            img_parts = [
+                                types.Part(file_data=types.FileData(file_uri=url)),
+                                types.Part.from_text(text="이 이미지를 설명해."),
+                            ]
+                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                            img_response = await self._call_gemini(
+                                [types.Content(role="user", parts=img_parts)], img_config)
+                            link_result = self._extract_reply(img_response)
+                            if link_result:
+                                url_id = await self.librarian_db.save_url_result(
+                                    normalized, url, link_result, user_name=user_name, status="done")
+                        except Exception as e:
+                            logger.warning(f"[Perception] 이미지 URL 인식 실패 ({url}): {e}")
+
+                    if not link_result:
+                        cached = await self.librarian_db.get_url_by_normalized(normalized)
+                        if cached:
+                            if cached.get("status") == "pending":
+                                link_result = "아직 읽는 중."
+                            elif cached.get("status") == "failed":
+                                await self.librarian_db.update_url_result(normalized, "", status="pending")
+                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                                link_result = "방금 읽기 시작했어."
+                            else:
+                                link_result = cached["result"]
+                                url_id = cached.get("id")
+
+                    if not link_result:
+                        await self.librarian_db.save_url_result(
+                            normalized, url, "", user_name=user_name, status="pending")
+                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                        link_result = "방금 읽기 시작했어."
+
+                    id_tag = f" (url_id:{url_id})" if url_id else ""
+                    tool_results.append(f"링크 인식 ({url}){id_tag}: {link_result or '인식 실패'}")
 
     # 분석 텍스트 + 도구 결과 합침
     if tool_results:
