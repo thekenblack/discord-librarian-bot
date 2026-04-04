@@ -534,7 +534,8 @@ class AILibrarianBot(discord.Client):
                           seen_filenames: list[str] = None,
                           channel_id: str = None,
                           typing_channel=None,
-                          is_spontaneous: bool = False) -> tuple[str, list, dict]:
+                          is_spontaneous: bool = False,
+                          preset_perception: str = None) -> tuple[str, list, dict]:
         """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
@@ -551,25 +552,29 @@ class AILibrarianBot(discord.Client):
 
         try:
             # ── Layer 1: Perception (맥락 파악) ──
-            _t0 = _time.monotonic()
-            raw_context = await self._gather_context(
-                user_id, user_name, guild, reply_chain,
-                anchor_context=anchor_context, recent_context=recent_context,
-                channel_id=channel_id)
-            p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
-            perception = await self._run_perception(
-                user_id, user_name, user_text, raw_context,
-                history=p_history,
-                attachments=attachments, seen_filenames=seen_filenames,
-                is_spontaneous=is_spontaneous)
-            # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
-            if channel_id is not None:
-                self.perception_histories[channel_id].append(types.Content(role="user", parts=[
-                    types.Part.from_text(text=f"{user_name}: {user_text}" if user_text else f"({user_name}이 빈 멘션을 보냈다.)")]))
-                self.perception_histories[channel_id].append(types.Content(role="model", parts=[
-                    types.Part.from_text(text=perception)]))
-                self._trim_perception_history(channel_id)
-            logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
+            if preset_perception:
+                perception = preset_perception
+                logger.info(f"[L1 Perception] 스킵 (preset: {perception[:80]})")
+            else:
+                _t0 = _time.monotonic()
+                raw_context = await self._gather_context(
+                    user_id, user_name, guild, reply_chain,
+                    anchor_context=anchor_context, recent_context=recent_context,
+                    channel_id=channel_id)
+                p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
+                perception = await self._run_perception(
+                    user_id, user_name, user_text, raw_context,
+                    history=p_history,
+                    attachments=attachments, seen_filenames=seen_filenames,
+                    is_spontaneous=is_spontaneous)
+                # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
+                if channel_id is not None:
+                    self.perception_histories[channel_id].append(types.Content(role="user", parts=[
+                        types.Part.from_text(text=f"{user_name}: {user_text}" if user_text else f"({user_name}이 빈 멘션을 보냈다.)")]))
+                    self.perception_histories[channel_id].append(types.Content(role="model", parts=[
+                        types.Part.from_text(text=perception)]))
+                    self._trim_perception_history(channel_id)
+                logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
@@ -1291,8 +1296,31 @@ class AILibrarianBot(discord.Client):
                     is_spontaneous=True,
                 )
 
-            if _meta.get("no_response") or _meta.get("no_comment"):
+            if _meta.get("no_response"):
                 return
+
+            if _meta.get("no_comment"):
+                # 상대가 아직 말하는 중이라고 판단 → 추가 대기
+                await asyncio.sleep(5)
+                # 새 메시지가 왔으면 중단 (다음 debounce가 처리)
+                if self._spontaneous_gen.get(channel_id) != gen:
+                    return
+                # 새 메시지 없음 → 말을 하다 멈춤, L1 스킵하고 L2부터 진행
+                logger.info("[자발적 채널] no_comment 후 추가 대기 만료 → 말을 하다 멈춤")
+                async with self._user_locks[uid]:
+                    reply, files_to_send, _meta = await self._ask_gemini(
+                        user_id=uid,
+                        user_name=message.author.display_name,
+                        user_text=text,
+                        guild=message.guild,
+                        attachments=attachments,
+                        seen_filenames=seen_filenames,
+                        channel_id=channel_id,
+                        typing_channel=message.channel,
+                        preset_perception=f"{message.author.display_name}이(가) 메시지를 끊어서 보내다가 멈췄다. 말이 끝난 건지 하다 만 건지 모호하다.",
+                    )
+                if _meta.get("no_response"):
+                    return
 
             if reply:
                 if files_to_send:
