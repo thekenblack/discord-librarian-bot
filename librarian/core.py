@@ -1327,9 +1327,6 @@ class AILibrarianBot(discord.Client):
                     return
 
             if reply:
-                # 전송 직전 최종 gen 확인 (gemini 호출 중 새 메시지 올 수 있음)
-                if self._spontaneous_gen.get(channel_id) != gen:
-                    return
                 if files_to_send:
                     await message.channel.send(reply, files=files_to_send)
                 else:
