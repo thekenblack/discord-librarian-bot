@@ -32,7 +32,7 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
         temperature=TEMP_L4,
     )
 
-    prompt_parts = [f"다음 대사를 검수해:\n\n{raw_reply}"]
+    prompt_parts = [f"대화 상대: {user_name}\n\n다음 대사를 검수해:\n\n{raw_reply}"]
     if mention_map:
         lines = [f"- @{name} → <@{uid}>" for name, uid in mention_map.items()]
         prompt_parts.append("\n멘션 매핑:\n" + "\n".join(lines))
