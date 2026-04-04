@@ -461,42 +461,81 @@ async def run_perception(self, user_id: str, user_name: str,
                             url_id = await self.librarian_db.save_url_result(
                                 normalized, url, link_result, user_name=user_name, status="done")
 
-                    # 일반 URL: og:image 즉시 인식 → 전체 텍스트는 pending
+                    # 일반 URL: og:image + 텍스트 요약 즉시 처리
                     if not link_result and not parsed.get("content_id") and not _is_image_url:
                         try:
                             import aiohttp
+                            from html.parser import HTMLParser as _HP
+
+                            class _OgExtractor(_HP):
+                                def __init__(self):
+                                    super().__init__()
+                                    self.og_image = None
+                                    self.parts = []
+                                    self._skip = False
+                                def handle_starttag(self, tag, attrs):
+                                    if tag in ("script", "style", "noscript"):
+                                        self._skip = True
+                                    if tag == "meta":
+                                        d = dict(attrs)
+                                        content = d.get("content", "")
+                                        prop = d.get("property", d.get("name", ""))
+                                        if prop == "og:image" and content:
+                                            self.og_image = content
+                                        if prop in ("og:description", "description", "og:title") and content:
+                                            self.parts.insert(0, content)
+                                def handle_endtag(self, tag):
+                                    if tag in ("script", "style", "noscript"):
+                                        self._skip = False
+                                def handle_data(self, data):
+                                    if not self._skip:
+                                        t = data.strip()
+                                        if t:
+                                            self.parts.append(t)
+
                             async with aiohttp.ClientSession() as _session:
-                                async with _session.get(url, timeout=aiohttp.ClientTimeout(total=5),
+                                async with _session.get(url, timeout=aiohttp.ClientTimeout(total=10),
                                                          headers={"User-Agent": "Mozilla/5.0"}) as resp:
                                     if resp.status == 200:
-                                        html_head = await resp.text(errors="replace")
-                                        html_head = html_head[:20000]
-                                        # og:image 추출
-                                        import re as _re_og
-                                        og_match = _re_og.search(r'property=["\']og:image["\'][^>]*content=["\']([^"\']+)', html_head)
-                                        if not og_match:
-                                            og_match = _re_og.search(r'content=["\']([^"\']+)["\'][^>]*property=["\']og:image', html_head)
-                                        if og_match:
-                                            og_image_url = og_match.group(1)
-                                            try:
-                                                og_parts = [
-                                                    types.Part(file_data=types.FileData(file_uri=og_image_url)),
-                                                    types.Part.from_text(text="이 웹페이지 프리뷰 이미지를 설명해."),
-                                                ]
-                                                og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
-                                                og_response = await self._call_gemini(
-                                                    [types.Content(role="user", parts=og_parts)], og_config)
-                                                og_result = self._extract_reply(og_response)
-                                                if og_result:
-                                                    link_result = f"[프리뷰] {og_result}\n(전체 내용은 읽는 중)"
-                                                    # pending으로 저장하고 백그라운드에서 전체 처리
-                                                    await self.librarian_db.save_url_result(
-                                                        normalized, url, link_result, user_name=user_name, status="pending")
-                                                    asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                                            except Exception:
-                                                pass
-                        except Exception:
-                            pass
+                                        html = await resp.text(errors="replace")
+
+                            extractor = _OgExtractor()
+                            extractor.feed(html[:100_000])
+                            url_parts = []
+
+                            # og:image 프리뷰
+                            if extractor.og_image:
+                                try:
+                                    og_parts = [
+                                        types.Part(file_data=types.FileData(file_uri=extractor.og_image)),
+                                        types.Part.from_text(text="이 웹페이지 프리뷰 이미지를 설명해."),
+                                    ]
+                                    og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
+                                    og_response = await self._call_gemini(
+                                        [types.Content(role="user", parts=og_parts)], og_config)
+                                    og_result = self._extract_reply(og_response)
+                                    if og_result:
+                                        url_parts.append(f"[프리뷰] {og_result}")
+                                except Exception:
+                                    pass
+
+                            # 텍스트 요약
+                            text = "\n".join(extractor.parts)[:6000]
+                            if text and len(text) > 50:
+                                prompt = f"다음은 웹페이지({url})에서 추출한 텍스트야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                                txt_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                                txt_response = await self._call_gemini(
+                                    [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], txt_config)
+                                txt_result = self._extract_reply(txt_response)
+                                if txt_result:
+                                    url_parts.append(txt_result)
+
+                            if url_parts:
+                                link_result = "\n".join(url_parts)
+                                url_id = await self.librarian_db.save_url_result(
+                                    normalized, url, link_result, user_name=user_name, status="done")
+                        except Exception as e:
+                            logger.warning(f"[Perception] URL 인식 실패 ({url}): {e}")
 
                     if not link_result:
                         cached = await self.librarian_db.get_url_by_normalized(normalized)
