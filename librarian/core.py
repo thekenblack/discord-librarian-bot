@@ -535,7 +535,8 @@ class AILibrarianBot(discord.Client):
                           recent_context: list[str] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
-                          channel_id: str = None) -> tuple[str, list, dict]:
+                          channel_id: str = None,
+                          typing_channel=None) -> tuple[str, list, dict]:
         """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
@@ -626,6 +627,13 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"[L2] 리액션 감지: {emoji_str}")
                     # 리액션 줄을 instruction에서 제거 (L3에 안 넘김)
                     instruction = _re.sub(r'\n?리액션\s*[:：]\s*.+?$', '', instruction, flags=_re.MULTILINE).strip()
+
+            # L2가 말하기로 결정 → typing 표시
+            if typing_channel:
+                try:
+                    await typing_channel.typing()
+                except Exception:
+                    pass
 
             # ── Layer 3: Character (대사 생성) ──
             _t0 = _time.monotonic()
@@ -1250,10 +1258,6 @@ class AILibrarianBot(discord.Client):
             if uid not in self._user_locks:
                 self._user_locks[uid] = asyncio.Lock()
             async with self._user_locks[uid]:
-                try:
-                    await message.channel.typing()
-                except Exception:
-                    pass
                 attachments = list(message.attachments) if message.attachments else []
                 seen_filenames = [a.filename for a in attachments] if attachments else []
                 extras = await self._extract_extras(message)
@@ -1268,6 +1272,7 @@ class AILibrarianBot(discord.Client):
                     attachments=attachments,
                     seen_filenames=seen_filenames,
                     channel_id=channel_id,
+                    typing_channel=message.channel,
                 )
 
             if _meta.get("no_response") or _meta.get("no_comment"):
