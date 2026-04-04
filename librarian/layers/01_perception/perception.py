@@ -146,15 +146,20 @@ async def gather_context(self, user_id: str, user_name: str,
     emo_block += "유저별:\n" + "\n".join(f"  {l}" for l in user_lines)
     parts.append(emo_block)
 
-    # 경제 상태 (요약만, 아이템 목록은 L2에서)
-    from library.cogs.shop import SHOP_PAGE1
+    # 경제 상태 (공통 컨텍스트 — L1/L2/L3 동일)
+    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2, SHOP_ITEMS
     bot_balance = ctx.get("balance", 0)
-    cheapest = min(SHOP_PAGE1, key=lambda i: i["price"])
-    most_expensive = max(SHOP_PAGE1, key=lambda i: i["price"])
-    parts.append(
-        f"## 내 경제\n잔고: {bot_balance} sat\n"
-        f"가장 싼 아이템: {cheapest['emoji']}{cheapest['name']} {cheapest['price']}sat\n"
-        f"가장 비싼 아이템: {most_expensive['emoji']}{most_expensive['name']} {most_expensive['price']}sat")
+    normal_items = ", ".join(f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)" for i in SHOP_PAGE1)
+    special_items = ", ".join(f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)" for i in SHOP_PAGE2)
+    affordable = [f"{i['emoji']}{i['name']}({i['id']})" for i in SHOP_ITEMS if i["price"] <= bot_balance]
+    econ_block = f"## 내 경제\n잔고: {bot_balance} sat\n"
+    econ_block += f"일반 아이템: {normal_items}\n"
+    econ_block += f"이상한 아이템: {special_items}\n"
+    if affordable:
+        econ_block += f"선물 가능: {', '.join(affordable)}"
+    else:
+        econ_block += "선물 가능한 아이템 없음 (잔고 부족)"
+    parts.append(econ_block)
 
     # 이전 피드백 (shared_ctx에서)
     prev_feedback = ctx.get("feedback")

@@ -5,7 +5,7 @@ import logging
 import discord
 from google.genai import types
 from google.genai.errors import ClientError
-from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS, TEMP_L2, AI_HOURLY_WAGE
+from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS, TEMP_L2
 import importlib as _il
 _tools = _il.import_module("librarian.layers.02_functioning.tools")
 functioning_tools = _tools.functioning_tools
@@ -162,29 +162,8 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
-    # 봇 잔고 + 경제 시스템 안내 (shared_ctx에서 읽음, DB 재조회 없음)
-    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2, SHOP_ITEMS
-    bot_balance = shared_ctx.get("balance", 0) if shared_ctx else 0
+    # 경제 블록은 공통 컨텍스트(L1 gather_context)에 포함. L2는 perception 경유로 받음.
 
-    wallet_block = f"## 내 경제\n잔고: {bot_balance} sat\n"
-    wallet_block += f"수입: 매시 정각 시급 {AI_HOURLY_WAGE} sat + 유저가 보내는 용돈(팁)\n"
-    wallet_block += "지출: 매시 정각 배고프거나 목마르면 자동으로 식사/음료 구매\n"
-
-    # 아이템 카탈로그
-    normal_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE1)
-    wallet_block += f"\n일반 아이템: {normal_items}\n"
-    special_items = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE2)
-    wallet_block += f"이상한 아이템: {special_items}\n"
-
-    affordable = [f"{i['emoji']}{i['name']}({i['id']},{i['price']}sat)"
-                  for i in SHOP_ITEMS if i["price"] <= bot_balance]
-    if affordable:
-        wallet_block += f"내가 선물 가능: {', '.join(affordable)}\n"
-    else:
-        wallet_block += "선물 가능한 아이템 없음 (잔고 부족)\n"
-    wallet_block += "선물은 정말 주고 싶을 때만. 아끼는 돈이다."
-
-    parts.append(wallet_block)
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)
     logger.info(f"[Functioning] 프롬프트: {len(dynamic_prompt)}자 ({_time.monotonic()-_tp0:.2f}s)")
