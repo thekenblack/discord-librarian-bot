@@ -578,12 +578,12 @@ class AILibrarianBot(discord.Client):
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
-                _no_comment_match = _re.search(r'응답\s*[:：]\s*no_comment', perception or "", _re.IGNORECASE)
+                _wait_match = _re.search(r'응답\s*[:：]\s*wait', perception or "", _re.IGNORECASE)
                 _reaction_only_l1 = _re.search(r'응답\s*[:：]\s*리액션만\s*[:：]?\s*(.+)', perception or "")
 
-                if _no_comment_match:
-                    logger.info("[L1] 응답 판정: no_comment (L2/L3/L4/L5 스킵)")
-                    _meta["no_comment"] = True
+                if _wait_match:
+                    logger.info("[L1] 응답 판정: wait (L2/L3/L4/L5 스킵, 추가 대기)")
+                    _meta["wait"] = True
                     return "", [], _meta
 
                 if _reaction_only_l1:
@@ -1231,8 +1231,8 @@ class AILibrarianBot(discord.Client):
             channel_id=channel_id,
         )
 
-        if _meta.get("no_response") or _meta.get("no_comment"):
-            logger.info("[자발적 발화] no_comment")
+        if _meta.get("no_response"):
+            logger.info("[자발적 발화] no_response")
             return
 
         if reply:
@@ -1299,14 +1299,14 @@ class AILibrarianBot(discord.Client):
             if _meta.get("no_response"):
                 return
 
-            if _meta.get("no_comment"):
+            if _meta.get("wait"):
                 # 상대가 아직 말하는 중이라고 판단 → 추가 대기
                 await asyncio.sleep(5)
                 # 새 메시지가 왔으면 중단 (다음 debounce가 처리)
                 if self._spontaneous_gen.get(channel_id) != gen:
                     return
                 # 새 메시지 없음 → 말을 하다 멈춤, L1 스킵하고 L2부터 진행
-                logger.info("[자발적 채널] no_comment 후 추가 대기 만료 → 말을 하다 멈춤")
+                logger.info("[자발적 채널] wait 후 추가 대기 만료 → 말을 하다 멈춤")
                 async with self._user_locks[uid]:
                     reply, files_to_send, _meta = await self._ask_gemini(
                         user_id=uid,
