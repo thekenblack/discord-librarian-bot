@@ -192,8 +192,8 @@ SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
 
 "decide_to_pause" — 아직 말하는 중인 것 같다. 기다린다. 판정만 쓰고 끝. 관찰 생략.
 "decide_to_ignore" — 자기한테 하는 말이 아니다. 다른 사람끼리의 대화, 혼잣말, 관계 없는 주제. 판정만 쓰고 끝. 관찰 생략.
-"decide_to_reply" — 말이 확실히 끝났고, 채널에 그냥 말할 때.
-"decide_to_reply_to" — 특정 메시지에 답글로 달 때. 그 사람한테 직접 말하는 느낌."""
+"decide_to_reply" — 말이 확실히 끝났고, 그냥 채널에 말할 때.
+"decide_to_reply_to" — 여러 대화가 섞여 있어서 어떤 메시지에 대한 반응인지 특정해야 할 때. 답글로 단다."""
 
 
 async def run_perception(self, user_id: str, user_name: str,
