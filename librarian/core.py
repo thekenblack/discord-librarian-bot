@@ -578,7 +578,7 @@ class AILibrarianBot(discord.Client):
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
-                _wait_match = _re.search(r'응답\s*[:：]\s*wait', perception or "", _re.IGNORECASE)
+                _wait_match = _re.search(r'decide_to_pause', perception or "", _re.IGNORECASE)
 
                 if _wait_match:
                     logger.info("[L1] 응답 판정: wait (L2/L3/L4/L5 스킵, 추가 대기)")
@@ -586,7 +586,7 @@ class AILibrarianBot(discord.Client):
                     return "", [], _meta
 
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
-                perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
+                perception = _re.sub(r'\n?decide_to_\w+', '', perception, flags=_re.MULTILINE).strip()
 
             # ── typing 유지 (L2~전송 직전까지) ──
             if typing_channel:
