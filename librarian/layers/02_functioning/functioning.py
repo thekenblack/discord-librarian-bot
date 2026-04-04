@@ -129,8 +129,6 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
 
 
 async def run_functioning(self, user_id: str, user_name: str, user_text: str,
-                          catalog: str, memories_text: str,
-                          memory_ids: list[int] = None,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
                           perception: str = "",
@@ -145,8 +143,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _tp0 = _time.monotonic()
     parts = []
 
-    func_base = self.persona.functioning_text or self.persona.prompt_text
-    func_prompt = func_base.replace("{library_catalog}", catalog).replace("{learned_memories}", memories_text)
+    func_prompt = self.persona.functioning_text or self.persona.prompt_text
     parts.append(func_prompt)
 
     # L1 Perception 분석 결과 포함
@@ -157,7 +154,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     logger.info(f"[Functioning] 대화 상대: {user_name} (ID: {user_id}) → {role}")
 
     # search 중복 제거용 ID 수집
-    memory_ids = memory_ids or []
+    memory_ids = shared_ctx["memories"][1] if shared_ctx and isinstance(shared_ctx.get("memories"), tuple) else []
     _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)

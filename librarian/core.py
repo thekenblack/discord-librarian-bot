@@ -644,13 +644,8 @@ class AILibrarianBot(discord.Client):
             # ── Layer 2: Execution (도구 실행) ──
             _t0 = _time.monotonic()
 
-            catalog = shared_ctx["catalog"]
-            memories_text, memory_ids = shared_ctx["memories"]
-
             instruction, files_to_send, processor_meta = await self._run_functioning(
                 user_id=user_id, user_name=user_name, user_text=user_text,
-                catalog=catalog, memories_text=memories_text,
-                memory_ids=memory_ids,
                 attachments=attachments, seen_filenames=seen_filenames,
                 perception=perception, channel_id=channel_id,
                 shared_ctx=shared_ctx,

@@ -175,6 +175,16 @@ async def gather_context(self, user_id: str, user_name: str,
     if channel_summary:
         parts.append(f"## 이 채널 흐름 요약\n{channel_summary}")
 
+    # 도서관 카탈로그 + 기억 (공통 컨텍스트)
+    catalog = ctx.get("catalog", "")
+    if catalog:
+        parts.append(f"## 도서관 목록\n{catalog}")
+    memories = ctx.get("memories")
+    if memories:
+        memories_text = memories[0] if isinstance(memories, tuple) else memories
+        if memories_text:
+            parts.append(f"## 기억\n{memories_text}")
+
     # 답글 대상 주변 맥락
     if anchor_context:
         parts.append("## 답글 대상 주변 맥락\n" + "\n".join(anchor_context))
