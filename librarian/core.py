@@ -702,7 +702,8 @@ class AILibrarianBot(discord.Client):
             self._mention_map[user_name] = user_id
             reply = await self._run_postprocess(
                 raw_reply, user_name,
-                mention_map=dict(self._mention_map))
+                mention_map=dict(self._mention_map),
+                instruction=instruction)
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
             else:
