@@ -144,11 +144,13 @@ async def gather_context(self, user_id: str, user_name: str,
     emo_block += "유저별:\n" + "\n".join(f"  {l}" for l in user_lines)
     parts.append(emo_block)
 
-    # 아이템 목록 (선물 의도 인식용)
+    # 경제 상태 + 아이템 목록
     from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2
-    item_names = ", ".join(f"{i['emoji']}{i['name']}" for i in SHOP_PAGE1)
-    special_names = ", ".join(f"{i['emoji']}{i['name']}" for i in SHOP_PAGE2 if not i["id"].startswith("tip_"))
-    parts.append(f"## 아이템\n일반: {item_names}\n이상한 아이템: {special_names}")
+    bot_id = str(self.user.id) if self.user else ""
+    bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
+    item_names = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE1)
+    special_names = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE2)
+    parts.append(f"## 내 경제\n잔고: {bot_balance} sat\n일반 아이템: {item_names}\n이상한 아이템: {special_names}")
 
     # 이전 피드백
     prev_feedback = await self.librarian_db.get_feedback(user_id)
