@@ -15,7 +15,8 @@ from google.genai.errors import ClientError
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 from config import (
-    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, AI_MAX_OUTPUT_TOKENS, LOG_DIR,
+    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, GEMINI_MODEL_L2, GEMINI_MODEL_L4,
+    AI_MAX_OUTPUT_TOKENS, LOG_DIR,
     SPONTANEOUS_CHANNEL_ID, SPONTANEOUS_QUIET_HOURS, SPONTANEOUS_CHECK_HOURS, SPONTANEOUS_CHANCE,
     AI_HOURLY_WAGE,
 )
@@ -31,6 +32,8 @@ bitcoin_data = _btc_mod
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
+MODEL_L2 = GEMINI_MODEL_L2
+MODEL_L4 = GEMINI_MODEL_L4
 from config import MAX_HISTORY_L1, MAX_HISTORY_L3, MAX_HISTORY_L5
 MAX_HISTORY = MAX_HISTORY_L3
 MAX_PERCEPTION_HISTORY = MAX_HISTORY_L1
@@ -83,6 +86,7 @@ class AILibrarianBot(discord.Client):
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
+        self._mention_map: dict[str, str] = {}  # 닉네임 → user_id (L4 멘션 변환용)
         self._catalog_cache: str = ""
         self._catalog_built_at: str = ""
 
@@ -680,23 +684,20 @@ class AILibrarianBot(discord.Client):
                 _meta["no_response"] = True
                 return "", files_to_send, _meta
 
-            # ── Layer 4: Postprocess (자연어 정제) ──
+            # ── Layer 4: Postprocess (디스코드 포매팅) ──
             _t0 = _time.monotonic()
-            # 멘션 매핑 구성: 맥락에서 이름(<@id>) 패턴 추출
-            mention_map = {}
-            for line in (reply_chain or []) + (anchor_context or []) + (recent_context or []):
-                for m in _re.finditer(r'(\S+?)\(<@(\d+)>\)', line):
-                    mention_map[m.group(1)] = m.group(2)
+            # 현재 메시지 발화자도 mention_map에 추가
+            self._mention_map[user_name] = user_id
             reply = await self._run_postprocess(
                 raw_reply, user_name,
-                mention_map=mention_map)
+                mention_map=dict(self._mention_map))
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
             else:
                 logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
 
-            # 히스토리에 최종 응답 추가
-            history.append(types.Content(role="model", parts=[types.Part.from_text(text=reply)]))
+            # 히스토리에 L4 변환 전 원본 저장 (L3가 깨끗한 히스토리를 보도록)
+            history.append(types.Content(role="model", parts=[types.Part.from_text(text=raw_reply)]))
             self._trim_history(user_id)
 
             # ── Layer 5: Evaluation (큐에 추가, 백그라운드 워커가 처리) ──
@@ -767,8 +768,9 @@ class AILibrarianBot(discord.Client):
         except Exception:
             pass
 
-    async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
+    async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0, model=None):
         """API 호출 (비동기). 실패 시 재시도."""
+        _model = model or MODEL
         last_err = None
         loop = asyncio.get_event_loop()
         for attempt in range(max_retries):
@@ -776,7 +778,7 @@ class AILibrarianBot(discord.Client):
                 return await loop.run_in_executor(
                     None,
                     lambda: self._gemini_client.models.generate_content(
-                        model=MODEL, contents=contents, config=config,
+                        model=_model, contents=contents, config=config,
                     ),
                 )
             except ClientError as e:
@@ -813,12 +815,13 @@ class AILibrarianBot(discord.Client):
         return text[:150]
 
     def _format_msg_row(self, row: dict) -> str:
-        """DB 메시지 행을 텍스트로 포맷."""
+        """DB 메시지 행을 텍스트로 포맷. @닉네임 형태 통일."""
         if self.user and row["author_id"] == str(self.user.id):
             name = self.persona.name
             content = self._clean_bot_content(row["content"][:300])
         else:
-            name = f"{row['author_name']}(<@{row['author_id']}>)"
+            name = f"@{row['author_name']}"
+            self._mention_map[row["author_name"]] = row["author_id"]
             content = row["content"][:150]
         return f"{name}: {content}"
 
@@ -867,7 +870,8 @@ class AILibrarianBot(discord.Client):
                 name = self.persona.name
                 content = self._clean_bot_content(ref.content[:300])
             else:
-                name = f"{ref.author.display_name}(<@{ref.author.id}>)"
+                name = f"@{ref.author.display_name}"
+                self._mention_map[ref.author.display_name] = str(ref.author.id)
                 content = ref.content[:150]
             if extras:
                 content = f"{content} {extras}" if content else extras
@@ -923,7 +927,8 @@ class AILibrarianBot(discord.Client):
                             name = self.persona.name
                             content = self._clean_bot_content(m.content[:300])
                         else:
-                            name = f"{m.author.display_name}(<@{m.author.id}>)"
+                            name = f"@{m.author.display_name}"
+                            self._mention_map[m.author.display_name] = str(m.author.id)
                             content = m.content[:150]
                         anchor_lines.append(f"{name}: {content}")
                 except Exception as e:
@@ -950,7 +955,8 @@ class AILibrarianBot(discord.Client):
                             name = self.persona.name
                             content = self._clean_bot_content(m.content[:300])
                         else:
-                            name = f"{m.author.display_name}(<@{m.author.id}>)"
+                            name = f"@{m.author.display_name}"
+                            self._mention_map[m.author.display_name] = str(m.author.id)
                             content = m.content[:150]
                         recent_lines.append(f"{name}: {content}")
             except Exception as e:

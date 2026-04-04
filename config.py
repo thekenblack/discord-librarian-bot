@@ -73,6 +73,8 @@ SPONTANEOUS_CHANCE = int(os.getenv("SPONTANEOUS_CHANCE", "25"))               # 
 # ── AI 설정 ───────────────────────────────────
 _ai = _conf.get("ai", {})
 GEMINI_MODEL     = _ai.get("model", "gemini-2.5-flash-lite")
+GEMINI_MODEL_L2  = _ai.get("model_l2", GEMINI_MODEL)
+GEMINI_MODEL_L4  = _ai.get("model_l4", GEMINI_MODEL)
 AI_NAME          = os.getenv("AI_NAME", _ai.get("name", "사서봇"))
 AI_STATUS_TEXT   = os.getenv("AI_STATUS_TEXT", _ai.get("status_text", "Library"))
 AI_MAX_OUTPUT_TOKENS = _ai.get("max_output_tokens", 500)

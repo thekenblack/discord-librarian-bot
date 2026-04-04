@@ -49,8 +49,9 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     prompt = "\n".join(prompt_parts)
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
 
-    logger.info("[Postprocess] API 호출")
-    response = await self._call_gemini(contents, config)
+    from librarian.core import MODEL_L4
+    logger.info(f"[Postprocess] API 호출 (model={MODEL_L4})")
+    response = await self._call_gemini(contents, config, model=MODEL_L4)
     result = self._extract_reply(response)
 
     if result and result.strip():

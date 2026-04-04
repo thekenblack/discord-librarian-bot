@@ -213,8 +213,9 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
-    logger.info(f"[Functioning] API 호출 (temp={TEMP_L2})")
-    response = await self._call_gemini(loop_contents, config)
+    from librarian.core import MODEL_L2
+    logger.info(f"[Functioning] API 호출 (temp={TEMP_L2}, model={MODEL_L2})")
+    response = await self._call_gemini(loop_contents, config, model=MODEL_L2)
     logger.info("[Functioning] API 응답 수신")
 
     # ── 1회 응답에서 모든 function_call + 텍스트 추출 ──
