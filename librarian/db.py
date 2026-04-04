@@ -912,6 +912,14 @@ class LibrarianDB:
             await db.commit()
             return cursor.lastrowid
 
+    async def update_media_result(self, filename: str, result: str):
+        """백그라운드 인식 완료 후 결과 업데이트."""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE media_results SET result = ? WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                (result, filename))
+            await db.commit()
+
     async def get_media_by_filename(self, filename: str) -> dict | None:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row

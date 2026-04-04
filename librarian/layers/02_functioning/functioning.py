@@ -127,6 +127,71 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
             await self.librarian_db.update_url_result(normalized, "", status="failed")
 
 
+async def recognize_file_background(self, filename: str, stored_name: str, ext: str, user_name: str):
+    """TXT/EPUB/MD 파일 백그라운드 인식."""
+    async with self._bg_semaphore:
+        result = ""
+        file_path = os.path.join(MEDIA_DIR, stored_name)
+        try:
+            if ext == ".epub":
+                # epub: ebooklib으로 텍스트 추출
+                try:
+                    import ebooklib
+                    from ebooklib import epub as _epub
+                    loop = asyncio.get_event_loop()
+                    book = await loop.run_in_executor(None, lambda: _epub.read_epub(file_path))
+                    texts = []
+                    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+                        from html.parser import HTMLParser
+                        class _Strip(HTMLParser):
+                            def __init__(self):
+                                super().__init__()
+                                self.parts = []
+                            def handle_data(self, d):
+                                self.parts.append(d)
+                        s = _Strip()
+                        s.feed(item.get_body_content().decode("utf-8", errors="replace"))
+                        texts.append(" ".join(s.parts))
+                    text = "\n".join(texts)[:8000]
+                except Exception:
+                    # ebooklib 실패 시 바이너리로 Gemini에 전달
+                    with open(file_path, "rb") as f:
+                        data = f.read()
+                    text = None
+            elif ext in (".txt", ".md"):
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()[:8000]
+            else:
+                text = None
+
+            if text:
+                prompt = f"다음은 {ext} 파일({filename})의 내용이야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                response = await self._call_gemini(
+                    [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
+                result = self._extract_reply(response)
+            elif ext == ".epub" and not text:
+                # 텍스트 추출 실패 시 바이너리 직접 전달
+                with open(file_path, "rb") as f:
+                    data = f.read()
+                file_parts = [
+                    types.Part.from_bytes(data=data, mime_type="application/epub+zip"),
+                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                ]
+                config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                response = await self._call_gemini(
+                    [types.Content(role="user", parts=file_parts)], config)
+                result = self._extract_reply(response)
+
+            if result:
+                await self.librarian_db.update_media_result(filename, result)
+                logger.info(f"문서 인식 완료: {filename}")
+            else:
+                logger.warning(f"문서 인식 실패 (빈 결과): {filename}")
+        except Exception as e:
+            logger.warning(f"문서 인식 실패 ({filename}): {e}")
+
+
 async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                           attachments: list = None,
                           seen_filenames: list[str] = None,

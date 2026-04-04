@@ -1387,6 +1387,7 @@ AILibrarianBot._run_perception = _perception.run_perception
 _functioning = _il.import_module("librarian.layers.02_functioning.functioning")
 AILibrarianBot._run_functioning = _functioning.run_functioning
 AILibrarianBot._recognize_url_background = _functioning.recognize_url_background
+AILibrarianBot._recognize_file_background = _functioning.recognize_file_background
 AILibrarianBot._build_catalog = _functioning.build_catalog
 AILibrarianBot._build_memories = _functioning.build_memories
 

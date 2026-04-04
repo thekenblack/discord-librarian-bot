@@ -56,7 +56,7 @@ perception_declarations = [
     ),
     types.FunctionDeclaration(
         name="recognize_file",
-        description="첨부된 PDF, TXT 등 문서 파일의 내용을 확인한다. 이미지가 아닌 문서 파일을 보내면서 물어보면 사용. 여러 개면 인덱스를 배열로.",
+        description="첨부된 TXT, EPUB, MD 파일의 내용을 확인한다. 문서 파일을 보내면서 물어보면 사용. 여러 개면 인덱스를 배열로. 백그라운드 처리.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
@@ -443,57 +443,51 @@ async def run_perception(self, user_id: str, user_name: str,
                     id_tag = f" (url_id:{url_id})" if url_id else ""
                     tool_results.append(f"링크 인식 ({url}){id_tag}: {link_result or '인식 실패'}")
 
-            # recognize_file (PDF, TXT 등 문서)
+            # recognize_file (TXT, EPUB, MD — 캐시 있으면 즉시, 없으면 백그라운드)
             elif fc.name == "recognize_file":
                 fc_args = dict(fc.args) if fc.args else {}
                 indices = fc_args.get("indices") or [0]
                 current_attachments = attachments or []
+                _allowed_exts = (".txt", ".epub", ".md")
                 for att_idx in indices:
                     att_idx = int(att_idx)
                     file_result = ""
                     media_id = None
                     if att_idx < len(current_attachments):
                         att = current_attachments[att_idx]
-                        ct = att.content_type or ""
+                        ext = os.path.splitext(att.filename)[1].lower()
 
-                        cached = await self.librarian_db.get_media_by_filename(att.filename)
-                        if cached:
-                            file_result = cached["result"]
-                            media_id = cached.get("id")
+                        if ext not in _allowed_exts:
+                            file_result = f"이 파일 형식({ext})은 지원하지 않는다. (txt, epub, md만 가능)"
                         else:
-                            try:
-                                data = await att.read()
-                                file_parts = [
-                                    types.Part.from_bytes(data=data, mime_type=ct or "application/octet-stream"),
-                                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                                ]
-                                file_config = types.GenerateContentConfig(
-                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
-                                file_response = await self._call_gemini(
-                                    [types.Content(role="user", parts=file_parts)], file_config)
-                                file_result = self._extract_reply(file_response)
-                                if file_result:
-                                    stored_name = None
-                                    try:
-                                        os.makedirs(MEDIA_DIR, exist_ok=True)
-                                        import uuid
-                                        ext = os.path.splitext(att.filename)[1] or ""
-                                        stored_name = f"{uuid.uuid4().hex}{ext}"
-                                        with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
-                                            mf.write(data)
-                                    except Exception:
-                                        stored_name = None
-                                    import hashlib
+                            cached = await self.librarian_db.get_media_by_filename(att.filename)
+                            if cached:
+                                file_result = cached["result"]
+                                media_id = cached.get("id")
+                            else:
+                                # 파일 저장 후 백그라운드 처리
+                                try:
+                                    data = await att.read()
+                                    os.makedirs(MEDIA_DIR, exist_ok=True)
+                                    import uuid, hashlib
+                                    stored_name = f"{uuid.uuid4().hex}{ext}"
+                                    with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                        mf.write(data)
                                     file_hash = hashlib.sha256(data).hexdigest()
                                     media_id = await self.librarian_db.save_media_result(
-                                        att.filename, file_result, user_name=user_name,
+                                        att.filename, "", user_name=user_name,
                                         uploader=user_name, stored_name=stored_name, file_hash=file_hash)
-                            except Exception as e:
-                                logger.warning(f"[Perception] 문서 인식 실패 ({att_idx}): {e}")
+                                    # 백그라운드에서 Gemini 인식
+                                    asyncio.create_task(self._recognize_file_background(
+                                        att.filename, stored_name, ext, user_name))
+                                    file_result = "읽기 시작했어."
+                                except Exception as e:
+                                    logger.warning(f"[Perception] 문서 저장 실패 ({att_idx}): {e}")
+                                    file_result = "파일 저장에 실패했어."
                     else:
                         file_result = "첨부파일이 없어."
                     id_tag = f" (media_id:{media_id})" if media_id else ""
-                    tool_results.append(f"문서 인식 ({att_idx}){id_tag}: {file_result or '인식 실패'}")
+                    tool_results.append(f"문서 인식 ({att_idx}){id_tag}: {file_result}")
 
     # 분석 텍스트 + 도구 결과 합침
     if tool_results:
