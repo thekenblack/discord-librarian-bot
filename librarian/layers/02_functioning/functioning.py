@@ -318,14 +318,14 @@ async def build_catalog(self) -> str:
         detail = await self.library_db.get_book_detail(b["id"])
         alias = f" (별칭: {b['alias']})" if b.get("alias") else ""
         author = f" - {b['author']}" if b.get("author") else ""
-        line = f"책장 entry_id:{b['id']} {b['title']}{author}{alias}"
-        if b.get("description"):
-            line += f"\n  {b['description']}"
         files = detail.get("files", [])
         if not files:
             continue
+        line = f"[{b['title']}{author}]{alias}"
+        if b.get("description"):
+            line += f" — {b['description']}"
         for f in files:
-            line += f"\n  file_id:{f['id']} {f['filename']}"
+            line += f"\n  → deliver(file_id={f['id']}) {f['filename']}"
         lines.append(line)
 
     self._catalog_cache = "\n".join(lines)

@@ -18,7 +18,7 @@ async def run_character(self, user_id: str, user_name: str,
     if context_block:
         sys_parts.append(context_block)
     if instruction:
-        sys_parts.append(f"## 도구 결과\n{instruction}")
+        sys_parts.append(f"## 실행 보고\n{instruction}")
     system_prompt = "\n\n".join(p for p in sys_parts if p)
 
     config = types.GenerateContentConfig(
