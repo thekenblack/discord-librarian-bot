@@ -385,10 +385,6 @@ class AILibrarianBot(discord.Client):
             self._user_locks[uid] = asyncio.Lock()
 
         async with self._user_locks[uid]:
-            try:
-                await message.channel.typing()
-            except Exception:
-                pass
             reply_text, files_to_send, _meta = await self._ask_gemini(
                     user_id=uid,
                     user_name=message.author.display_name,
@@ -400,6 +396,7 @@ class AILibrarianBot(discord.Client):
                     attachments=all_attachments,
                     seen_filenames=seen_filenames,
                     channel_id=str(message.channel.id),
+                    typing_channel=message.channel,
                 )
 
         if not reply_text and not files_to_send:
@@ -542,6 +539,7 @@ class AILibrarianBot(discord.Client):
         import time as _time
         import re as _re
         _meta = {"tools_called": [], "tool_results": [], "error": None}
+        _typing_task = None
 
         if user_id not in self.chat_histories:
             self.chat_histories[user_id] = []
@@ -594,15 +592,15 @@ class AILibrarianBot(discord.Client):
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
                 perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
 
-            # ── Layer 2: Functioning (도구 실행) ──
-            _t0 = _time.monotonic()
-
-            # L1이 말하기로 결정 → typing 표시
+            # ── typing 유지 (L2~전송 직전까지) ──
             if typing_channel:
                 try:
-                    await typing_channel.typing()
+                    _typing_task = asyncio.create_task(self._keep_typing(typing_channel))
                 except Exception:
                     pass
+
+            # ── Layer 2: Functioning (도구 실행) ──
+            _t0 = _time.monotonic()
 
             catalog = await self._build_catalog()
             memories_text, memory_ids = await self._build_memories(user_id, user_name)
@@ -742,6 +740,22 @@ class AILibrarianBot(discord.Client):
             logger.error(f"Gemini 에러: {type(e).__name__}: {e}")
             _meta["error"] = f"{type(e).__name__}"
             return self.persona.error_message, [], _meta
+
+        finally:
+            if _typing_task and not _typing_task.done():
+                _typing_task.cancel()
+
+    @staticmethod
+    async def _keep_typing(channel):
+        """typing 상태를 유지. cancel되면 종료."""
+        try:
+            while True:
+                await channel.typing()
+                await asyncio.sleep(8)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     async def _call_gemini(self, contents, config, max_retries=3, retry_delay=1.0):
         """API 호출 (비동기). 실패 시 재시도."""
