@@ -4,6 +4,62 @@
 
 ---
 
+## v7 (2026-04-04 ~)
+
+v6 기반. 구조 재정의. 기능 추가 없음, 각 레이어의 역할과 정보 흐름을 명확화.
+
+### 의도
+
+레이어 역할 재정의:
+- L1: 관찰 + 의도 파악 + 로컬 검색(search만). 비싼 호출 분리
+- L2: Execution으로 개명. 로컬 데이터 보충 판단 + 모든 비싼 실행 (recognize, web_search, deliver, gift)
+- L3: 순수 연기자. 공통 컨텍스트 원본 안 봄. L1/L2 해석만 받음
+- L4: 멘션 퍼지 매칭 + 행동 정합성 검증 (L2 보고로 L3 대사 교차 검증)
+
+공통 컨텍스트:
+- DB 1회 조회 (shared_ctx). 감정, 요약, 잔고, 카탈로그, 기억 전부 포함
+- L1/L2: 원본 직접 참조. L3: 원본 안 봄
+
+@닉네임 통일:
+- 맥락 포맷 이름(<@ID>) -> @이름. 전 레이어 동일
+- L3가 @닉네임으로 출력, L4가 mention_map 기반 <@ID> 변환
+- 히스토리에 raw_reply(변환 전) 저장. L3가 깨끗한 히스토리를 봄
+
+프로세스 통합:
+- 라이브러리 봇 + AI 사서봇을 main.py에서 하나의 asyncio 루프로 실행
+- 상호 직접 호출 가능 (DB 폴링/마커 불필요)
+- 봇->유저 선물 알림을 라이브러리 봇이 직접 전송 (L2 직후 즉시)
+
+에러 수정:
+- update_bot_emotion -> update_emotion (시급 루프 fullness/hydration 복구)
+- NEEDS_AXES 필터 누락 (db.py)
+- Perception 빈 응답 로깅
+- Unknown Emoji 리액션 방어
+- evaluation_worker task_done 중복 방어
+- URL HTML MIME 사전 체크
+- gift_user 잔고 체크 + gift_failed 보고
+- L2 불필요 attach(media_id:0) 방지
+- L3 전달 미완료 대사 방지 ([전달 성공] 엄격 규칙)
+
+### 주요 변경
+
+- main.py 추가 (통합 엔트리포인트)
+- config.json: bots를 통합 봇 1개로, model_l2/model_l4 추가, version 7
+- core.py: shared_ctx, _mention_map, _call_gemini model 파라미터, L2 직후 선물 처리, raw_reply 히스토리
+- perception.py: gather_context가 shared_ctx 사용, 카탈로그/기억/경제 공통 포함, recognize 제거
+- functioning.py: recognize_media/link 추가, 경제 블록 제거 (공통), shared_ctx 사용
+- postprocess.py: instruction(L2 보고) 받아 행동 정합성 검증
+- tools.py: recognize_media/link 선언 추가, gift_user 잔고 체크
+- db.py: NEEDS_AXES 필터 추가
+- L1 01_role.txt: 의도 파악 + 지식 판단 + 도구 현황 보고
+- L2 01_role.txt: Execution + 로컬 데이터 보충 판단
+- L2 05_instruction.txt: 판단 보충 + 도구 현황 보고
+- L3 03_behavior.txt: @닉네임, 유니코드 수식, 디스코드 마크다운, 전달 규칙 엄격화
+- L4 01_role.txt: 멘션 변환 + 행동 정합성 검증
+- admin.py: /admin log server_log 옵션
+
+---
+
 ## v6 (2026-04-04 ~)
 
 v5 기반. 경제 시스템, 자발적 발화, 레이어 역할 재조정.
