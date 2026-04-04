@@ -1232,7 +1232,7 @@ class AILibrarianBot(discord.Client):
     async def _debounced_spontaneous_reply(self, message: discord.Message, gen: int):
         """debounce 대기 후 비멘션 응답. gen이 최신이 아니면 중단."""
         channel_id = str(message.channel.id)
-        await asyncio.sleep(5)  # 5초 대기 (debounce)
+        await asyncio.sleep(3)  # 3초 대기 (debounce)
 
         # sleep 후 자기가 최신인지 확인
         if self._spontaneous_gen.get(channel_id) != gen:
