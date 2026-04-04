@@ -34,7 +34,7 @@ perception_declarations = [
     ),
     types.FunctionDeclaration(
         name="recognize_media",
-        description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 '이거 뭐야', '읽어봐' 같은 요청을 하면 사용.",
+        description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 물어보면 사용. 첨부파일이 여러 개면 각각 호출해. (0번, 1번, ...)",
         parameters=types.Schema(
             type="OBJECT",
             properties={
@@ -45,7 +45,7 @@ perception_declarations = [
     ),
     types.FunctionDeclaration(
         name="recognize_link",
-        description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 '이거 뭐야', '요약해줘' 같은 요청을 하면 사용.",
+        description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 물어보면 사용. URL이 여러 개면 각각 호출해.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
