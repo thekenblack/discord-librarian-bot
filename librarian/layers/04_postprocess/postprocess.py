@@ -20,6 +20,13 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     if not raw_reply or not raw_reply.strip():
         return ""
 
+    # 코드 기반 사전 교정: <@username> → <@id> 패턴
+    import re as _re
+    if mention_map:
+        for name, uid in mention_map.items():
+            raw_reply = _re.sub(rf'<@{_re.escape(name)}>', f'<@{uid}>', raw_reply)
+            raw_reply = _re.sub(rf'<@!{_re.escape(name)}>', f'<@{uid}>', raw_reply)
+
     sys_parts = []
     if self.persona.postprocess_text:
         sys_parts.append(self.persona.postprocess_text)
