@@ -24,8 +24,9 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     import re as _re
     if mention_map:
         for name, uid in mention_map.items():
-            raw_reply = _re.sub(rf'<@{_re.escape(name)}>', f'<@{uid}>', raw_reply)
-            raw_reply = _re.sub(rf'<@!{_re.escape(name)}>', f'<@{uid}>', raw_reply)
+            raw_reply = _re.sub(rf'<@!?{_re.escape(name)}>', f'<@{uid}>', raw_reply)
+    # 치환 안 된 <@비숫자> 패턴 → @이름으로 되돌리기 (unknown user 방지)
+    raw_reply = _re.sub(r'<@([^!&\d][^>]*)>', r'@\1', raw_reply)
 
     sys_parts = []
     if self.persona.postprocess_text:

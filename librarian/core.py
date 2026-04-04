@@ -663,6 +663,11 @@ class AILibrarianBot(discord.Client):
             for line in (reply_chain or []) + (anchor_context or []) + (recent_context or []):
                 for m in _re.finditer(r'(\S+?)\(<@(\d+)>\)', line):
                     mention_map[m.group(1)] = m.group(2)
+            # guild 멤버에서도 display_name → id 매핑
+            if guild:
+                for member in guild.members:
+                    if member.display_name not in mention_map:
+                        mention_map[member.display_name] = str(member.id)
             # 채널/역할/이모지 매핑 구성
             channel_map = {}
             role_map = {}
