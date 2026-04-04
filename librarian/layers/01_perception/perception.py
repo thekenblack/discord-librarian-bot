@@ -190,7 +190,7 @@ SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
 말이 끝났는지 확신이 없으면 wait.
 
 "응답: wait" — 기다린다. 판정만 쓰고 끝. 관찰 생략.
-"응답: 대사" — 말이 확실히 끝났고, 참여할 만할 때만."""
+"응답: reply" — 말이 확실히 끝났고, 참여할 만할 때만."""
 
 
 async def run_perception(self, user_id: str, user_name: str,
