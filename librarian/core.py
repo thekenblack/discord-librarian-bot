@@ -571,8 +571,42 @@ class AILibrarianBot(discord.Client):
                 self._trim_perception_history(channel_id)
             logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
+            # ── L1 응답 판정 ──
+            _no_comment_match = _re.search(r'응답\s*[:：]\s*no_comment', perception or "", _re.IGNORECASE)
+            _reaction_only_l1 = _re.search(r'응답\s*[:：]\s*리액션만\s*[:：]?\s*(.+)', perception or "")
+
+            if _no_comment_match:
+                logger.info("[L1] 응답 판정: no_comment (L2/L3/L4 스킵, L5 실행)")
+                _meta["no_comment"] = True
+                self._evaluation_queue.put_nowait({
+                    "user_id": user_id, "user_name": user_name,
+                    "user_text": user_text, "bot_reply": "(no_comment)",
+                    "context": perception, "tool_results": "",
+                    "channel_id": channel_id,
+                })
+                return "", [], _meta
+
+            if _reaction_only_l1:
+                emoji_str = _reaction_only_l1.group(1).strip()
+                emojis = _extract_emojis(emoji_str)
+                if emojis:
+                    _meta["reaction"] = emoji_str
+                    logger.info(f"[L1] 응답 판정: 리액션만 → {emoji_str}")
+                    return "", [], _meta
+
+            # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
+            perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
+
             # ── Layer 2: Functioning (도구 실행) ──
             _t0 = _time.monotonic()
+
+            # L1이 말하기로 결정 → typing 표시
+            if typing_channel:
+                try:
+                    await typing_channel.typing()
+                except Exception:
+                    pass
+
             catalog = await self._build_catalog()
             memories_text, memory_ids = await self._build_memories(user_id, user_name)
 
@@ -593,29 +627,6 @@ class AILibrarianBot(discord.Client):
                 _meta["gifts"] = processor_meta["gifts"]
             logger.info(f"[L2 Functioning] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
-            # 응답 모드 판별
-            if _re.search(r'no_comment', instruction or "", _re.IGNORECASE):
-                logger.info("[L2] 응답 모드: no_comment (L3/L4 스킵, L5 실행)")
-                _meta["no_comment"] = True
-                # L5 Evaluation만 실행 (큐에 추가)
-                self._evaluation_queue.put_nowait({
-                    "user_id": user_id, "user_name": user_name,
-                    "user_text": user_text, "bot_reply": "(no_comment)",
-                    "context": perception, "tool_results": instruction,
-                    "channel_id": channel_id,
-                })
-                return "", files_to_send, _meta
-
-            reaction_only_match = _re.search(
-                r'(?:응답\s*모드\s*[:：]\s*)?리액션만\s*[:：]?\s*(.+)', instruction or "")
-            if reaction_only_match:
-                emoji_str = reaction_only_match.group(1).strip()
-                emojis = _extract_emojis(emoji_str)
-                if emojis:
-                    _meta["reaction"] = emoji_str
-                    logger.info(f"[L2] 응답 모드: 리액션만 → {emoji_str}")
-                    return "", files_to_send, _meta
-
             # 일반 응답에 리액션이 포함된 경우 파싱 ("리액션: 😊")
             if instruction:
                 reaction_match = _re.search(r'리액션\s*[:：]\s*(.+?)$', instruction, _re.MULTILINE)
@@ -627,13 +638,6 @@ class AILibrarianBot(discord.Client):
                         logger.info(f"[L2] 리액션 감지: {emoji_str}")
                     # 리액션 줄을 instruction에서 제거 (L3에 안 넘김)
                     instruction = _re.sub(r'\n?리액션\s*[:：]\s*.+?$', '', instruction, flags=_re.MULTILINE).strip()
-
-            # L2가 말하기로 결정 → typing 표시
-            if typing_channel:
-                try:
-                    await typing_channel.typing()
-                except Exception:
-                    pass
 
             # ── Layer 3: Character (대사 생성) ──
             _t0 = _time.monotonic()
