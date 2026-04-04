@@ -1250,6 +1250,10 @@ class AILibrarianBot(discord.Client):
             if uid not in self._user_locks:
                 self._user_locks[uid] = asyncio.Lock()
             async with self._user_locks[uid]:
+                try:
+                    await message.channel.typing()
+                except Exception:
+                    pass
                 attachments = list(message.attachments) if message.attachments else []
                 seen_filenames = [a.filename for a in attachments] if attachments else []
                 extras = await self._extract_extras(message)
@@ -1270,12 +1274,6 @@ class AILibrarianBot(discord.Client):
                 return
 
             if reply:
-                # 치기로 판단한 후에만 typing 표시
-                try:
-                    await message.channel.typing()
-                except Exception:
-                    pass
-                # 비멘�� → 답글이 아닌 일반 메시지��� 전송
                 if files_to_send:
                     await message.channel.send(reply, files=files_to_send)
                 else:
