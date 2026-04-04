@@ -533,19 +533,19 @@ class AILibrarianBot(discord.Client):
             # ── 공통 컨텍스트 (DB 1회 조회, 전 레이어 공유) ──
             _tc = _time.monotonic()
             bot_id = str(self.user.id) if self.user else ""
-            # guild 매핑 수집 (L4 디스코드 포맷 변환용)
-            channel_map = {}
-            role_map = {}
-            emoji_map = {}
+            # guild 매핑 (전체 보관, L4에는 맥락에 나온 것만 필터링해서 전달)
+            _all_channels = {}
+            _all_roles = {}
+            _all_emojis = {}
             if guild:
                 for ch in guild.channels:
-                    channel_map[ch.name] = str(ch.id)
+                    _all_channels[ch.name] = str(ch.id)
                 for r in guild.roles:
                     if r.name != "@everyone":
-                        role_map[r.name] = str(r.id)
+                        _all_roles[r.name] = str(r.id)
                 for e in guild.emojis:
                     prefix = "a:" if e.animated else ":"
-                    emoji_map[e.name] = f"<{prefix}{e.name}:{e.id}>"
+                    _all_emojis[e.name] = f"<{prefix}{e.name}:{e.id}>"
 
             shared_ctx = {
                 "bot_emotion": await self.librarian_db.get_bot_emotion(),
@@ -556,9 +556,9 @@ class AILibrarianBot(discord.Client):
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
-                "channel_map": channel_map,
-                "role_map": role_map,
-                "emoji_map": emoji_map,
+                "_all_channels": _all_channels,
+                "_all_roles": _all_roles,
+                "_all_emojis": _all_emojis,
             }
             logger.info(f"[공통 컨텍스트] 조립 완료 ({_time.monotonic()-_tc:.2f}s)")
 
@@ -714,13 +714,22 @@ class AILibrarianBot(discord.Client):
             _t0 = _time.monotonic()
             # 현재 메시지 발화자도 mention_map에 추가
             self._mention_map[user_name] = user_id
+            # L4에 넘길 매핑: 대사에 등장하는 것만 필터링
+            _all_ch = shared_ctx.get("_all_channels", {})
+            _all_ro = shared_ctx.get("_all_roles", {})
+            _all_em = shared_ctx.get("_all_emojis", {})
+            _ctx_text = raw_reply + " " + (instruction or "")
+            channel_map = {n: i for n, i in _all_ch.items() if n in _ctx_text}
+            role_map = {n: i for n, i in _all_ro.items() if n in _ctx_text}
+            emoji_map = {n: i for n, i in _all_em.items() if n in _ctx_text}
+
             reply = await self._run_postprocess(
                 raw_reply, user_name,
                 mention_map=dict(self._mention_map),
                 instruction=instruction,
-                channel_map=shared_ctx.get("channel_map", {}),
-                role_map=shared_ctx.get("role_map", {}),
-                emoji_map=shared_ctx.get("emoji_map", {}))
+                channel_map=channel_map,
+                role_map=role_map,
+                emoji_map=emoji_map)
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)\n  원본: {raw_reply[:200]}\n  변환: {reply[:200]}")
             else:
