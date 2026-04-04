@@ -1,7 +1,7 @@
 {
   "version": "6",
   "bots": [
-    {"name": "통합 봇", "module": "combined"}
+    {"name": "통합 봇", "module": "main"}
   ],
   "paths": {
     "data_dir": "data",
