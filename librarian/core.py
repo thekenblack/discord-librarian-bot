@@ -1265,7 +1265,6 @@ class AILibrarianBot(discord.Client):
         # sleep 후 자기가 최신인지 확인
         if self._spontaneous_gen.get(channel_id) != gen:
             return
-        self._spontaneous_pending.pop(channel_id, None)
 
         try:
             text = message.content
@@ -1311,6 +1310,8 @@ class AILibrarianBot(discord.Client):
                 # 새 메시지 없음 → 말을 하다 멈춤, L1 스킵하고 L2부터 진행
                 logger.info("[자발적 채널] wait 후 추가 대기 만료 → 말을 하다 멈춤")
                 async with self._user_locks[uid]:
+                    if self._spontaneous_gen.get(channel_id) != gen:
+                        return
                     reply, files_to_send, _meta = await self._ask_gemini(
                         user_id=uid,
                         user_name=message.author.display_name,
@@ -1326,6 +1327,9 @@ class AILibrarianBot(discord.Client):
                     return
 
             if reply:
+                # 전송 직전 최종 gen 확인 (gemini 호출 중 새 메시지 올 수 있음)
+                if self._spontaneous_gen.get(channel_id) != gen:
+                    return
                 if files_to_send:
                     await message.channel.send(reply, files=files_to_send)
                 else:
