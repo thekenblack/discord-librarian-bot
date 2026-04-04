@@ -480,62 +480,6 @@ class AILibrarianBot(discord.Client):
                 if _surl not in (reply_text or ""):
                     reply_text = f"{reply_text}\n{_surl}".strip() if reply_text else _surl
 
-        # gift_user: 봇이 유저에게 선물 (잔고 차감)
-        if _meta.get("gifts"):
-            from config import AI_NAME
-            from library.cogs.shop import SHOP_MAP
-            bot_id = str(self.user.id) if self.user else ""
-            for gift in _meta["gifts"]:
-                try:
-                    item_data = SHOP_MAP.get(gift.get("item_id"))
-                    item_price = item_data["price"] if item_data else 0
-                    # 봇 잔고 차감
-                    new_bal = await self.library_db.spend_balance(
-                        bot_id, item_price, note=f"{gift['item_emoji']} {gift['item_name']}",
-                        item_emoji=gift["item_emoji"], item_name=gift["item_name"],
-                        item_price=item_price)
-                    if new_bal is None:
-                        logger.info(f"[선물] 잔고 부족으로 선물 실패: {gift['item_name']}")
-                        continue
-                    # 팁 아이템이면 유저 잔고에 실제 충전
-                    if gift.get("item_id", "").startswith("tip_"):
-                        await self.library_db.charge_balance(
-                            str(message.author.id),
-                            message.author.display_name,
-                            item_price)
-                    # gift_log에 기록 (봇→유저)
-                    await self.librarian_db.save_gift_log(
-                        buyer_id=bot_id,
-                        buyer_name=AI_NAME,
-                        item_emoji=gift["item_emoji"],
-                        item_name=gift["item_name"],
-                        item_price=item_price,
-                        message=gift.get("message"),
-                        recipient_id=str(message.author.id),
-                        recipient_name=message.author.display_name)
-                    # 라이브러리 봇이 선물 알림 임베드 전송
-                    gift_msg = gift.get("message", "")
-                    lib_client = getattr(self, "library_bot_client", None)
-                    if lib_client:
-                        try:
-                            lib_channel = lib_client.get_channel(message.channel.id)
-                            if lib_channel:
-                                from library.utils import sat_fmt
-                                gift_desc = (
-                                    f"{gift['item_emoji']} **{AI_NAME}**이(가) "
-                                    f"**{message.author.display_name}** 님에게 "
-                                    f"**{gift['item_name']}**을(를) 선물했습니다! ({sat_fmt(item_price)})"
-                                )
-                                if gift_msg:
-                                    gift_desc += f"\n> {AI_NAME}: \"{gift_msg}\""
-                                embed = discord.Embed(description=gift_desc, color=0xF1C40F)
-                                embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
-                                await lib_channel.send(embed=embed)
-                        except Exception as e:
-                            logger.warning(f"선물 알림 전송 실패 (라이브러리 봇): {e}")
-                except Exception as e:
-                    logger.warning(f"선물 알림 전송 실패: {e}")
-
         if files_to_send:
             await _send_reply(reply_text, files=files_to_send)
         elif reply_text:
@@ -668,7 +612,50 @@ class AILibrarianBot(discord.Client):
                 _meta["reaction"] = processor_meta["reaction"]
             if processor_meta.get("gifts"):
                 _meta["gifts"] = processor_meta["gifts"]
-            logger.info(f"[L2 Functioning] 완료 ({_time.monotonic()-_t0:.2f}s)")
+            logger.info(f"[L2 Execution] 완료 ({_time.monotonic()-_t0:.2f}s)")
+
+            # ── 선물 즉시 처리 (L3 이전에 알림) ──
+            if _meta.get("gifts") and typing_channel:
+                from config import AI_NAME
+                from library.cogs.shop import SHOP_MAP
+                from library.utils import sat_fmt
+                bot_id = str(self.user.id) if self.user else ""
+                for gift in _meta["gifts"]:
+                    try:
+                        item_data = SHOP_MAP.get(gift.get("item_id"))
+                        item_price = item_data["price"] if item_data else 0
+                        new_bal = await self.library_db.spend_balance(
+                            bot_id, item_price, note=f"{gift['item_emoji']} {gift['item_name']}",
+                            item_emoji=gift["item_emoji"], item_name=gift["item_name"],
+                            item_price=item_price)
+                        if new_bal is None:
+                            logger.info(f"[선물] 잔고 부족으로 선물 실패: {gift['item_name']}")
+                            continue
+                        if gift.get("item_id", "").startswith("tip_"):
+                            await self.library_db.charge_balance(user_id, user_name, item_price)
+                        await self.librarian_db.save_gift_log(
+                            buyer_id=bot_id, buyer_name=AI_NAME,
+                            item_emoji=gift["item_emoji"], item_name=gift["item_name"],
+                            item_price=item_price, message=gift.get("message"),
+                            recipient_id=user_id, recipient_name=user_name)
+                        # 라이브러리 봇으로 알림
+                        lib_client = getattr(self, "library_bot_client", None)
+                        if lib_client:
+                            lib_channel = lib_client.get_channel(typing_channel.id)
+                            if lib_channel:
+                                gift_desc = (
+                                    f"{gift['item_emoji']} **{AI_NAME}**이(가) "
+                                    f"**{user_name}** 님에게 "
+                                    f"**{gift['item_name']}**을(를) 선물했습니다! ({sat_fmt(item_price)})"
+                                )
+                                gift_msg = gift.get("message", "")
+                                if gift_msg:
+                                    gift_desc += f"\n> {AI_NAME}: \"{gift_msg}\""
+                                embed = discord.Embed(description=gift_desc, color=0xF1C40F)
+                                embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
+                                await lib_channel.send(embed=embed)
+                    except Exception as e:
+                        logger.warning(f"[선물] 처리 실패: {e}")
 
             # 일반 응답에 리액션이 포함된 경우 파싱 ("리액션: 😊")
             if instruction:
