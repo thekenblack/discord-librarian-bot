@@ -588,6 +588,9 @@ class AILibrarianBot(discord.Client):
                     _meta["ignore"] = True
                     return "", [], _meta
 
+                if _re.search(r'decide_to_reply_to', perception or "", _re.IGNORECASE):
+                    _meta["reply_to"] = True
+
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
                 perception = _re.sub(r'\n?decide_to_\w+', '', perception, flags=_re.MULTILINE).strip()
 
@@ -1305,10 +1308,13 @@ class AILibrarianBot(discord.Client):
                     return
 
             if reply:
-                if files_to_send:
-                    await message.channel.send(reply, files=files_to_send)
+                if _meta.get("reply_to"):
+                    await message.reply(reply, files=files_to_send or None, mention_author=False)
                 else:
-                    await message.channel.send(reply)
+                    if files_to_send:
+                        await message.channel.send(reply, files=files_to_send)
+                    else:
+                        await message.channel.send(reply)
                 logger.info(f"[자발적 채널] {message.author.display_name}: {text[:50]} → {reply[:100]}")
 
         except asyncio.CancelledError:
