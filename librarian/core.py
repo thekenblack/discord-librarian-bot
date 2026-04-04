@@ -533,6 +533,20 @@ class AILibrarianBot(discord.Client):
             # ── 공통 컨텍스트 (DB 1회 조회, 전 레이어 공유) ──
             _tc = _time.monotonic()
             bot_id = str(self.user.id) if self.user else ""
+            # guild 매핑 수집 (L4 디스코드 포맷 변환용)
+            channel_map = {}
+            role_map = {}
+            emoji_map = {}
+            if guild:
+                for ch in guild.channels:
+                    channel_map[ch.name] = str(ch.id)
+                for r in guild.roles:
+                    if r.name != "@everyone":
+                        role_map[r.name] = str(r.id)
+                for e in guild.emojis:
+                    prefix = "a:" if e.animated else ":"
+                    emoji_map[e.name] = f"<{prefix}{e.name}:{e.id}>"
+
             shared_ctx = {
                 "bot_emotion": await self.librarian_db.get_bot_emotion(),
                 "user_emotion": await self.librarian_db.get_user_emotion(user_id),
@@ -542,6 +556,9 @@ class AILibrarianBot(discord.Client):
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
+                "channel_map": channel_map,
+                "role_map": role_map,
+                "emoji_map": emoji_map,
             }
             logger.info(f"[공통 컨텍스트] 조립 완료 ({_time.monotonic()-_tc:.2f}s)")
 
@@ -700,7 +717,10 @@ class AILibrarianBot(discord.Client):
             reply = await self._run_postprocess(
                 raw_reply, user_name,
                 mention_map=dict(self._mention_map),
-                instruction=instruction)
+                instruction=instruction,
+                channel_map=shared_ctx.get("channel_map", {}),
+                role_map=shared_ctx.get("role_map", {}),
+                emoji_map=shared_ctx.get("emoji_map", {}))
             if reply != raw_reply:
                 logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)\n  원본: {raw_reply[:200]}\n  변환: {reply[:200]}")
             else:

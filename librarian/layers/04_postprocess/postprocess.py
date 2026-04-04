@@ -12,8 +12,11 @@ logger = logging.getLogger("AILibrarian")
 
 async def run_postprocess(self, raw_reply: str, user_name: str,
                           mention_map: dict[str, str] | None = None,
-                          instruction: str = "") -> str:
-    """멘션 변환 + 행동 정합성 확인. 톤/내용 변경 없음."""
+                          instruction: str = "",
+                          channel_map: dict[str, str] | None = None,
+                          role_map: dict[str, str] | None = None,
+                          emoji_map: dict[str, str] | None = None) -> str:
+    """멘션/채널/역할/이모지 변환 + 행동 정합성 확인."""
     if not raw_reply or not raw_reply.strip():
         return ""
 
@@ -35,6 +38,15 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     if mention_map:
         lines = [f"- @{name} → <@{uid}>" for name, uid in mention_map.items()]
         prompt_parts.append("\n멘션 매핑:\n" + "\n".join(lines))
+    if channel_map:
+        lines = [f"- #{name} → <#{cid}>" for name, cid in channel_map.items()]
+        prompt_parts.append("\n채널 매핑:\n" + "\n".join(lines))
+    if role_map:
+        lines = [f"- @{name} → <@&{rid}>" for name, rid in role_map.items()]
+        prompt_parts.append("\n역할 매핑:\n" + "\n".join(lines))
+    if emoji_map:
+        lines = [f"- :{name}: → {eid}" for name, eid in emoji_map.items()]
+        prompt_parts.append("\n이모지 매핑:\n" + "\n".join(lines))
 
     prompt = "\n".join(prompt_parts)
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
