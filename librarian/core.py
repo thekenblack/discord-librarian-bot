@@ -1278,6 +1278,9 @@ class AILibrarianBot(discord.Client):
             if uid not in self._user_locks:
                 self._user_locks[uid] = asyncio.Lock()
             async with self._user_locks[uid]:
+                # lock 획득 후 다시 gen 확인 (대기 중 새 메시지 올 수 있음)
+                if self._spontaneous_gen.get(channel_id) != gen:
+                    return
                 attachments = list(message.attachments) if message.attachments else []
                 seen_filenames = [a.filename for a in attachments] if attachments else []
                 extras = await self._extract_extras(message)
