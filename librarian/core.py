@@ -579,20 +579,11 @@ class AILibrarianBot(discord.Client):
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
                 _wait_match = _re.search(r'응답\s*[:：]\s*wait', perception or "", _re.IGNORECASE)
-                _reaction_only_l1 = _re.search(r'응답\s*[:：]\s*리액션만\s*[:：]?\s*(.+)', perception or "")
 
                 if _wait_match:
                     logger.info("[L1] 응답 판정: wait (L2/L3/L4/L5 스킵, 추가 대기)")
                     _meta["wait"] = True
                     return "", [], _meta
-
-                if _reaction_only_l1:
-                    emoji_str = _reaction_only_l1.group(1).strip()
-                    emojis = _extract_emojis(emoji_str)
-                    if emojis:
-                        _meta["reaction"] = emoji_str
-                        logger.info(f"[L1] 응답 판정: 리액션만 → {emoji_str}")
-                        return "", [], _meta
 
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
                 perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
