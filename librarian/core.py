@@ -338,10 +338,25 @@ class AILibrarianBot(discord.Client):
             return
 
         text = message.content
+        # 유저 멘션: <@ID> → @닉네임
         if message.mentions:
             for user in message.mentions:
                 text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
                 text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
+        # 채널: <#ID> → #채널이름
+        if message.guild:
+            import re as _re_input
+            for m in _re_input.finditer(r'<#(\d+)>', text):
+                ch = message.guild.get_channel(int(m.group(1)))
+                if ch:
+                    text = text.replace(m.group(), f"#{ch.name}")
+            # 역할: <@&ID> → @역할이름
+            for m in _re_input.finditer(r'<@&(\d+)>', text):
+                role = message.guild.get_role(int(m.group(1)))
+                if role:
+                    text = text.replace(m.group(), f"@{role.name}")
+            # 이모지: <:name:ID> or <a:name:ID> → :name:
+            text = _re_input.sub(r'<a?:(\w+):\d+>', r':\1:', text)
 
         server_log.log(guild=guild_name, channel=channel_name,
                        author=message.author.display_name, content=text)
