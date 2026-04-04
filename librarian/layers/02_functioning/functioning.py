@@ -135,6 +135,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                           seen_filenames: list[str] = None,
                           perception: str = "",
                           channel_id: str = None,
+                          shared_ctx: dict = None,
                           ) -> tuple[str, discord.File | None, dict]:
     """Functioning: 도구 실행 + 결과 보고. (tool_results_text, files_to_send, meta) 반환."""
     import time as _time
@@ -161,10 +162,9 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
 
-    # 봇 잔고 + 경제 시스템 안내 + 구매 가능 아이템
+    # 봇 잔고 + 경제 시스템 안내 (shared_ctx에서 읽음, DB 재조회 없음)
     from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2, SHOP_ITEMS
-    bot_id = str(self.user.id) if self.user else ""
-    bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
+    bot_balance = shared_ctx.get("balance", 0) if shared_ctx else 0
 
     wallet_block = f"## 내 경제\n잔고: {bot_balance} sat\n"
     wallet_block += f"수입: 매시 정각 시급 {AI_HOURLY_WAGE} sat + 유저가 보내는 용돈(팁)\n"
@@ -184,11 +184,6 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
         wallet_block += "선물 가능한 아이템 없음 (잔고 부족)\n"
     wallet_block += "선물은 정말 주고 싶을 때만. 아끼는 돈이다."
 
-    # 봇 자체 스탯
-    bot_emo = await self.librarian_db.get_bot_emotion()
-    fullness = bot_emo.get("fullness", 50)
-    hydration = bot_emo.get("hydration", 50)
-    wallet_block += f"\n포만감: {fullness:.0f} / 수분: {hydration:.0f}"
     parts.append(wallet_block)
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)

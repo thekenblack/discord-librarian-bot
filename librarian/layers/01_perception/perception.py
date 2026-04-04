@@ -62,10 +62,12 @@ async def gather_context(self, user_id: str, user_name: str,
                          guild=None, reply_chain: list[str] = None,
                          anchor_context: list[str] = None,
                          recent_context: list[str] = None,
-                         channel_id: str = None) -> str:
-    """DB + 외부 데이터에서 raw context 수집. 순수 코드, API 호출 없음."""
+                         channel_id: str = None,
+                         shared_ctx: dict = None) -> str:
+    """공통 컨텍스트(shared_ctx) + 외부 데이터에서 raw context 수집. DB 직접 조회 없음."""
     import re as _re
     import zoneinfo
+    ctx = shared_ctx or {}
     parts = []
 
     # 상황 정보
@@ -92,9 +94,9 @@ async def gather_context(self, user_id: str, user_name: str,
             except Exception:
                 pass
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-    situation = f"## 상황\n현재: {time_str}\n대화 상대: {user_name} ({role})"
+    situation = f"## 상황\n현재: {time_str}\n대화 상대: @{user_name} ({role})"
     if admin_names:
-        situation += f"\n도서관 주인: {', '.join(admin_names)}"
+        situation += f"\n도서관 주인: {', '.join(f'@{n}' for n in admin_names)}"
     if LIGHTNING_ADDRESS:
         situation += f"\n후원 라이트닝 주소: {LIGHTNING_ADDRESS}"
     parts.append(situation)
@@ -104,10 +106,8 @@ async def gather_context(self, user_id: str, user_name: str,
     if btc_block:
         parts.append(btc_block)
 
-    # 감정 상태: 기본 상태 + 유저별 분리
-    bot_emo = await self.librarian_db.get_bot_emotion()
-
-    # 기본 상태 (봇 전체)
+    # 감정 상태 (shared_ctx에서 읽음)
+    bot_emo = ctx.get("bot_emotion", {})
     bot_lines = []
     bot_lines.append(f"self_mood:{bot_emo.get('self_mood', 50):.1f}")
     bot_lines.append(f"self_energy:{bot_emo.get('self_energy', 50):.1f}")
@@ -115,57 +115,60 @@ async def gather_context(self, user_id: str, user_name: str,
     bot_lines.append(f"fullness:{bot_emo.get('fullness', 50):.0f}")
     bot_lines.append(f"hydration:{bot_emo.get('hydration', 50):.0f}")
 
-    # 유저별 상태
     user_lines = []
-    user_emo = await self.librarian_db.get_user_emotion(user_id)
+    user_emo = ctx.get("user_emotion")
     if user_emo:
         user_lines.append(
-            f"{user_name}: "
+            f"@{user_name}: "
             + " ".join(f"{k}:{user_emo[k]:.1f}" for k in self.librarian_db.USER_AXES)
             + f" (대화 {user_emo['interaction_count']}회)")
     else:
-        user_lines.append(f"{user_name}: 첫 방문 (수치 없음)")
+        user_lines.append(f"@{user_name}: 첫 방문 (수치 없음)")
 
     chain_user_ids = set()
     if reply_chain:
         for line in reply_chain:
-            m = _re.search(r'<@(\d+)>', line)
-            if m and m.group(1) != user_id:
-                chain_user_ids.add(m.group(1))
+            m = _re.search(r'@(\S+)', line)
+            if m:
+                name = m.group(1)
+                uid = self._mention_map.get(name)
+                if uid and uid != user_id:
+                    chain_user_ids.add(uid)
     if chain_user_ids:
         chain_emos = await self.librarian_db.get_user_emotions_bulk(chain_user_ids)
         for uid, emo in chain_emos.items():
             name = emo.get("user_name", uid)
             user_lines.append(
-                f"{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
+                f"@{name}: " + " ".join(f"{k}:{emo[k]:.1f}" for k in self.librarian_db.USER_AXES))
 
     emo_block = "## 감정 수치 (50이 중립, 0-100)\n"
     emo_block += "기본 상태 (봇 전체): " + " ".join(bot_lines) + "\n"
     emo_block += "유저별:\n" + "\n".join(f"  {l}" for l in user_lines)
     parts.append(emo_block)
 
-    # 경제 상태 + 아이템 목록
-    from library.cogs.shop import SHOP_PAGE1, SHOP_PAGE2
-    bot_id = str(self.user.id) if self.user else ""
-    bot_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
-    item_names = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE1)
-    special_names = ", ".join(f"{i['emoji']}{i['name']}({i['price']}sat)" for i in SHOP_PAGE2)
-    parts.append(f"## 내 경제\n잔고: {bot_balance} sat\n일반 아이템: {item_names}\n이상한 아이템: {special_names}")
+    # 경제 상태 (요약만, 아이템 목록은 L2에서)
+    from library.cogs.shop import SHOP_PAGE1
+    bot_balance = ctx.get("balance", 0)
+    cheapest = min(SHOP_PAGE1, key=lambda i: i["price"])
+    most_expensive = max(SHOP_PAGE1, key=lambda i: i["price"])
+    parts.append(
+        f"## 내 경제\n잔고: {bot_balance} sat\n"
+        f"가장 싼 아이템: {cheapest['emoji']}{cheapest['name']} {cheapest['price']}sat\n"
+        f"가장 비싼 아이템: {most_expensive['emoji']}{most_expensive['name']} {most_expensive['price']}sat")
 
-    # 이전 피드백
-    prev_feedback = await self.librarian_db.get_feedback(user_id)
+    # 이전 피드백 (shared_ctx에서)
+    prev_feedback = ctx.get("feedback")
     if prev_feedback:
         parts.append(f"## 이전 피드백\n{prev_feedback}")
         logger.info(f"[Perception] 이전 피드백 로드 ({len(prev_feedback)}자)")
 
-    # 대화 요약 (장기 맥락)
-    user_summary = await self.librarian_db.get_user_summary(user_id)
+    # 대화 요약 (shared_ctx에서)
+    user_summary = ctx.get("user_summary")
     if user_summary:
-        parts.append(f"## {user_name}과의 대화 요약\n{user_summary}")
-    if channel_id:
-        channel_summary = await self.librarian_db.get_channel_summary(channel_id)
-        if channel_summary:
-            parts.append(f"## 이 채널 흐름 요약\n{channel_summary}")
+        parts.append(f"## @{user_name}과의 대화 요약\n{user_summary}")
+    channel_summary = ctx.get("channel_summary")
+    if channel_summary:
+        parts.append(f"## 이 채널 흐름 요약\n{channel_summary}")
 
     # 답글 대상 주변 맥락
     if anchor_context:

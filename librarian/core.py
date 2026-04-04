@@ -576,7 +576,22 @@ class AILibrarianBot(discord.Client):
             self.perception_histories[channel_id] = []
 
         try:
-            # ── Layer 1: Perception (맥락 파악) ──
+            # ── 공통 컨텍스트 (DB 1회 조회, 전 레이어 공유) ──
+            _tc = _time.monotonic()
+            bot_id = str(self.user.id) if self.user else ""
+            shared_ctx = {
+                "bot_emotion": await self.librarian_db.get_bot_emotion(),
+                "user_emotion": await self.librarian_db.get_user_emotion(user_id),
+                "user_summary": await self.librarian_db.get_user_summary(user_id),
+                "channel_summary": await self.librarian_db.get_channel_summary(channel_id) if channel_id else "",
+                "feedback": await self.librarian_db.get_feedback(user_id),
+                "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
+                "catalog": await self._build_catalog(),
+                "memories": await self._build_memories(user_id, user_name),
+            }
+            logger.info(f"[공통 컨텍스트] 조립 완료 ({_time.monotonic()-_tc:.2f}s)")
+
+            # ─�� Layer 1: Perception (맥락 파악) ──
             if preset_perception:
                 perception = preset_perception
                 logger.info(f"[L1 Perception] 스킵 (preset: {perception[:80]})")
@@ -585,7 +600,7 @@ class AILibrarianBot(discord.Client):
                 raw_context = await self._gather_context(
                     user_id, user_name, guild, reply_chain,
                     anchor_context=anchor_context, recent_context=recent_context,
-                    channel_id=channel_id)
+                    channel_id=channel_id, shared_ctx=shared_ctx)
                 p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
                 perception = await self._run_perception(
                     user_id, user_name, user_text, raw_context,
@@ -626,11 +641,11 @@ class AILibrarianBot(discord.Client):
                 except Exception:
                     pass
 
-            # ── Layer 2: Functioning (도구 실행) ──
+            # ── Layer 2: Execution (도구 실행) ──
             _t0 = _time.monotonic()
 
-            catalog = await self._build_catalog()
-            memories_text, memory_ids = await self._build_memories(user_id, user_name)
+            catalog = shared_ctx["catalog"]
+            memories_text, memory_ids = shared_ctx["memories"]
 
             instruction, files_to_send, processor_meta = await self._run_functioning(
                 user_id=user_id, user_name=user_name, user_text=user_text,
@@ -638,6 +653,7 @@ class AILibrarianBot(discord.Client):
                 memory_ids=memory_ids,
                 attachments=attachments, seen_filenames=seen_filenames,
                 perception=perception, channel_id=channel_id,
+                shared_ctx=shared_ctx,
             )
             _meta["tools_called"] = processor_meta.get("tools_called", [])
             _meta["tool_results"] = processor_meta.get("tool_results", [])
