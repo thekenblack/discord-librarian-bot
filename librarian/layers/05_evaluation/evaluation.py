@@ -124,6 +124,10 @@ async def run_evaluation(self, user_id: str, user_name: str,
                                 except (ValueError, TypeError):
                                     pass
 
+                        # 변경 전 값 기록
+                        before_emo = await self.librarian_db.get_user_emotion(target_id)
+                        before_bot = await self.librarian_db.get_bot_emotion()
+
                         current = await self.librarian_db.update_emotion(
                             changes, target_user_id=target_id,
                             target_user_name=target_name, reason=reason,
@@ -131,8 +135,12 @@ async def run_evaluation(self, user_id: str, user_name: str,
 
                         if current:
                             changes_str = " ".join(f"{k}:{v:+d}" if isinstance(v, int) else f"{k}:{v:+.1f}" for k, v in changes.items())
+                            before_str = ""
+                            if before_emo:
+                                before_str = " ".join(f"{k}:{before_emo.get(k, 50):.1f}" for k in self.librarian_db.USER_AXES)
+                            before_str += " " + " ".join(f"{k}:{before_bot.get(k, 50):.1f}" for k in self.librarian_db.SELF_AXES + self.librarian_db.SERVER_AXES)
                             current_str = " ".join(f"{k}:{v:.1f}" for k, v in current.items())
-                            logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason} → {current_str}")
+                            logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason}\n  전: {before_str.strip()}\n  후: {current_str}")
 
                         bot_changes = {}  # 봇 축은 첫 유저에서만
 

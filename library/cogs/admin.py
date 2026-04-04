@@ -167,10 +167,10 @@ class AdminCog(commands.Cog):
                 embed=error_embed("로그 없음", f"{log_type} 로그 파일이 없습니다."), ephemeral=True
             )
 
-        # 마지막 30줄 코드블락
+        # 마지막 100줄 코드블락
         try:
             with open(log_path, encoding="utf-8") as f:
-                tail_lines = f.readlines()[-30:]
+                tail_lines = f.readlines()[-100:]
             log_text = "".join(tail_lines)
             code_block = f"```\n{log_text[-1800:]}\n```"
         except Exception:

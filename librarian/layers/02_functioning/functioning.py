@@ -403,6 +403,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     updated_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
     parts_out.append(f"(내 잔고: {updated_balance} sat)")
     tool_results_text = "\n".join(parts_out)
+    logger.info(f"[Execution] 보고:\n{tool_results_text}")
 
     return tool_results_text, files_to_send, _meta
 

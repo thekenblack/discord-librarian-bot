@@ -701,7 +701,7 @@ class AILibrarianBot(discord.Client):
                 mention_map=dict(self._mention_map),
                 instruction=instruction)
             if reply != raw_reply:
-                logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)")
+                logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)\n  원본: {raw_reply[:200]}\n  변환: {reply[:200]}")
             else:
                 logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
 
@@ -784,12 +784,17 @@ class AILibrarianBot(discord.Client):
         loop = asyncio.get_event_loop()
         for attempt in range(max_retries):
             try:
-                return await loop.run_in_executor(
+                response = await loop.run_in_executor(
                     None,
                     lambda: self._gemini_client.models.generate_content(
                         model=_model, contents=contents, config=config,
                     ),
                 )
+                # 토큰 사용량 로깅
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    logger.info(f"[토큰] in={getattr(usage, 'prompt_token_count', '?')} out={getattr(usage, 'candidates_token_count', '?')} total={getattr(usage, 'total_token_count', '?')}")
+                return response
             except ClientError as e:
                 if e.status == "INVALID_ARGUMENT":
                     raise

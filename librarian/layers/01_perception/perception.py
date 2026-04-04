@@ -268,7 +268,7 @@ async def run_perception(self, user_id: str, user_name: str,
             result = f"## 도구 결과\n{tool_block}"
 
     if result:
-        logger.info(f"[Perception] 분석 완료 ({len(result)}자): {result[:150]}")
+        logger.info(f"[Perception] 분석 완료 ({len(result)}자):\n{result}")
     else:
         logger.warning("[Perception] 분석 실패 — raw context 직접 사용")
         result = raw_context
