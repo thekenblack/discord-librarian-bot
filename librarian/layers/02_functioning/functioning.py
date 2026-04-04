@@ -42,55 +42,30 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
             except Exception as e:
                 logger.info(f"유튜브 자막 없음 ({content_id}): {e}")
 
-        # 2단계: FileData (이미지/PDF 등 직접 전달 가능한 URL)
-        # HTML 페이지는 FileData로 보낼 수 없으므로 3단계로 바로 넘김
-        _skip_filedata = False
-        _url_lower = url.split("?")[0].split("#")[0].lower()
-        _html_extensions = (".html", ".htm", ".php", ".asp", ".aspx", ".jsp")
-        if any(_url_lower.endswith(ext) for ext in _html_extensions) or not os.path.splitext(_url_lower)[1]:
-            _skip_filedata = True
-
-        if not result and not _skip_filedata:
-            try:
-                link_parts = [
-                    types.Part(file_data=types.FileData(file_uri=url)),
-                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
-                ]
-                config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
-                response = await self._call_gemini(
-                    [types.Content(role="user", parts=link_parts)], config)
-                result = self._extract_reply(response)
-                logger.info(f"URL FileData 인식 완료: {url}")
-            except ClientError as e:
-                if "INVALID_ARGUMENT" in str(e) or "Unsupported MIME" in str(e):
-                    logger.info(f"URL FileData 미지원 MIME ({url}), HTML 폴백 진행")
-                else:
-                    logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
-            except Exception as e:
-                logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
-
-        # 3단계: HTML 폴백 (FileData 실패 시 직접 가져와서 텍스트 추출)
+        # HTML 폴백 (직접 가져와서 텍스트 추출)
         if not result:
             try:
                 import aiohttp
                 from html.parser import HTMLParser
 
                 class _TextExtractor(HTMLParser):
-                    """HTML에서 텍스트만 추출. script/style 태그 내용 제외."""
+                    """HTML에서 텍스트만 추출. script/style 태그 내용 제외. og:image 추출."""
                     def __init__(self):
                         super().__init__()
                         self.parts = []
                         self._skip = False
+                        self.og_image = None
                     def handle_starttag(self, tag, attrs):
                         if tag in ("script", "style", "noscript"):
                             self._skip = True
-                        # og:description 등 메타태그 추출
                         if tag == "meta":
                             d = dict(attrs)
                             content = d.get("content", "")
                             prop = d.get("property", d.get("name", ""))
                             if prop in ("og:description", "description", "og:title") and content:
                                 self.parts.insert(0, content)
+                            if prop == "og:image" and content:
+                                self.og_image = content
                     def handle_endtag(self, tag):
                         if tag in ("script", "style", "noscript"):
                             self._skip = False
@@ -110,15 +85,39 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                 extractor = _TextExtractor()
                 extractor.feed(html[:100_000])
                 text = "\n".join(extractor.parts)[:6000]
+
+                result_parts_bg = []
+
+                # og:image 썸네일 인식
+                if extractor.og_image:
+                    try:
+                        og_parts = [
+                            types.Part(file_data=types.FileData(file_uri=extractor.og_image)),
+                            types.Part.from_text(text="이 웹페이지 프리뷰 이미지를 설명해."),
+                        ]
+                        og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
+                        og_response = await self._call_gemini(
+                            [types.Content(role="user", parts=og_parts)], og_config)
+                        og_result = self._extract_reply(og_response)
+                        if og_result:
+                            result_parts_bg.append(f"[프리뷰] {og_result}")
+                    except Exception:
+                        pass
+
+                # 텍스트 요약
                 if text and len(text) > 50:
                     prompt = f"다음은 웹페이지({url})에서 추출한 텍스트야. 3-4줄로 핵심만 설명해.\n\n{text}"
                     config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
                     response = await self._call_gemini(
                         [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
-                    result = self._extract_reply(response)
-                    logger.info(f"URL HTML 폴백 인식 완료: {url}")
+                    text_result = self._extract_reply(response)
+                    if text_result:
+                        result_parts_bg.append(text_result)
+                    logger.info(f"URL HTML 인식 완료: {url}")
                 else:
                     logger.warning(f"URL HTML 텍스트 부족 ({url}): {len(text)}자")
+
+                result = "\n".join(result_parts_bg) if result_parts_bg else ""
             except Exception as e:
                 logger.warning(f"URL HTML 폴백 실패 ({url}): {e}")
 

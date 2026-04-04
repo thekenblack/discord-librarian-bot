@@ -21,3 +21,6 @@ chromadb>=0.5.0
 
 # QR 코드 (Lightning 인보이스)
 qrcode[pil]>=7.0
+
+# 영상 썸네일 추출 (시스템에 ffmpeg 필요: apt install ffmpeg)
+# pip 패키지 불필요, subprocess로 호출

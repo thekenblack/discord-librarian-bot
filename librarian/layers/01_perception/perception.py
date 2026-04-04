@@ -345,6 +345,40 @@ async def run_perception(self, user_id: str, user_name: str,
                                         uploader=user_name, stored_name=stored_name, file_hash=file_hash)
                             except Exception as e:
                                 logger.warning(f"[Perception] 미디어 인식 실패 ({att_idx}): {e}")
+                        elif ct.startswith("video/"):
+                            # 영상 → ffmpeg 첫 프레임 추출 → 이미지 인식
+                            try:
+                                data = await att.read()
+                                import tempfile, subprocess
+                                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(att.filename)[1] or ".mp4", delete=False) as tmp_video:
+                                    tmp_video.write(data)
+                                    tmp_video_path = tmp_video.name
+                                tmp_thumb_path = tmp_video_path + ".jpg"
+                                subprocess.run(
+                                    ["ffmpeg", "-i", tmp_video_path, "-vframes", "1", "-q:v", "2", tmp_thumb_path, "-y"],
+                                    capture_output=True, timeout=10)
+                                if os.path.exists(tmp_thumb_path):
+                                    with open(tmp_thumb_path, "rb") as f:
+                                        thumb_data = f.read()
+                                    media_parts = [
+                                        types.Part.from_bytes(data=thumb_data, mime_type="image/jpeg"),
+                                        types.Part.from_text(text="이 영상의 첫 장면이야. 3-4줄로 설명해."),
+                                    ]
+                                    media_config = types.GenerateContentConfig(
+                                        max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                    media_response = await self._call_gemini(
+                                        [types.Content(role="user", parts=media_parts)], media_config)
+                                    media_result = self._extract_reply(media_response)
+                                    if media_result:
+                                        media_result = f"[영상 썸네일] {media_result}"
+                                # 임시 파일 정리
+                                for p in [tmp_video_path, tmp_thumb_path]:
+                                    try:
+                                        os.remove(p)
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                logger.warning(f"[Perception] 영상 썸네일 추출 실패 ({att_idx}): {e}")
                         else:
                             media_result = f"이 파일 형식({ct})은 인식할 수 없어."
                     else:
@@ -382,6 +416,87 @@ async def run_perception(self, user_id: str, user_name: str,
                                     normalized, url, link_result, user_name=user_name, status="done")
                         except Exception as e:
                             logger.warning(f"[Perception] 이미지 URL 인식 실패 ({url}): {e}")
+
+                    # 유튜브: 썸네일(항상) + 자막(있으면)
+                    if not link_result and parsed.get("content_id"):
+                        yt_id = parsed["content_id"]
+                        yt_parts = []
+
+                        # 썸네일 인식 (항상)
+                        thumb_url = f"https://img.youtube.com/vi/{yt_id}/maxresdefault.jpg"
+                        try:
+                            thumb_parts = [
+                                types.Part(file_data=types.FileData(file_uri=thumb_url)),
+                                types.Part.from_text(text="이 유튜브 영상 썸네일을 설명해."),
+                            ]
+                            thumb_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
+                            thumb_response = await self._call_gemini(
+                                [types.Content(role="user", parts=thumb_parts)], thumb_config)
+                            thumb_result = self._extract_reply(thumb_response)
+                            if thumb_result:
+                                yt_parts.append(f"[썸네일] {thumb_result}")
+                        except Exception as e:
+                            logger.warning(f"[Perception] 유튜브 썸네일 인식 실패 ({yt_id}): {e}")
+
+                        # 자막 추출 (있으면)
+                        try:
+                            from youtube_transcript_api import YouTubeTranscriptApi
+                            loop = asyncio.get_event_loop()
+                            transcript_list = await loop.run_in_executor(
+                                None, lambda: YouTubeTranscriptApi.get_transcript(yt_id, languages=["ko", "en"]))
+                            text = " ".join(t["text"] for t in transcript_list)[:8000]
+                            if text:
+                                prompt = f"다음은 유튜브 영상 자막이야. 3-4줄로 핵심만 설명해.\n\n{text}"
+                                sub_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                                sub_response = await self._call_gemini(
+                                    [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], sub_config)
+                                sub_result = self._extract_reply(sub_response)
+                                if sub_result:
+                                    yt_parts.append(f"[자막 요약] {sub_result}")
+                        except Exception:
+                            yt_parts.append("[자막 없음] 자막이 없어서 영상 내용은 확인할 수 없다.")
+
+                        if yt_parts:
+                            link_result = "\n".join(yt_parts)
+                            url_id = await self.librarian_db.save_url_result(
+                                normalized, url, link_result, user_name=user_name, status="done")
+
+                    # 일반 URL: og:image 즉시 인식 → 전체 텍스트는 pending
+                    if not link_result and not parsed.get("content_id") and not _is_image_url:
+                        try:
+                            import aiohttp
+                            async with aiohttp.ClientSession() as _session:
+                                async with _session.get(url, timeout=aiohttp.ClientTimeout(total=5),
+                                                         headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                                    if resp.status == 200:
+                                        html_head = await resp.text(errors="replace")
+                                        html_head = html_head[:20000]
+                                        # og:image 추출
+                                        import re as _re_og
+                                        og_match = _re_og.search(r'property=["\']og:image["\'][^>]*content=["\']([^"\']+)', html_head)
+                                        if not og_match:
+                                            og_match = _re_og.search(r'content=["\']([^"\']+)["\'][^>]*property=["\']og:image', html_head)
+                                        if og_match:
+                                            og_image_url = og_match.group(1)
+                                            try:
+                                                og_parts = [
+                                                    types.Part(file_data=types.FileData(file_uri=og_image_url)),
+                                                    types.Part.from_text(text="이 웹페이지 프리뷰 이미지를 설명해."),
+                                                ]
+                                                og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
+                                                og_response = await self._call_gemini(
+                                                    [types.Content(role="user", parts=og_parts)], og_config)
+                                                og_result = self._extract_reply(og_response)
+                                                if og_result:
+                                                    link_result = f"[프리뷰] {og_result}\n(전체 내용은 읽는 중)"
+                                                    # pending으로 저장하고 백그라운드에서 전체 처리
+                                                    await self.librarian_db.save_url_result(
+                                                        normalized, url, link_result, user_name=user_name, status="pending")
+                                                    asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                                            except Exception:
+                                                pass
+                        except Exception:
+                            pass
 
                     if not link_result:
                         cached = await self.librarian_db.get_url_by_normalized(normalized)
