@@ -1309,7 +1309,7 @@ class AILibrarianBot(discord.Client):
 
             if reply:
                 if _meta.get("reply_to"):
-                    await message.reply(reply, files=files_to_send or None, mention_author=False)
+                    await message.reply(reply, files=files_to_send or None)
                 else:
                     if files_to_send:
                         await message.channel.send(reply, files=files_to_send)
