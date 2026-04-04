@@ -234,6 +234,119 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 _meta["tool_results"].append(ws_text)
                 continue
 
+            # recognize_media (비싼 호출 — L1이 존재만 알림, L2가 실행)
+            if fc.name == "recognize_media":
+                fc_args = dict(fc.args) if fc.args else {}
+                indices = fc_args.get("indices") or [fc_args.get("attachment_index", 0)]
+                current_attachments = self._current_attachments or []
+                for att_idx in indices:
+                    att_idx = int(att_idx)
+                    media_result = ""
+                    if att_idx < len(current_attachments):
+                        att = current_attachments[att_idx]
+                        ct = att.content_type or ""
+                        cached = None
+                        data = None
+                        file_hash = None
+                        if ct.startswith("image/") or ct == "application/pdf":
+                            data = await att.read()
+                            import hashlib
+                            file_hash = hashlib.sha256(data).hexdigest()
+                            cached = await self.librarian_db.get_media_by_hash(file_hash) \
+                                  or await self.librarian_db.get_media_by_filename(att.filename)
+                        else:
+                            cached = await self.librarian_db.get_media_by_filename(att.filename)
+
+                        if cached:
+                            media_result = cached["result"]
+                        elif ct.startswith("image/") or ct == "application/pdf":
+                            try:
+                                media_parts = [
+                                    types.Part.from_bytes(data=data, mime_type=ct),
+                                    types.Part.from_text(text="3-4줄로 핵심만 설명해."),
+                                ]
+                                from config import AI_MAX_OUTPUT_TOKENS
+                                media_config = types.GenerateContentConfig(
+                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                media_response = await self._call_gemini(
+                                    [types.Content(role="user", parts=media_parts)], media_config)
+                                media_result = self._extract_reply(media_response)
+                                if media_result:
+                                    stored_name = None
+                                    try:
+                                        os.makedirs(MEDIA_DIR, exist_ok=True)
+                                        import uuid
+                                        ext = os.path.splitext(att.filename)[1] or ""
+                                        stored_name = f"{uuid.uuid4().hex}{ext}"
+                                        with open(os.path.join(MEDIA_DIR, stored_name), "wb") as mf:
+                                            mf.write(data)
+                                    except Exception:
+                                        stored_name = None
+                                    await self.librarian_db.save_media_result(
+                                        att.filename, media_result, user_name=user_name,
+                                        uploader=user_name, stored_name=stored_name, file_hash=file_hash)
+                            except Exception as e:
+                                logger.warning(f"[Execution] 미디어 인식 실패 ({att_idx}): {e}")
+                        else:
+                            media_result = f"이 파일 형식({ct})은 인식할 수 없어."
+                    else:
+                        media_result = "첨부파일이 없어."
+                    result_parts.append(f"[미디어 인식 {att_idx}] {media_result or '인식 실패'}")
+                    _meta["tools_called"].append(f"recognize_media({att_idx})")
+                continue
+
+            # recognize_link (비싼 호출 — L1이 존재만 알림, L2가 실행)
+            if fc.name == "recognize_link":
+                fc_args = dict(fc.args) if fc.args else {}
+                urls = fc_args.get("urls") or [fc_args.get("url", "")]
+                for url in urls:
+                    if not url:
+                        continue
+                    link_result = ""
+                    parsed = parse_url(url)
+                    normalized = parsed["normalized"]
+                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+                    _url_path = url.split("?")[0].split("#")[0].lower()
+                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
+
+                    if _is_image_url:
+                        try:
+                            img_parts = [
+                                types.Part(file_data=types.FileData(file_uri=url)),
+                                types.Part.from_text(text="이 이미지를 설명해."),
+                            ]
+                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                            img_response = await self._call_gemini(
+                                [types.Content(role="user", parts=img_parts)], img_config)
+                            link_result = self._extract_reply(img_response)
+                            if link_result:
+                                await self.librarian_db.save_url_result(
+                                    normalized, url, link_result, user_name=user_name, status="done")
+                        except Exception as e:
+                            logger.warning(f"[Execution] 이미지 URL 인식 실패 ({url}): {e}")
+
+                    if not link_result:
+                        cached = await self.librarian_db.get_url_by_normalized(normalized)
+                        if cached:
+                            if cached.get("status") == "pending":
+                                link_result = "아직 읽는 중."
+                            elif cached.get("status") == "failed":
+                                await self.librarian_db.update_url_result(normalized, "", status="pending")
+                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                                link_result = "방금 읽기 시작했어."
+                            else:
+                                link_result = cached["result"]
+
+                    if not link_result:
+                        await self.librarian_db.save_url_result(
+                            normalized, url, "", user_name=user_name, status="pending")
+                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
+                        link_result = "방금 읽기 시작했어."
+
+                    result_parts.append(f"[링크 인식] ({url}): {link_result or '인식 실패'}")
+                    _meta["tools_called"].append(f"recognize_link({url[:50]})")
+                continue
+
             # deliver / attach / gift_user
             tool_args = dict(fc.args) if fc.args else {}
             tool_args["_user_id"] = user_id
