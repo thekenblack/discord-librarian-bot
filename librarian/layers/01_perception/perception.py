@@ -237,7 +237,12 @@ async def run_perception(self, user_id: str, user_name: str,
     result = ""
     tool_results = []
 
-    if response and response.candidates and response.candidates[0].content.parts:
+    if not response or not response.candidates:
+        logger.warning("[Perception] API 응답 없음 (no candidates)")
+    elif not response.candidates[0].content or not response.candidates[0].content.parts:
+        finish = getattr(response.candidates[0], "finish_reason", "unknown")
+        logger.warning(f"[Perception] 빈 응답 (finish_reason: {finish})")
+    else:
         for part in response.candidates[0].content.parts:
             if part.text and part.text.strip():
                 result = part.text.strip()

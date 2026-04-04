@@ -149,7 +149,8 @@ class AdminCog(commands.Cog):
 
     # ── /admin log ──────────────────────────────────────────
     @admin.command(name="log", description="AI 봇 로그 파일 전송")
-    async def admin_log(self, interaction: discord.Interaction):
+    @app_commands.describe(server_log="서버 로그(server.log) 전송 여부")
+    async def admin_log(self, interaction: discord.Interaction, server_log: bool = False):
         if not is_admin(interaction):
             return await interaction.response.send_message(
                 embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
@@ -158,11 +159,12 @@ class AdminCog(commands.Cog):
 
         from datetime import datetime as dt
         today = dt.now().strftime("%Y-%m-%d")
-        log_path = os.path.join(LOG_DIR, f"bot.{today}.log")
+        log_type = "server" if server_log else "bot"
+        log_path = os.path.join(LOG_DIR, f"{log_type}.{today}.log")
 
         if not os.path.exists(log_path):
             return await interaction.followup.send(
-                embed=error_embed("로그 없음", "로그 파일이 없습니다."), ephemeral=True
+                embed=error_embed("로그 없음", f"{log_type} 로그 파일이 없습니다."), ephemeral=True
             )
 
         # 마지막 30줄 코드블락
@@ -182,11 +184,11 @@ class AdminCog(commands.Cog):
                 content_bytes = ("\ufeff" + f.read()).encode("utf-8")
             buf = io.BytesIO(content_bytes)
             await interaction.user.send(
-                content="봇 로그 파일",
-                file=discord.File(buf, filename=f"bot.{today}.txt")
+                content=f"{log_type} 로그 파일",
+                file=discord.File(buf, filename=f"{log_type}.{today}.txt")
             )
             await interaction.followup.send(
-                embed=success_embed("로그 전송", "DM으로 로그를 전송했습니다."), ephemeral=True
+                embed=success_embed("로그 전송", f"DM으로 {log_type} 로그를 전송했습니다."), ephemeral=True
             )
         except discord.Forbidden:
             await interaction.followup.send(

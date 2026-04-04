@@ -60,7 +60,9 @@ def _extract_emojis(raw: str) -> list[str]:
     custom = _CUSTOM_EMOJI_RE.findall(raw)
     if custom:
         return custom
-    return _UNICODE_EMOJI_RE.findall(raw)
+    # variation selector (U+FE0F) 단독 매칭 방지 — 이모지 본체가 있을 때만 유효
+    results = _UNICODE_EMOJI_RE.findall(raw)
+    return [e for e in results if len(e.rstrip("\uFE0F")) > 0]
 
 
 class AILibrarianBot(discord.Client):
@@ -206,13 +208,23 @@ class AILibrarianBot(discord.Client):
     async def _evaluation_worker(self):
         """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
         while True:
+            got_item = False
             try:
                 kwargs = await self._evaluation_queue.get()
+                got_item = True
                 await self._run_evaluation(**kwargs)
+            except asyncio.CancelledError:
+                if got_item:
+                    self._evaluation_queue.task_done()
+                return
             except Exception as e:
                 logger.warning(f"[Evaluation Worker] 에러 (무시): {e}")
             finally:
-                self._evaluation_queue.task_done()
+                if got_item:
+                    try:
+                        self._evaluation_queue.task_done()
+                    except ValueError:
+                        pass
 
     async def _flush_admin_notify(self, delay: float = 10.0):
         """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
@@ -411,8 +423,10 @@ class AILibrarianBot(discord.Client):
                     try:
                         await message.add_reaction(em)
                         logger.info(f"이모지 리액션: {em}")
+                    except discord.HTTPException as e:
+                        logger.info(f"리액션 실패 (건너뜀): {em!r} → {e}")
                     except Exception as e:
-                        logger.warning(f"리액션 실패: {e}")
+                        logger.warning(f"리액션 실패: {em!r} → {e}")
                 return
             if _meta.get("no_response"):
                 logger.info("no_response → 메시지 안 보냄")
@@ -527,8 +541,10 @@ class AILibrarianBot(discord.Client):
             for em in _extract_emojis(_meta["reaction"]):
                 try:
                     await message.add_reaction(em)
+                except discord.HTTPException as e:
+                    logger.info(f"리액션 실패 (건너뜀): {em!r} → {e}")
                 except Exception as e:
-                    logger.warning(f"리액션 실패: {e}")
+                    logger.warning(f"리액션 실패: {em!r} → {e}")
 
     async def _ask_gemini(self, user_id: str,
                           user_name: str, user_text: str,
@@ -1039,6 +1055,7 @@ class AILibrarianBot(discord.Client):
 
             # fullness/hydration만 직접 적용 (mood/energy는 L5가 판단)
             effects_str = gift.get("effects", "")
+            fh_effects = {}
             for pair in effects_str.split(","):
                 if ":" not in pair:
                     continue
@@ -1046,9 +1063,14 @@ class AILibrarianBot(discord.Client):
                 k = k.strip()
                 if k in ("fullness", "hydration"):
                     try:
-                        await self.librarian_db.update_bot_emotion(k, float(v))
-                    except Exception:
+                        fh_effects[k] = float(v)
+                    except ValueError:
                         pass
+            if fh_effects:
+                try:
+                    await self.librarian_db.update_emotion(fh_effects)
+                except Exception:
+                    pass
 
             # 멘션 매핑
             mention_map = {}
@@ -1106,7 +1128,7 @@ class AILibrarianBot(discord.Client):
                 for axis in ("fullness", "hydration"):
                     current = bot_emo.get(axis, 50)
                     decay = max(1, current * 0.06)
-                    await self.librarian_db.update_bot_emotion(axis, -decay)
+                    await self.librarian_db.update_emotion({axis: -decay})
                 balance = await self.library_db.get_balance(bot_id)
 
                 # 자동 식사: 확률 = (100 - fullness)%
@@ -1119,10 +1141,10 @@ class AILibrarianBot(discord.Client):
                             bot_id, item["price"], note=f"{item['emoji']} {item['name']}",
                             item_emoji=item["emoji"], item_name=item["name"], item_price=item["price"])
                         if result is not None:
-                            for ek in ("fullness", "hydration", "self_mood", "self_energy"):
-                                ev = item["effects"].get(ek)
-                                if ev:
-                                    await self.librarian_db.update_bot_emotion(ek, ev)
+                            effects = {ek: ev for ek in ("fullness", "hydration", "self_mood", "self_energy")
+                                       if (ev := item["effects"].get(ek))}
+                            if effects:
+                                await self.librarian_db.update_emotion(effects)
                             await self.librarian_db.save_gift_log(
                                 buyer_id=bot_id, buyer_name=AI_NAME,
                                 item_emoji=item["emoji"], item_name=item["name"],
@@ -1142,10 +1164,10 @@ class AILibrarianBot(discord.Client):
                             bot_id, item["price"], note=f"{item['emoji']} {item['name']}",
                             item_emoji=item["emoji"], item_name=item["name"], item_price=item["price"])
                         if result is not None:
-                            for ek in ("fullness", "hydration", "self_mood", "self_energy"):
-                                ev = item["effects"].get(ek)
-                                if ev:
-                                    await self.librarian_db.update_bot_emotion(ek, ev)
+                            effects = {ek: ev for ek in ("fullness", "hydration", "self_mood", "self_energy")
+                                       if (ev := item["effects"].get(ek))}
+                            if effects:
+                                await self.librarian_db.update_emotion(effects)
                             await self.librarian_db.save_gift_log(
                                 buyer_id=bot_id, buyer_name=AI_NAME,
                                 item_emoji=item["emoji"], item_name=item["name"],

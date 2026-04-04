@@ -43,7 +43,14 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                 logger.info(f"유튜브 자막 없음 ({content_id}): {e}")
 
         # 2단계: FileData (이미지/PDF 등 직접 전달 가능한 URL)
-        if not result:
+        # HTML 페이지는 FileData로 보낼 수 없으므로 3단계로 바로 넘김
+        _skip_filedata = False
+        _url_lower = url.split("?")[0].split("#")[0].lower()
+        _html_extensions = (".html", ".htm", ".php", ".asp", ".aspx", ".jsp")
+        if any(_url_lower.endswith(ext) for ext in _html_extensions) or not os.path.splitext(_url_lower)[1]:
+            _skip_filedata = True
+
+        if not result and not _skip_filedata:
             try:
                 link_parts = [
                     types.Part(file_data=types.FileData(file_uri=url)),
@@ -54,6 +61,11 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                     [types.Content(role="user", parts=link_parts)], config)
                 result = self._extract_reply(response)
                 logger.info(f"URL FileData 인식 완료: {url}")
+            except ClientError as e:
+                if "INVALID_ARGUMENT" in str(e) or "Unsupported MIME" in str(e):
+                    logger.info(f"URL FileData 미지원 MIME ({url}), HTML 폴백 진행")
+                else:
+                    logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
             except Exception as e:
                 logger.warning(f"URL FileData 인식 실패 ({url}): {e}")
 
