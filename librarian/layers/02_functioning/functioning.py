@@ -262,29 +262,41 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                 if os.path.exists(save_path):
                     files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
                     await self.library_db.increment_download(tool_data["file_id"])
+                    result_parts.append(f"[전달 성공] {tool_data['filename']}")
+                else:
+                    result_parts.append(f"[전달 실패] 파일을 찾을 수 없다.")
 
-            if tool_data.get("_action") == "attach":
+            elif tool_data.get("_action") == "attach":
                 save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
                 if os.path.exists(save_path):
                     files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
+                    result_parts.append(f"[첨부 성공] {tool_data['filename']}")
+                else:
+                    result_parts.append(f"[첨부 실패] 파일을 찾을 수 없다.")
 
-            if tool_data.get("_action") == "share_url":
+            elif tool_data.get("_action") == "share_url":
                 shared_url = tool_data.get("url", "")
                 if shared_url:
                     _meta.setdefault("shared_urls", []).append(shared_url)
+                result_parts.append(f"[URL 공유] {shared_url}")
 
-            if tool_data.get("_action") == "gift_user":
+            elif tool_data.get("_action") == "gift_user":
                 _meta.setdefault("gifts", []).append(tool_data)
+                result_parts.append(f"[선물] {tool_data['item_emoji']}{tool_data['item_name']}")
 
-            result_parts.append(tool_result)
+            elif tool_data.get("error"):
+                result_parts.append(f"[오류] {tool_data['error']}")
 
-    # 도구 결과 + 텍스트를 합쳐서 반환
+            elif tool_data.get("result"):
+                result_parts.append(tool_data["result"])
+
+    # 텍스트 보고 + 도구 실행 결과를 합쳐서 반환
+    parts_out = []
+    if text_response:
+        parts_out.append(text_response)
     if result_parts:
-        tool_results_text = "\n".join(result_parts)
-    elif text_response:
-        tool_results_text = text_response
-    else:
-        tool_results_text = ""
+        parts_out.append("\n".join(result_parts))
+    tool_results_text = "\n".join(parts_out)
 
     return tool_results_text, files_to_send, _meta
 
