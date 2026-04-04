@@ -182,17 +182,31 @@ async def gather_context(self, user_id: str, user_name: str,
     return "\n\n".join(parts)
 
 
+SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
+
+이 메시지는 멘션 없이 채널에 올라온 메시지다. 반응할지 말지 먼저 판단해.
+no_comment로 판정하면 관찰 내용을 정리할 필요 없이 판정만 써.
+
+마지막 줄에 응답 판정을 써:
+- "응답: 대사" — 대화에 참여할 때. 이 경우에만 위의 정리 순서대로 관찰 내용을 써.
+- "응답: 리액션만: [이모지]" — 텍스트 없이 이모지 리액션만 달 때
+- "응답: no_comment" — 아직 상대의 말이 끝나지 않은 것 같을 때. 메시지가 끊겨 있거나, 접속사로 끝나거나, 이어서 더 말할 것 같으면 기다려. 끼어들 필요 없는 대화도 해당."""
+
+
 async def run_perception(self, user_id: str, user_name: str,
                          user_text: str, raw_context: str,
                          history: list = None,
                          attachments: list = None,
-                         seen_filenames: list = None) -> str:
+                         seen_filenames: list = None,
+                         is_spontaneous: bool = False) -> str:
     """raw context를 Gemini에 보내서 상황 분석 + 검색/인식 도구 실행. 1회 호출."""
     import asyncio
 
     sys_parts = []
     if self.persona.perception_text:
         sys_parts.append(self.persona.perception_text)
+    if is_spontaneous:
+        sys_parts.append(SPONTANEOUS_RESPONSE_PROMPT)
     if raw_context:
         sys_parts.append(raw_context)
     system_prompt = "\n\n".join(p for p in sys_parts if p)

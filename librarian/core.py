@@ -536,7 +536,8 @@ class AILibrarianBot(discord.Client):
                           attachments: list = None,
                           seen_filenames: list[str] = None,
                           channel_id: str = None,
-                          typing_channel=None) -> tuple[str, list, dict]:
+                          typing_channel=None,
+                          is_spontaneous: bool = False) -> tuple[str, list, dict]:
         """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
@@ -561,7 +562,8 @@ class AILibrarianBot(discord.Client):
             perception = await self._run_perception(
                 user_id, user_name, user_text, raw_context,
                 history=p_history,
-                attachments=attachments, seen_filenames=seen_filenames)
+                attachments=attachments, seen_filenames=seen_filenames,
+                is_spontaneous=is_spontaneous)
             # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
             if channel_id is not None:
                 self.perception_histories[channel_id].append(types.Content(role="user", parts=[
@@ -571,31 +573,26 @@ class AILibrarianBot(discord.Client):
                 self._trim_perception_history(channel_id)
             logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
-            # ── L1 응답 판정 ──
-            _no_comment_match = _re.search(r'응답\s*[:：]\s*no_comment', perception or "", _re.IGNORECASE)
-            _reaction_only_l1 = _re.search(r'응답\s*[:：]\s*리액션만\s*[:：]?\s*(.+)', perception or "")
+            # ── L1 응답 판정 (자발적 발화 전용) ──
+            if is_spontaneous:
+                _no_comment_match = _re.search(r'응답\s*[:：]\s*no_comment', perception or "", _re.IGNORECASE)
+                _reaction_only_l1 = _re.search(r'응답\s*[:：]\s*리액션만\s*[:：]?\s*(.+)', perception or "")
 
-            if _no_comment_match:
-                logger.info("[L1] 응답 판정: no_comment (L2/L3/L4 스킵, L5 실행)")
-                _meta["no_comment"] = True
-                self._evaluation_queue.put_nowait({
-                    "user_id": user_id, "user_name": user_name,
-                    "user_text": user_text, "bot_reply": "(no_comment)",
-                    "context": perception, "tool_results": "",
-                    "channel_id": channel_id,
-                })
-                return "", [], _meta
-
-            if _reaction_only_l1:
-                emoji_str = _reaction_only_l1.group(1).strip()
-                emojis = _extract_emojis(emoji_str)
-                if emojis:
-                    _meta["reaction"] = emoji_str
-                    logger.info(f"[L1] 응답 판정: 리액션만 → {emoji_str}")
+                if _no_comment_match:
+                    logger.info("[L1] 응답 판정: no_comment (L2/L3/L4/L5 스킵)")
+                    _meta["no_comment"] = True
                     return "", [], _meta
 
-            # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
-            perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
+                if _reaction_only_l1:
+                    emoji_str = _reaction_only_l1.group(1).strip()
+                    emojis = _extract_emojis(emoji_str)
+                    if emojis:
+                        _meta["reaction"] = emoji_str
+                        logger.info(f"[L1] 응답 판정: 리액션만 → {emoji_str}")
+                        return "", [], _meta
+
+                # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
+                perception = _re.sub(r'\n?응답\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
 
             # ── Layer 2: Functioning (도구 실행) ──
             _t0 = _time.monotonic()
@@ -1277,6 +1274,7 @@ class AILibrarianBot(discord.Client):
                     seen_filenames=seen_filenames,
                     channel_id=channel_id,
                     typing_channel=message.channel,
+                    is_spontaneous=True,
                 )
 
             if _meta.get("no_response") or _meta.get("no_comment"):
