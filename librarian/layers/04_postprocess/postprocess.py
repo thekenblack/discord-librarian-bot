@@ -54,7 +54,11 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     result = self._extract_reply(response)
 
     if result and result.strip():
-        changed = result.strip() != raw_reply.strip()
+        result = result.strip()
+        # <@비숫자> 깨진 멘션 정리 (unknown user 방지)
+        import re as _re
+        result = _re.sub(r'<@([^!&\d>][^>]*)>', r'@\1', result)
+        changed = result != raw_reply.strip()
         if changed:
             logger.info(f"[Postprocess] 정제됨: {result[:100]}")
         else:
