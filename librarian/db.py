@@ -1034,7 +1034,7 @@ class LibrarianDB:
     SELF_AXES = ["self_mood", "self_energy"]
     NEEDS_AXES = ["fullness", "hydration"]  # 물리적 상태 (feel과 별개)
     SERVER_AXES = ["server_vibe"]
-    ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES
+    ALL_AXES = USER_AXES + SELF_AXES + SERVER_AXES + NEEDS_AXES
 
     AXIS_DELTA_MAX = 15  # 보정 후 최종 변화 허용치 ±15
     NEUTRAL = 50  # 중립값
@@ -1241,9 +1241,9 @@ class LibrarianDB:
                 for axis in self.USER_AXES:
                     result[f"user_{axis}"] = current[axis]
 
-            # self_/server_ 축 처리
+            # self_/server_/needs 축 처리
             global_changes = {k: v for k, v in changes.items()
-                              if k in self.SELF_AXES + self.SERVER_AXES}
+                              if k in self.SELF_AXES + self.SERVER_AXES + self.NEEDS_AXES}
             for axis, delta in global_changes.items():
                 cursor = await db.execute(
                     "SELECT value, updated_at FROM bot_emotion WHERE key = ?", (axis,))
