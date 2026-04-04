@@ -578,11 +578,14 @@ class AILibrarianBot(discord.Client):
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
-                _wait_match = _re.search(r'decide_to_pause', perception or "", _re.IGNORECASE)
-
-                if _wait_match:
-                    logger.info("[L1] 응답 판정: wait (L2/L3/L4/L5 스킵, 추가 대기)")
+                if _re.search(r'decide_to_pause', perception or "", _re.IGNORECASE):
+                    logger.info("[L1] 응답 판정: pause (추가 대기)")
                     _meta["wait"] = True
+                    return "", [], _meta
+
+                if _re.search(r'decide_to_ignore', perception or "", _re.IGNORECASE):
+                    logger.info("[L1] 응답 판정: ignore (무시)")
+                    _meta["ignore"] = True
                     return "", [], _meta
 
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
@@ -1234,27 +1237,27 @@ class AILibrarianBot(discord.Client):
 
     async def _handle_spontaneous_channel_message(self, message: discord.Message):
         """자발적 채널에서 비멘션 메시지 처리. debounce 후 응답 여부 결정."""
-        channel_id = str(message.channel.id)
+        debounce_key = f"{message.channel.id}:{message.author.id}"
 
         # generation 카운터로 최신 메시지만 처리
-        gen = self._spontaneous_gen.get(channel_id, 0) + 1
-        self._spontaneous_gen[channel_id] = gen
+        gen = self._spontaneous_gen.get(debounce_key, 0) + 1
+        self._spontaneous_gen[debounce_key] = gen
 
         # 기존 대기 취소 (best effort)
-        old_task = self._spontaneous_pending.get(channel_id)
+        old_task = self._spontaneous_pending.get(debounce_key)
         if old_task and not old_task.done():
             old_task.cancel()
 
-        self._spontaneous_pending[channel_id] = asyncio.create_task(
-            self._debounced_spontaneous_reply(message, gen))
+        self._spontaneous_pending[debounce_key] = asyncio.create_task(
+            self._debounced_spontaneous_reply(message, gen, debounce_key))
 
-    async def _debounced_spontaneous_reply(self, message: discord.Message, gen: int):
+    async def _debounced_spontaneous_reply(self, message: discord.Message, gen: int, debounce_key: str):
         """debounce 대기 후 비멘션 응답. gen이 최신이 아니면 중단."""
         channel_id = str(message.channel.id)
         await asyncio.sleep(3)  # 3초 대기 (debounce)
 
         # sleep 후 자기가 최신인지 확인
-        if self._spontaneous_gen.get(channel_id) != gen:
+        if self._spontaneous_gen.get(debounce_key) != gen:
             return
 
         try:
@@ -1286,19 +1289,19 @@ class AILibrarianBot(discord.Client):
                     is_spontaneous=True,
                 )
 
-            if _meta.get("no_response"):
+            if _meta.get("no_response") or _meta.get("ignore"):
                 return
 
             if _meta.get("wait"):
                 # 상대가 아직 말하는 중이라고 판단 → 추가 대기
                 await asyncio.sleep(5)
                 # 새 메시지가 왔으면 중단 (다음 debounce가 처리)
-                if self._spontaneous_gen.get(channel_id) != gen:
+                if self._spontaneous_gen.get(debounce_key) != gen:
                     return
                 # 새 메시지 없음 → 말을 하다 멈춤, L1 스킵하고 L2부터 진행
                 logger.info("[자발적 채널] wait 후 추가 대기 만료 → 말을 하다 멈춤")
                 async with self._user_locks[uid]:
-                    if self._spontaneous_gen.get(channel_id) != gen:
+                    if self._spontaneous_gen.get(debounce_key) != gen:
                         return
                     reply, files_to_send, _meta = await self._ask_gemini(
                         user_id=uid,
