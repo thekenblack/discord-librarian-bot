@@ -146,20 +146,22 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     func_prompt = self.persona.functioning_text or self.persona.prompt_text
     parts.append(func_prompt)
 
-    # L1 Perception 분석 결과 포함
+    # 공통 컨텍스트 직접 포함 (L1과 동일한 원본)
+    if shared_ctx and shared_ctx.get("raw_context"):
+        parts.append(shared_ctx["raw_context"])
+
+    # L1 Perception 분석 결과 (추가 참고)
     if perception:
-        parts.append(f"## 상황 분석 (Perception)\n{perception}")
+        parts.append(f"## 관찰자 분석 (Perception)\n{perception}")
 
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-    logger.info(f"[Functioning] 대화 상대: {user_name} (ID: {user_id}) → {role}")
+    logger.info(f"[Functioning] 대화 상대: @{user_name} (ID: {user_id}) → {role}")
 
     # search 중복 제거용 ID 수집
     memory_ids = shared_ctx["memories"][1] if shared_ctx and isinstance(shared_ctx.get("memories"), tuple) else []
     _, _, web_ids = await self.librarian_db.get_recent_web_results(10, user_name=user_name)
     _, _, media_ids = await self.librarian_db.get_recent_media_results(10, exclude_filenames=seen_filenames or [], user_name=user_name)
     _, _, url_ids = await self.librarian_db.get_recent_url_results(10, user_name=user_name)
-
-    # 경제 블록은 공통 컨텍스트(L1 gather_context)에 포함. L2는 perception 경유로 받음.
 
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)

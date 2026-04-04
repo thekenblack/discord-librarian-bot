@@ -601,6 +601,7 @@ class AILibrarianBot(discord.Client):
                     user_id, user_name, guild, reply_chain,
                     anchor_context=anchor_context, recent_context=recent_context,
                     channel_id=channel_id, shared_ctx=shared_ctx)
+                shared_ctx["raw_context"] = raw_context
                 p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
                 perception = await self._run_perception(
                     user_id, user_name, user_text, raw_context,
