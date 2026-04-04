@@ -300,6 +300,15 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
         item = SHOP_MAP.get(item_id)
         if not item:
             return json.dumps({"result": f"'{item_id}' 아이템을 찾을 수 없습니다."}, ensure_ascii=False)
+        # 잔고 확인
+        bot_balance = args.get("_bot_balance", 0)
+        if bot_balance < item["price"]:
+            return json.dumps({
+                "_action": "gift_failed",
+                "reason": f"잔고 부족 (현재 {bot_balance} sat, 필요 {item['price']} sat)",
+                "item_name": item["name"],
+                "item_emoji": item["emoji"],
+            }, ensure_ascii=False)
         user_id = args.get("_user_id")
         user_name = args.get("_user_name", "")
         channel_id = args.get("_channel_id")

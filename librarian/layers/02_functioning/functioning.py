@@ -239,6 +239,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             tool_args["_user_id"] = user_id
             tool_args["_user_name"] = user_name
             tool_args["_channel_id"] = channel_id
+            tool_args["_bot_balance"] = shared_ctx.get("balance", 0) if shared_ctx else 0
             tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
             tool_data = json.loads(tool_result)
             _meta["tool_results"].append(tool_result)
@@ -269,6 +270,9 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             elif tool_data.get("_action") == "gift_user":
                 _meta.setdefault("gifts", []).append(tool_data)
                 result_parts.append(f"[선물] {tool_data['item_emoji']}{tool_data['item_name']}")
+
+            elif tool_data.get("_action") == "gift_failed":
+                result_parts.append(f"[선물 실패] {tool_data['item_emoji']}{tool_data['item_name']} — {tool_data['reason']}")
 
             elif tool_data.get("error"):
                 result_parts.append(f"[오류] {tool_data['error']}")
