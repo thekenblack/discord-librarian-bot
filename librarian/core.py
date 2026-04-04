@@ -343,6 +343,11 @@ class AILibrarianBot(discord.Client):
                 role_mentioned = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
 
         if not bot_mentioned and not reply_to_bot and not role_mentioned:
+            # 다른 유저에게 답글이면 무시 (자발적 채널에서도)
+            if message.reference and message.reference.resolved:
+                ref = message.reference.resolved
+                if self.user and ref.author.id != self.user.id:
+                    return
             # 자발적 채널이면 debounce 후 응답 가능성
             if (SPONTANEOUS_CHANNEL_ID
                     and str(message.channel.id) == SPONTANEOUS_CHANNEL_ID):
