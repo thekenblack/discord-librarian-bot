@@ -1,8 +1,7 @@
 {
   "version": "6",
   "bots": [
-    {"name": "라이브러리 봇", "module": "library.bot"},
-    {"name": "AI 사서봇", "module": "librarian.bot"}
+    {"name": "통합 봇", "module": "combined"}
   ],
   "paths": {
     "data_dir": "data",

@@ -49,38 +49,6 @@ class LibraryBot(commands.Bot):
             type=discord.ActivityType.watching, name="Library"
         ))
 
-    async def on_message(self, message: discord.Message):
-        """AI 사서봇의 [BOT_GIFT] 마커를 감지해서 선물 알림 임베드 전송."""
-        if not message.author.bot or not message.content.startswith("[BOT_GIFT] "):
-            return
-        try:
-            parts = message.content[len("[BOT_GIFT] "):].split("|", 6)
-            if len(parts) < 6:
-                return
-            bot_name, recipient_id, recipient_name, emoji, item_name, price = parts[:6]
-            gift_msg = parts[6] if len(parts) > 6 else ""
-            price = int(price)
-
-            from library.utils import sat_fmt
-            desc = (
-                f"{emoji} **{bot_name}**이(가) "
-                f"**{recipient_name}** 님에게 "
-                f"**{item_name}**을(를) 선물했습니다! ({sat_fmt(price)})"
-            )
-            if gift_msg:
-                desc += f"\n> {bot_name}: \"{gift_msg}\""
-            embed = discord.Embed(description=desc, color=0xF1C40F)
-            embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
-            await message.channel.send(embed=embed)
-
-            # 마커 메시지 삭제 (깔끔하게)
-            try:
-                await message.delete()
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning(f"[BOT_GIFT] 처리 실패: {e}")
-
     async def on_error(self, event: str, *args, **kwargs):
         exc_type, exc_val, _ = sys.exc_info()
         if exc_type is None:

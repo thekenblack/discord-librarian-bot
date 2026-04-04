@@ -513,13 +513,26 @@ class AILibrarianBot(discord.Client):
                         message=gift.get("message"),
                         recipient_id=str(message.author.id),
                         recipient_name=message.author.display_name)
-                    # 라이브러리 봇이 알림을 보내도록 마커 메시지 전송
+                    # 라이브러리 봇이 선물 알림 임베드 전송
                     gift_msg = gift.get("message", "")
-                    marker = (
-                        f"[BOT_GIFT] {AI_NAME}|{message.author.id}|{message.author.display_name}|"
-                        f"{gift['item_emoji']}|{gift['item_name']}|{item_price}|{gift_msg}"
-                    )
-                    await message.channel.send(marker)
+                    lib_client = getattr(self, "library_bot_client", None)
+                    if lib_client:
+                        try:
+                            lib_channel = lib_client.get_channel(message.channel.id)
+                            if lib_channel:
+                                from library.utils import sat_fmt
+                                gift_desc = (
+                                    f"{gift['item_emoji']} **{AI_NAME}**이(가) "
+                                    f"**{message.author.display_name}** 님에게 "
+                                    f"**{gift['item_name']}**을(를) 선물했습니다! ({sat_fmt(item_price)})"
+                                )
+                                if gift_msg:
+                                    gift_desc += f"\n> {AI_NAME}: \"{gift_msg}\""
+                                embed = discord.Embed(description=gift_desc, color=0xF1C40F)
+                                embed.set_footer(text="/charge 로 충전 · /buy 로 선물")
+                                await lib_channel.send(embed=embed)
+                        except Exception as e:
+                            logger.warning(f"선물 알림 전송 실패 (라이브러리 봇): {e}")
                 except Exception as e:
                     logger.warning(f"선물 알림 전송 실패: {e}")
 
