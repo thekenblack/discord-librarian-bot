@@ -1225,7 +1225,7 @@ class AILibrarianBot(discord.Client):
 
     async def _debounced_spontaneous_reply(self, message: discord.Message):
         """debounce 대기 후 비멘션 응답."""
-        await asyncio.sleep(3)  # 3초 대기 (debounce)
+        await asyncio.sleep(5)  # 5초 대기 (debounce)
         channel_id = str(message.channel.id)
         self._spontaneous_pending.pop(channel_id, None)
 
