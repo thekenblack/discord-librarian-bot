@@ -15,7 +15,7 @@ from google.genai.errors import ClientError
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 from config import (
-    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, GEMINI_MODEL_L2, GEMINI_MODEL_L4,
+    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, GEMINI_MODEL_L2, GEMINI_MODEL_L4, GEMINI_MODEL_L5,
     AI_MAX_OUTPUT_TOKENS, LOG_DIR,
     SPONTANEOUS_CHANNEL_ID, SPONTANEOUS_QUIET_HOURS, SPONTANEOUS_CHECK_HOURS, SPONTANEOUS_CHANCE,
     AI_HOURLY_WAGE,
@@ -34,6 +34,7 @@ logger = logging.getLogger("AILibrarian")
 MODEL = GEMINI_MODEL
 MODEL_L2 = GEMINI_MODEL_L2
 MODEL_L4 = GEMINI_MODEL_L4
+MODEL_L5 = GEMINI_MODEL_L5
 from config import MAX_HISTORY_L1, MAX_HISTORY_L3, MAX_HISTORY_L5
 MAX_HISTORY = MAX_HISTORY_L3
 MAX_PERCEPTION_HISTORY = MAX_HISTORY_L1
@@ -597,22 +598,28 @@ class AILibrarianBot(discord.Client):
 
             # ── Layer 2: Execution (도구 실행) ──
             _t0 = _time.monotonic()
+            skip_l2 = "실행기 스킵" in (perception or "")
 
-            instruction, files_to_send, processor_meta = await self._run_functioning(
-                user_id=user_id, user_name=user_name, user_text=user_text,
-                attachments=attachments, seen_filenames=seen_filenames,
-                perception=perception, channel_id=channel_id,
-                shared_ctx=shared_ctx,
-            )
-            _meta["tools_called"] = processor_meta.get("tools_called", [])
-            _meta["tool_results"] = processor_meta.get("tool_results", [])
-            if processor_meta.get("shared_urls"):
-                _meta["shared_urls"] = processor_meta["shared_urls"]
-            if processor_meta.get("reaction"):
-                _meta["reaction"] = processor_meta["reaction"]
-            if processor_meta.get("gifts"):
-                _meta["gifts"] = processor_meta["gifts"]
-            logger.info(f"[L2 Execution] 완료 ({_time.monotonic()-_t0:.2f}s)")
+            if skip_l2:
+                instruction = ""
+                files_to_send = []
+                logger.info(f"[L2 Execution] 스킵 (L1 판단: 도구 불필요)")
+            else:
+                instruction, files_to_send, processor_meta = await self._run_functioning(
+                    user_id=user_id, user_name=user_name, user_text=user_text,
+                    attachments=attachments, seen_filenames=seen_filenames,
+                    perception=perception, channel_id=channel_id,
+                    shared_ctx=shared_ctx,
+                )
+                _meta["tools_called"] = processor_meta.get("tools_called", [])
+                _meta["tool_results"] = processor_meta.get("tool_results", [])
+                if processor_meta.get("shared_urls"):
+                    _meta["shared_urls"] = processor_meta["shared_urls"]
+                if processor_meta.get("reaction"):
+                    _meta["reaction"] = processor_meta["reaction"]
+                if processor_meta.get("gifts"):
+                    _meta["gifts"] = processor_meta["gifts"]
+                logger.info(f"[L2 Execution] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # ── 선물 즉시 처리 (L3 이전에 알림) ──
             if _meta.get("gifts") and typing_channel:

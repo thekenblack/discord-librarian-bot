@@ -64,8 +64,9 @@ async def run_evaluation(self, user_id: str, user_name: str,
         loop_contents = list(self.evaluation_history)
         loop_contents.append(types.Content(role="user", parts=[types.Part.from_text(text=eval_text)]))
 
-        logger.info(f"[Evaluation] API 호출 (히스토리={len(self.evaluation_history)}턴)")
-        response = await self._call_gemini(loop_contents, config)
+        from librarian.core import MODEL_L5
+        logger.info(f"[Evaluation] API 호출 (히스토리={len(self.evaluation_history)}턴, model={MODEL_L5})")
+        response = await self._call_gemini(loop_contents, config, model=MODEL_L5)
 
         # 1회 응답에서 모든 function_call + 텍스트 추출
         feedback_text = ""
