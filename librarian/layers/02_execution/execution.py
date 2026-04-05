@@ -254,7 +254,7 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
     from librarian.core import MODEL_L2
-    logger.info(f"[Execution] API 호출 (temp={TEMP_L2}, model={MODEL_L2})")
+    logger.info(f"[Execution] API 호출 (model={MODEL_L2}, thinking={_thinking_level})")
     response = await self._call_gemini(loop_contents, config, model=MODEL_L2)
     logger.info("[Execution] API 응답 수신")
 

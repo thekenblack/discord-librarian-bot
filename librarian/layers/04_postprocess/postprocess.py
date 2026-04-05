@@ -30,6 +30,7 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
         tools=None,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=TEMP_L4,
+        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
     )
 
     prompt_parts = [f"대사:\n{raw_reply}"]
@@ -52,7 +53,7 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
 
     from librarian.core import MODEL_L4
-    logger.info(f"[Postprocess] API 호출 (model={MODEL_L4})")
+    logger.info(f"[Postprocess] API 호출 (model={MODEL_L4}, thinking=minimal)")
     response = await self._call_gemini(contents, config, model=MODEL_L4)
     result = self._extract_reply(response)
 

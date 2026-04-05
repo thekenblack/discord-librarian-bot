@@ -287,7 +287,7 @@ async def run_perception(self, user_id: str, user_name: str,
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
     from librarian.core import MODEL_L1
-    logger.info(f"[Perception] API 호출 (히스토리={len(contents)-1}턴, model={MODEL_L1})")
+    logger.info(f"[Perception] API 호출 (model={MODEL_L1}, thinking={thinking_level}, 히스토리={len(contents)-1}턴)")
     response = await self._call_gemini(contents, config, model=MODEL_L1)
 
     # 1회 응답에서 텍스트 + function_call 모두 추출
