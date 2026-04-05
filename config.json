@@ -19,7 +19,8 @@
     "model_l2": "gemini-3.1-flash-lite-preview",
     "model_l4": "gemini-3.1-flash-lite-preview",
     "model_l5": "gemini-3-flash-preview",
-    "max_output_tokens": 500
+    "max_output_tokens": 500,
+    "max_output_tokens_l1": 1000
   },
   "max_file_size": 10485760
 }

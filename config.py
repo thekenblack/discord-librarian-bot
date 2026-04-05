@@ -81,6 +81,7 @@ GEMINI_MODEL_L5  = _ai.get("model_l5", GEMINI_MODEL)
 AI_NAME          = os.getenv("AI_NAME", _ai.get("name", "사서봇"))
 AI_STATUS_TEXT   = os.getenv("AI_STATUS_TEXT", _ai.get("status_text", "Library"))
 AI_MAX_OUTPUT_TOKENS = _ai.get("max_output_tokens", 500)
+AI_MAX_OUTPUT_TOKENS_L1 = _ai.get("max_output_tokens_l1", 1000)
 
 # ── 프롬프트 ──────────────────────────────────
 AI_HOURLY_WAGE   = int(os.getenv("AI_HOURLY_WAGE", "210"))

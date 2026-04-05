@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime as dt
 from google.genai import types
-from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR, TEMP_L1
+from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, AI_MAX_OUTPUT_TOKENS_L1, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR, TEMP_L1
 
 import importlib as _il
 _btc = _il.import_module("librarian.layers.02_execution.bitcoin_data")
@@ -296,7 +296,7 @@ async def run_perception(self, user_id: str, user_name: str,
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=perception_tools,
-        max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+        max_output_tokens=AI_MAX_OUTPUT_TOKENS_L1,
         temperature=TEMP_L1,
         thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
     )
