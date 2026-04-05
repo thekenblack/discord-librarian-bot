@@ -214,7 +214,11 @@ async def gather_context(self, user_id: str, user_name: str,
     if reply_chain:
         parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    # 포함된 섹션 로깅
+    _sections = [p.split("\n")[0].strip("# ") for p in parts if p.startswith("##")]
+    logger.info(f"[gather_context] {len(result)}자, 섹션: {_sections}")
+    return result
 
 
 SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
