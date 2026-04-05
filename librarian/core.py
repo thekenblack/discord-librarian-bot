@@ -792,8 +792,12 @@ class AILibrarianBot(discord.Client):
                 mention_map=dict(self._mention_map),
                 channel_map=channel_map,
                 role_map=role_map,
-                emoji_map=emoji_map)
-            logger.info(f"[L4 Postprocess] ({_time.monotonic()-_t0:.2f}s)")
+                emoji_map=emoji_map,
+                feedback=shared_ctx.get("feedback_l4", ""))
+            if reply != raw_reply:
+                logger.info(f"[L4 Postprocess] 변환 ({_time.monotonic()-_t0:.2f}s)")
+            else:
+                logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
 
             # 히스토리에 L4 변환 전 원본 저장 (L3가 깨끗한 히스토리를 보도록)
             history.append(types.Content(role="model", parts=[types.Part.from_text(text=raw_reply)]))
