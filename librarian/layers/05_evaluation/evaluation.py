@@ -131,6 +131,7 @@ async def run_evaluation_batch(self, batch: list[dict]):
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=evaluation_tools,
+            max_output_tokens=2000,
             temperature=TEMP_L5,
         )
 
