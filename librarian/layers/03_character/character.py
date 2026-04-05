@@ -34,7 +34,7 @@ async def run_character(self, user_id: str, user_name: str,
 
     loop_contents = list(history)
     from librarian.core import MODEL_L3
-    logger.info(f"[Character] API 호출 (temp={TEMP_L3}, model={MODEL_L3}, 히스토리={len(loop_contents)}턴)")
+    logger.info(f"[Character] API 호출 (temp={TEMP_L3}, model={MODEL_L3}, thinking={thinking_level}, 히스토리={len(loop_contents)}턴)")
     response = await self._call_gemini(loop_contents, config, model=MODEL_L3)
     reply = self._extract_reply(response)
 
