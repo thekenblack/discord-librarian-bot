@@ -1382,6 +1382,7 @@ class AILibrarianBot(discord.Client):
 
         try:
             text = message.content
+            logger.info(f"[자발적 수신] {message.author.display_name}(#{getattr(message.channel, 'name', 'DM')}): {text[:100]}")
             if message.mentions:
                 for user in message.mentions:
                     text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
