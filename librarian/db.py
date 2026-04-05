@@ -1344,6 +1344,27 @@ class LibrarianDB:
             row = await cursor.fetchone()
             return row[0] if row else None
 
+    # ── 레이어별 피드백 ──────────────────────────────────
+
+    async def save_layer_feedback(self, layer: str, user_id: str, feedback: str):
+        """레이어별 피드백 저장. key = 'l1:{user_id}' 등."""
+        key = f"{layer}:{user_id}"
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO evaluation_feedback (user_id, feedback) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET feedback=excluded.feedback, created_at=datetime('now')
+            """, (key, feedback))
+            await db.commit()
+
+    async def get_layer_feedback(self, layer: str, user_id: str) -> str | None:
+        """레이어별 피드백 조회."""
+        key = f"{layer}:{user_id}"
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT feedback FROM evaluation_feedback WHERE user_id = ?", (key,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
     # ── 대화 요약 ──────────────────────────────────────────
 
     async def save_user_summary(self, user_id: str, summary: str):

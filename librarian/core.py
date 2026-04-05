@@ -590,9 +590,11 @@ class AILibrarianBot(discord.Client):
                 "user_emotion": await self.librarian_db.get_user_emotion(user_id),
                 "user_summary": await self.librarian_db.get_user_summary(user_id),
                 "channel_summary": await self.librarian_db.get_channel_summary(channel_id) if channel_id else "",
-                "feedback": await self.librarian_db.get_feedback(user_id),
-                "channel_feedback": await self.librarian_db.get_channel_feedback(channel_id) if channel_id else "",
-                "global_feedback": await self.librarian_db.get_global_feedback(),
+                "feedback_l1": await self.librarian_db.get_layer_feedback("l1", user_id),
+                "feedback_l2": await self.librarian_db.get_layer_feedback("l2", user_id),
+                "feedback_l3": await self.librarian_db.get_layer_feedback("l3", user_id),
+                "feedback_l4": await self.librarian_db.get_layer_feedback("l4", user_id),
+                "feedback_l5": await self.librarian_db.get_layer_feedback("l5", user_id),
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
@@ -664,7 +666,7 @@ class AILibrarianBot(discord.Client):
                     pass
 
             # ── Layer 2: Execution (도구 실행) — L1 판정에 따라 스킵 가능 ──
-            _l2_skip = bool(_re.search(r'결론\s*[:：]\s*L2\s*스킵', perception or "", _re.IGNORECASE))
+            _l2_skip = bool(_re.search(r'L2\s*스킵', perception or "", _re.IGNORECASE))
             instruction = ""
             files_to_send = []
             processor_meta = {"tools_called": [], "tool_results": []}
@@ -672,11 +674,11 @@ class AILibrarianBot(discord.Client):
             if _l2_skip:
                 logger.info("[L2 Execution] 스킵 (L1 판정: 도구 불필요)")
                 # L2 스킵 판정 줄을 perception에서 제거 (L3에 안 넘김)
-                perception = _re.sub(r'\n?6\.\s*실행기.*?결론\s*[:：]\s*L2\s*스킵', '', perception, flags=_re.DOTALL).strip()
+                perception = _re.sub(r'\n?(?:5\.|6\.)\s*실행기.*$', '', perception, flags=_re.DOTALL).strip()
             else:
                 _t0 = _time.monotonic()
                 # L2 판정 섹션을 perception에서 제거 (L2/L3에 안 넘김)
-                perception = _re.sub(r'\n?6\.\s*실행기.*?결론\s*[:：]\s*L2\s*호출', '', perception, flags=_re.DOTALL).strip()
+                perception = _re.sub(r'\n?(?:5\.|6\.)\s*실행기.*$', '', perception, flags=_re.DOTALL).strip()
 
                 instruction, files_to_send, processor_meta = await self._run_execution(
                     user_id=user_id, user_name=user_name, user_text=user_text,
@@ -756,6 +758,7 @@ class AILibrarianBot(discord.Client):
                 context_block=perception,
                 raw_context=shared_ctx.get("raw_context", ""),
                 thinking_level=user_thinking.get("l3", "minimal"),
+                feedback=shared_ctx.get("feedback_l3", ""),
             )
             # L3에서 react 회수
             if hasattr(self, '_l3_reactions') and self._l3_reactions:
@@ -787,7 +790,8 @@ class AILibrarianBot(discord.Client):
                 mention_map=dict(self._mention_map),
                 channel_map=channel_map,
                 role_map=role_map,
-                emoji_map=emoji_map)
+                emoji_map=emoji_map,
+                feedback=shared_ctx.get("feedback_l4", ""))
             if reply != raw_reply:
                 # L4 결과 검증: 유효하지 않은 ID만 부분 폴백 (해당 패턴을 원본 텍스트로 되돌림)
                 valid_ids = set(self._mention_map.values()) | set(_all_ch.values()) | set(_all_ro.values())

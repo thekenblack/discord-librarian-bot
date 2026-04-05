@@ -1,15 +1,43 @@
 """
-Evaluation 도구 선언 (feel, memorize, forget)
+Gemini function calling 도구 정의 (L5 Evaluation)
 """
 
 from google.genai import types
-
-EVALUATION_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary"}
+from library.db import LibraryDB
+from librarian.db import LibrarianDB
+import importlib as _il
+_tools = _il.import_module("librarian.layers.02_execution.tools")
+execute_tool = _tools.execute_tool
 
 evaluation_declarations = [
     types.FunctionDeclaration(
+        name="feel",
+        description="감정 수치를 변경한다. 대화에서 감정 변화가 있을 때만.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "message_id": types.Schema(type="STRING", description="트리거 메시지 ID (중복 방지)"),
+                "reason": types.Schema(type="STRING", description="변화 사유"),
+                "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-15~+15)"),
+                "self_energy": types.Schema(type="INTEGER", description="체력 변화량 (-15~+15)"),
+                "server_vibe": types.Schema(type="INTEGER", description="서버 분위기 변화량 (-15~+15)"),
+                "targets": types.Schema(type="ARRAY", items=types.Schema(
+                    type="OBJECT",
+                    properties={
+                        "user_id": types.Schema(type="STRING"),
+                        "user_name": types.Schema(type="STRING"),
+                        "comfort": types.Schema(type="INTEGER"),
+                        "affinity": types.Schema(type="INTEGER"),
+                        "trust": types.Schema(type="INTEGER"),
+                    },
+                ), description="유저별 감정 변화"),
+                "reaction": types.Schema(type="STRING", description="(미사용)"),
+            },
+        ),
+    ),
+    types.FunctionDeclaration(
         name="memorize",
-        description="유저가 알려준 정보를 기억한다. 인물, 사실, 메모, 지식 등. 수정이 필요하면 forget 후 memorize.",
+        description="기억을 저장한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
@@ -20,203 +48,177 @@ evaluation_declarations = [
     ),
     types.FunctionDeclaration(
         name="forget",
-        description="잘못된 기억을 잊는다. '잊어', '삭제해', '그거 틀려' 같은 요청에 사용.",
+        description="기억을 삭제한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "keyword": types.Schema(type="STRING", description="잊을 기억의 키워드"),
+                "memory_id": types.Schema(type="INTEGER", description="삭제할 기억 ID"),
             },
-            required=["keyword"],
+            required=["memory_id"],
         ),
     ),
-    types.FunctionDeclaration(
-        name="feel",
-        description="감정 변화를 기록한다. 1회 호출로 여러 유저를 동시에 처리할 수 있다. targets에 유저별 변화량을 지정하고, 봇 전체 축은 별도로 지정.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "targets": types.Schema(
-                    type="ARRAY",
-                    description="유저별 감정 변화 배열. 생략하면 현재 대화 상대 1명.",
-                    items=types.Schema(
-                        type="OBJECT",
-                        properties={
-                            "user_id": types.Schema(type="STRING", description="유저 ID (<@ID> 또는 숫자)"),
-                            "comfort": types.Schema(type="INTEGER", description="편안함 변화량 (-15 ~ +15)"),
-                            "affinity": types.Schema(type="INTEGER", description="호감도 변화량 (-15 ~ +15)"),
-                            "trust": types.Schema(type="INTEGER", description="신뢰도 변화량 (-15 ~ +15)"),
-                        },
-                    ),
-                ),
-                "self_mood": types.Schema(type="INTEGER", description="기분 변화량 (-15 ~ +15)"),
-                "self_energy": types.Schema(type="INTEGER", description="에너지 변화량 (-15 ~ +15)"),
-                "server_vibe": types.Schema(type="INTEGER", description="분위기 변화량 (-15 ~ +15)"),
-                "message_id": types.Schema(type="STRING", description="감정 변화의 원인이 된 메시지 ID. 중복 방지용."),
-                "reason": types.Schema(type="STRING", description="사유 (20자 이내)"),
-            },
-            required=["reason", "message_id"],
-        ),
-    ),
-]
-
-evaluation_declarations += [
     types.FunctionDeclaration(
         name="update_summary",
-        description="유저와의 대화 요약을 갱신한다. 이전 요약에 이번 대화를 반영해서 덮어쓴다. 대화 톤, 주요 주제, 관계 흐름을 포함.",
+        description="유저별 대화 요약을 갱신한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "summary": types.Schema(type="STRING", description="갱신된 유저 대화 요약 (200자 이내)"),
+                "summary": types.Schema(type="STRING", description="새 요약"),
             },
             required=["summary"],
         ),
     ),
     types.FunctionDeclaration(
         name="update_channel_summary",
-        description="채널 흐름 요약을 갱신한다. 이 채널에서 최근 벌어지고 있는 대화 흐름, 참여자, 주제를 요약.",
+        description="채널 흐름 요약을 갱신한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "summary": types.Schema(type="STRING", description="갱신된 채널 흐름 요약 (200자 이내)"),
+                "summary": types.Schema(type="STRING", description="새 요약"),
             },
             required=["summary"],
         ),
     ),
     types.FunctionDeclaration(
         name="memorize_alias",
-        description="같은 것의 다른 이름을 등록한다. '~를 ~라고도 불러', '~는 ~의 줄임말' 같은 요청에 사용. 검색할 때 자동 확장됨.",
+        description="별명을 등록한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "name": types.Schema(type="STRING", description="원래 이름"),
-                "alias": types.Schema(type="STRING", description="별칭"),
+                "alias": types.Schema(type="STRING", description="별명"),
+                "real_name": types.Schema(type="STRING", description="실제 이름"),
             },
-            required=["name", "alias"],
+            required=["alias", "real_name"],
         ),
     ),
     types.FunctionDeclaration(
         name="forget_alias",
-        description="잘못된 별칭을 삭제한다.",
+        description="별명을 삭제한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "alias_id": types.Schema(type="INTEGER", description="삭제할 별칭 ID"),
+                "alias": types.Schema(type="STRING", description="삭제할 별명"),
             },
-            required=["alias_id"],
+            required=["alias"],
         ),
     ),
-]
-
-evaluation_declarations += [
     types.FunctionDeclaration(
         name="update_profile",
-        description="유저 프로필을 갱신한다. 인상이 바뀔 때만. personality, trust_evidence, preferences, risk_notes, relationship 중 변경할 것만.",
+        description="유저 프로필을 갱신한다. 인상이 바뀔 때만.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
                 "user_id": types.Schema(type="STRING", description="유저 ID"),
-                "personality": types.Schema(type="STRING", description="성격/성향"),
-                "trust_evidence": types.Schema(type="STRING", description="신뢰 근거"),
-                "preferences": types.Schema(type="STRING", description="선호/비선호"),
-                "risk_notes": types.Schema(type="STRING", description="주의사항"),
-                "relationship": types.Schema(type="STRING", description="관계 궤적"),
+                "personality": types.Schema(type="STRING"),
+                "trust_evidence": types.Schema(type="STRING"),
+                "preferences": types.Schema(type="STRING"),
+                "risk_notes": types.Schema(type="STRING"),
+                "relationship": types.Schema(type="STRING"),
             },
             required=["user_id"],
         ),
     ),
     types.FunctionDeclaration(
         name="log_conversation",
-        description="대화 품질을 기록한다. 의미 있는 대화에서만. 잡담은 생략.",
+        description="대화 품질을 기록한다. 의미 있는 대화에서만.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "channel_id": types.Schema(type="STRING", description="채널 ID"),
-                "participants": types.Schema(type="STRING", description="참여자들"),
-                "quality": types.Schema(type="STRING", description="레이어별 품질 평가"),
-                "key_moments": types.Schema(type="STRING", description="핵심 사건"),
+                "channel_id": types.Schema(type="STRING"),
+                "participants": types.Schema(type="STRING"),
+                "quality": types.Schema(type="STRING"),
+                "key_moments": types.Schema(type="STRING"),
             },
             required=["quality"],
         ),
     ),
     types.FunctionDeclaration(
         name="note_pattern",
-        description="패턴을 기록한다. 유저별, 채널별, 또는 전체 패턴.",
+        description="패턴을 기록한다.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "observation": types.Schema(type="STRING", description="관찰된 패턴"),
+                "observation": types.Schema(type="STRING"),
                 "scope": types.Schema(type="STRING", description="user / channel / global"),
-                "target_id": types.Schema(type="STRING", description="대상 ID (scope가 user/channel일 때)"),
+                "target_id": types.Schema(type="STRING"),
             },
             required=["observation"],
         ),
     ),
     types.FunctionDeclaration(
         name="note_self",
-        description="봇 자체 경향을 기록한다. 반복되는 실수, 약점, 전략.",
+        description="봇 자체 경향을 기록한다. 영구 저장.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "content": types.Schema(type="STRING", description="기록할 내용"),
+                "content": types.Schema(type="STRING"),
                 "category": types.Schema(type="STRING", description="tendency / weakness / strategy"),
             },
             required=["content"],
         ),
     ),
-]
-
-evaluation_declarations += [
-    types.FunctionDeclaration(
-        name="feedback_user",
-        description="유저별 피드백. 이 유저와 대화할 때의 구체적 지침. 다음 턴에 L1이 읽음.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "user_id": types.Schema(type="STRING", description="유저 ID"),
-                "feedback": types.Schema(type="STRING", description="구체적 지침"),
-            },
-            required=["user_id", "feedback"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="feedback_channel",
-        description="채널별 피드백. 이 채널에서의 행동 지침. 다음 턴에 L1이 읽음.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "channel_id": types.Schema(type="STRING", description="채널 ID"),
-                "feedback": types.Schema(type="STRING", description="구체적 지침"),
-            },
-            required=["channel_id", "feedback"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="feedback_global",
-        description="전체 피드백. 모든 대화에 적용되는 지침. 다음 턴에 L1이 읽음.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "feedback": types.Schema(type="STRING", description="구체적 지침"),
-            },
-            required=["feedback"],
-        ),
-    ),
-]
-
-evaluation_declarations += [
     types.FunctionDeclaration(
         name="set_thinking",
-        description="유저별 레이어 사고 수준을 조정한다. 기본값은 minimal이고 이게 정상이다. 올리면 비용과 지연이 늘어난다. 레이어가 맥락을 못 잡거나 대사가 밋밋하거나 검색이 엉뚱할 때만 올려. 잡담/인사/단순 요청이면 minimal로 내려. 올렸으면 다음 배치에서 내릴지 반드시 재평가해.",
+        description="유저별 레이어 사고 수준 조정. 기본 minimal. 문제 있을 때만 올려.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "user_id": types.Schema(type="STRING", description="유저 ID"),
-                "l1": types.Schema(type="STRING", description="L1 Perception 사고 수준: minimal / low / medium / high"),
-                "l2": types.Schema(type="STRING", description="L2 Execution 사고 수준: minimal / low / medium / high"),
-                "l3": types.Schema(type="STRING", description="L3 Character 사고 수준: minimal / low / medium / high"),
+                "user_id": types.Schema(type="STRING"),
+                "l1": types.Schema(type="STRING", description="minimal / low / medium / high"),
+                "l2": types.Schema(type="STRING"),
+                "l3": types.Schema(type="STRING"),
             },
             required=["user_id"],
         ),
+    ),
+    # ── 레이어별 피드백 (각 레이어가 직접 읽음) ──
+    types.FunctionDeclaration(
+        name="feedback_l1",
+        description="L1(관찰자)에게 지시. 다음 턴에 L1이 직접 읽는다.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "feedback": types.Schema(type="STRING"),
+        }, required=["user_id", "feedback"]),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_l2",
+        description="L2(실행기)에게 지시. 다음 턴에 L2가 직접 읽는다.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "feedback": types.Schema(type="STRING"),
+        }, required=["user_id", "feedback"]),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_l3",
+        description="L3(캐릭터)에게 지시. 다음 턴에 L3가 직접 읽는다.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "feedback": types.Schema(type="STRING"),
+        }, required=["user_id", "feedback"]),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_l4",
+        description="L4(포매터)에게 지시. 다음 턴에 L4가 직접 읽는다.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "feedback": types.Schema(type="STRING"),
+        }, required=["user_id", "feedback"]),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_l5",
+        description="자기 자신에게 지시. 다음 배치에서 자신이 읽는다.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "feedback": types.Schema(type="STRING"),
+        }, required=["user_id", "feedback"]),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_admin",
+        description="관리자에게 보고. 시스템 이상, 반복 오류, 유저 우려, 개선 제안 등.",
+        parameters=types.Schema(type="OBJECT", properties={
+            "user_id": types.Schema(type="STRING"),
+            "message": types.Schema(type="STRING"),
+        }, required=["user_id", "message"]),
     ),
 ]
 
@@ -224,8 +226,9 @@ EVALUATION_TOOL_NAMES = {
     "feel", "memorize", "forget", "update_summary", "update_channel_summary",
     "memorize_alias", "forget_alias",
     "update_profile", "log_conversation", "note_pattern", "note_self",
-    "feedback_user", "feedback_channel", "feedback_global",
     "set_thinking",
+    "feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4", "feedback_l5",
+    "feedback_admin",
 }
 
 evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]

@@ -100,6 +100,13 @@ async def run_evaluation_batch(self, batch: list[dict]):
             thinking_lines.append(f"@{uname}: L1={ut['l1']} L2={ut['l2']} L3={ut['l3']}")
         sys_parts.append("## 현재 thinking 설정\n" + "\n".join(thinking_lines))
 
+        # L5 자기 피드백
+        for uid in user_ids:
+            fb_l5 = await self.librarian_db.get_layer_feedback("l5", uid)
+            if fb_l5:
+                uname = next((t["user_name"] for t in batch if t["user_id"] == uid), uid)
+                sys_parts.append(f"## 이전 자기 지시 (@{uname})\n{fb_l5}")
+
         # 서버 히스토리
         if server_history:
             sys_parts.append("## 서버 히스토리 (이전 세션)\n" + "\n".join(
@@ -251,31 +258,26 @@ async def run_evaluation_batch(self, batch: list[dict]):
                         category=fc_args.get("category", "tendency"))
                     _log_lines.append(f"  자기 기록 [{fc_args.get('category', 'tendency')}]: {fc_args.get('content', '')}")
 
-                elif fc.name == "feedback_user":
+                elif fc.name in ("feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4", "feedback_l5"):
+                    layer = fc.name.split("_")[1]  # "l1", "l2", etc.
                     uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
                     import re as _re_uid
                     uid_match = _re_uid.search(r'(\d{15,})', str(uid_raw))
                     uid = uid_match.group(1) if uid_match else next(
                         (t["user_id"] for t in batch if t["user_name"] in str(uid_raw)), batch[-1]["user_id"])
                     fb = fc_args.get("feedback", "")
-                    await self.librarian_db.save_feedback(uid, fb)
-                    _log_lines.append(f"  유저 피드백 ({uid}):")
-                    import re as _re_fb
-                    for line in _re_fb.split(r'(?=\[L\d\])', fb):
-                        line = line.strip()
-                        if line:
-                            _log_lines.append(f"    {line}")
+                    await self.librarian_db.save_layer_feedback(layer, uid, fb)
+                    _log_lines.append(f"  피드백 [{layer.upper()}] ({uid}): {fb}")
 
-                elif fc.name == "feedback_channel":
-                    cid = fc_args.get("channel_id", batch[-1].get("channel_id", ""))
-                    fb = fc_args.get("feedback", "")
-                    await self.librarian_db.save_channel_feedback(cid, fb)
-                    _log_lines.append(f"  채널 피드백 ({cid}): {fb}")
-
-                elif fc.name == "feedback_global":
-                    fb = fc_args.get("feedback", "")
-                    await self.librarian_db.save_global_feedback(fb)
-                    _log_lines.append(f"  전체 피드백: {fb}")
+                elif fc.name == "feedback_admin":
+                    uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
+                    import re as _re_uid2
+                    uid_match = _re_uid2.search(r'(\d{15,})', str(uid_raw))
+                    uid = uid_match.group(1) if uid_match else batch[-1]["user_id"]
+                    msg = fc_args.get("message", "")
+                    await self.librarian_db.save_layer_feedback("admin", uid, msg)
+                    _log_lines.append(f"  관리자 보고 ({uid}): {msg}")
+                    logger.warning(f"[L5→Admin] {msg}")
 
                 elif fc.name == "set_thinking":
                     uid = fc_args.get("user_id", batch[-1]["user_id"])

@@ -24,13 +24,15 @@ async def run_character(self, user_id: str, user_name: str,
                          user_text: str, instruction: str,
                          context_block: str = "",
                          raw_context: str = "",
-                         thinking_level: str = "minimal") -> str:
+                         thinking_level: str = "minimal",
+                         feedback: str = "") -> str:
     """Character: 컨텍스트 + 도구 결과 + 페르소나로 대사 생성 + 리액션."""
     history = self.chat_histories.get(user_id, [])
-    # 시스템 프롬프트: character + 공통 컨텍스트 + L1 분석 + L2 보고
     sys_parts = []
     if self.persona.character_text:
         sys_parts.append(self.persona.character_text)
+    if feedback:
+        sys_parts.append(f"## 커맨드 센터 지시 (최우선)\n{feedback}")
     if raw_context:
         sys_parts.append(raw_context)
     if context_block:
@@ -67,7 +69,7 @@ async def run_character(self, user_id: str, user_name: str,
     if reply:
         logger.info(f"[Character] 응답: {reply[:150]}")
     else:
-        logger.warning("[Character] 빈 응답")
+        logger.info("[Character] 빈 응답 (리액션만 또는 무응답)")
 
     # 리액션을 _meta로 전달하기 위해 인스턴스 변수에 저장
     if reactions:

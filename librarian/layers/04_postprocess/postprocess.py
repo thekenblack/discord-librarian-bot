@@ -14,7 +14,8 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
                           mention_map: dict[str, str] | None = None,
                           channel_map: dict[str, str] | None = None,
                           role_map: dict[str, str] | None = None,
-                          emoji_map: dict[str, str] | None = None) -> str:
+                          emoji_map: dict[str, str] | None = None,
+                          feedback: str = "") -> str:
     """멘션/채널/역할/이모지 변환 + 시스템 텍스트 정리."""
     if not raw_reply or not raw_reply.strip():
         return ""
@@ -22,6 +23,8 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     sys_parts = []
     if self.persona.postprocess_text:
         sys_parts.append(self.persona.postprocess_text)
+    if feedback:
+        sys_parts.append(f"## 커맨드 센터 지시 (최우선)\n{feedback}")
     system_prompt = "\n\n".join(p for p in sys_parts if p)
 
     config = types.GenerateContentConfig(

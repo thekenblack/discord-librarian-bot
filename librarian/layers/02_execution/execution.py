@@ -214,6 +214,11 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
     if shared_ctx and shared_ctx.get("raw_context"):
         parts.append(shared_ctx["raw_context"])
 
+    # L5 피드백 (L2용)
+    _fb_l2 = (shared_ctx or {}).get("feedback_l2")
+    if _fb_l2:
+        parts.append(f"## 커맨드 센터 지시 (최우선)\n{_fb_l2}")
+
     # L1 Perception 분석 결과 (추가 참고)
     if perception:
         parts.append(f"## 관찰자 분석 (Perception)\n{perception}")
