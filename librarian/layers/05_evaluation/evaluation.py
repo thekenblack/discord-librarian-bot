@@ -248,24 +248,29 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     await self.librarian_db.save_self_note(
                         content=fc_args.get("content", ""),
                         category=fc_args.get("category", "tendency"))
-                    logger.info(f"[Evaluation] 자기 기록: {fc_args.get('content', '')[:100]}")
+                    logger.info(f"[Evaluation] 자기 기록:\n{fc_args.get('content', '')}")
 
                 elif fc.name == "feedback_user":
-                    uid = fc_args.get("user_id", batch[-1]["user_id"])
+                    uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
+                    # L5가 닉네임(@Ken)을 넣을 수 있으므로 ID로 변환
+                    import re as _re_uid
+                    uid_match = _re_uid.search(r'(\d{15,})', str(uid_raw))
+                    uid = uid_match.group(1) if uid_match else next(
+                        (t["user_id"] for t in batch if t["user_name"] in str(uid_raw)), batch[-1]["user_id"])
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_feedback(uid, fb)
-                    logger.info(f"[Evaluation] 유저 피드백 ({uid}): {fb[:100]}")
+                    logger.info(f"[Evaluation] 유저 피드백 ({uid}):\n{fb}")
 
                 elif fc.name == "feedback_channel":
                     cid = fc_args.get("channel_id", batch[-1].get("channel_id", ""))
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_channel_feedback(cid, fb)
-                    logger.info(f"[Evaluation] 채널 피드백 ({cid}): {fb[:100]}")
+                    logger.info(f"[Evaluation] 채널 피드백 ({cid}):\n{fb}")
 
                 elif fc.name == "feedback_global":
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_global_feedback(fb)
-                    logger.info(f"[Evaluation] 전체 피드백: {fb[:100]}")
+                    logger.info(f"[Evaluation] 전체 피드백:\n{fb}")
 
                 elif fc.name == "set_thinking":
                     uid = fc_args.get("user_id", batch[-1]["user_id"])
