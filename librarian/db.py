@@ -1176,16 +1176,12 @@ class LibrarianDB:
     FREQ_COOLDOWN = 300  # 빈도 감쇠 쿨다운 (5분)
     FREQ_MIN_MULT = 0.3  # 아무리 빨라도 최소 30% 반영
 
-    TARGET_STD = 20  # 목표 표준편차 (넓은 분포 허용)
-
     def _adjust_delta(self, delta: float, axis: str, current_value: float,
-                      last_interaction_str: str | None = None,
-                      server_avg: float | None = None,
-                      server_std: float | None = None) -> float:
+                      last_interaction_str: str | None = None) -> float:
         """보정된 변화량 계산."""
         delta = max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, float(delta)))
 
-        # 1. 빈도 감쇠: 최근 대화일수록 효과 감소 (최소 30% 보장)
+        # 빈도 감쇠: 최근 대화일수록 효과 감소 (최소 30% 보장)
         if last_interaction_str:
             try:
                 last = datetime.fromisoformat(last_interaction_str)
@@ -1198,56 +1194,7 @@ class LibrarianDB:
             except Exception:
                 pass
 
-        # 2. 분산 유지: 풀 분산이 목표보다 낮을 때만 증폭
-        if server_std is not None and server_std > 0 and server_std < self.TARGET_STD:
-            variance_mult = self.TARGET_STD / server_std
-            variance_mult = min(2.0, variance_mult)
-            delta *= variance_mult
-
-        # 3. 서버 평균 정규화: 평균을 50으로 되돌리는 방향 약간 증폭
-        if server_avg is not None:
-            avg_dist = abs(server_avg - self.NEUTRAL) / self.NEUTRAL  # 0 ~ 1
-            helps_avg = (server_avg > self.NEUTRAL and delta < 0) or \
-                        (server_avg < self.NEUTRAL and delta > 0)
-            if helps_avg:
-                delta *= 1.0 + avg_dist * 0.3  # 최대 30% 증폭
-            else:
-                delta *= max(0.7, 1.0 - avg_dist * 0.3)  # 최대 30% 저항
-
         return max(-self.AXIS_DELTA_MAX, min(self.AXIS_DELTA_MAX, delta))
-
-    ACTIVE_MINUTES = 10  # 활발할 때: 최근 N분
-    ACTIVE_MIN_USERS = 10  # 한산할 때: 최소 N명
-
-    async def _get_server_stats(self, db, axis: str) -> tuple[float | None, float | None]:
-        """서버 평균 + 표준편차. 10분 내 유저가 10명 미만이면 최근 10명 기준."""
-        if axis not in self.USER_AXES:
-            return None, None
-        import math
-        # 먼저 최근 10분 내 유저 수 확인
-        cursor = await db.execute(
-            f"SELECT COUNT(*) as cnt, AVG({axis}) as avg FROM user_emotion WHERE last_interaction > datetime('now', ?)",
-            (f"-{self.ACTIVE_MINUTES} minutes",))
-        row = await cursor.fetchone()
-        if row and row["cnt"] >= self.ACTIVE_MIN_USERS:
-            avg = row["avg"]
-            # 표준편차 계산
-            cursor2 = await db.execute(
-                f"SELECT {axis} FROM user_emotion WHERE last_interaction > datetime('now', ?)",
-                (f"-{self.ACTIVE_MINUTES} minutes",))
-            vals = [r[0] for r in await cursor2.fetchall()]
-        else:
-            cursor = await db.execute(
-                f"SELECT {axis} FROM user_emotion ORDER BY last_interaction DESC LIMIT ?",
-                (self.ACTIVE_MIN_USERS,))
-            vals = [r[0] for r in await cursor.fetchall()]
-            avg = sum(vals) / len(vals) if vals else None
-
-        if not vals or len(vals) < 2:
-            return avg, None
-        mean = sum(vals) / len(vals)
-        variance = sum((v - mean) ** 2 for v in vals) / len(vals)
-        return avg, math.sqrt(variance)
 
     async def update_emotion(self, changes: dict, target_user_id: str = None,
                              target_user_name: str = None, reason: str = None,
@@ -1281,8 +1228,7 @@ class LibrarianDB:
 
                 for axis, delta in user_changes.items():
                     cur_val = current.get(axis, self.NEUTRAL)
-                    server_avg, server_std = await self._get_server_stats(db, axis)
-                    adjusted = self._adjust_delta(delta, axis, cur_val, last_interaction, server_avg, server_std)
+                    adjusted = self._adjust_delta(delta, axis, cur_val, last_interaction)
                     current[axis] = max(self.AXIS_RANGE[0], min(self.AXIS_RANGE[1], cur_val + adjusted))
 
                 current["interaction_count"] = current.get("interaction_count", 0) + 1
