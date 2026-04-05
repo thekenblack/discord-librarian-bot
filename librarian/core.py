@@ -1465,7 +1465,20 @@ class AILibrarianBot(discord.Client):
                     is_spontaneous=True,
                 )
 
-            if _meta.get("no_response") or _meta.get("ignore"):
+            if _meta.get("ignore"):
+                return
+
+            # 리액션은 no_response여도 붙임
+            if _meta.get("reaction"):
+                for em in _extract_emojis(_meta["reaction"]):
+                    try:
+                        await message.add_reaction(em)
+                    except discord.NotFound:
+                        logger.info(f"리액션 실패 (건너뜀): {em!r}")
+                    except Exception as e:
+                        logger.warning(f"리액션 실패: {em!r} → {e}")
+
+            if _meta.get("no_response"):
                 return
 
             if _meta.get("wait"):
@@ -1492,16 +1505,6 @@ class AILibrarianBot(discord.Client):
                     )
                 if _meta.get("no_response"):
                     return
-
-            # 이모지 리액션
-            if _meta.get("reaction"):
-                for em in _extract_emojis(_meta["reaction"]):
-                    try:
-                        await message.add_reaction(em)
-                    except discord.NotFound:
-                        logger.info(f"리액션 실패 (건너뜀): {em!r}")
-                    except Exception as e:
-                        logger.warning(f"리액션 실패: {em!r} → {e}")
 
             if reply:
                 if _meta.get("reply_to"):
