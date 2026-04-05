@@ -81,7 +81,6 @@ class AILibrarianBot(discord.Client):
         self._gemini_client = genai.Client(api_key=gemini_api_key)
         self.chat_histories: dict[str, list] = {}  # user_id → history (L3)
         self.perception_histories: dict[str, list] = {}  # channel_id → history (L1)
-        self.evaluation_history: list = []  # 단일 히스토리 (L5)
         self._evaluation_queue: asyncio.Queue = asyncio.Queue()  # L5 작업 큐
         self._evaluation_task: asyncio.Task | None = None  # L5 워커 태스크
         self._user_locks: dict[str, asyncio.Lock] = {}  # user_id → lock
@@ -1107,11 +1106,7 @@ class AILibrarianBot(discord.Client):
             return
         self.perception_histories[channel_id] = history[-MAX_PERCEPTION_HISTORY:]
 
-    def _trim_evaluation_history(self):
-        """L5 단일 히스토리를 MAX_EVALUATION_HISTORY로 제한."""
-        if len(self.evaluation_history) <= MAX_EVALUATION_HISTORY:
-            return
-        self.evaluation_history[:] = self.evaluation_history[-MAX_EVALUATION_HISTORY:]
+
 
     async def _check_gift_message(self, message: discord.Message):
         """라이브러리 봇의 선물 메시지를 감지해서 5레이어 파이프라인으로 처리."""
