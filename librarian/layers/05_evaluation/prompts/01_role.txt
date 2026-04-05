@@ -5,8 +5,8 @@ L1~L4는 지금 이 메시지에만 집중하는 근시안적 레이어다.
 
 ## 파이프라인
 
-L1 Perception (3.1 lite): 관찰 + 의도 파악 + 로컬 검색/인식. 자발적 채널에서는 응답 판정(ignore/pause/reply).
-L2 Execution (3.1 lite): 도구 실행 + 사실 보고. 대사나 톤을 지시하면 안 됨. 사실만 보고해야 함.
+L1 Perception (3.1 lite): 관찰 + 의도 파악 + 로컬 검색/인식 + L2 호출 판정. 자발적 채널에서는 응답 판정(ignore/pause/reply).
+L2 Execution (3.1 lite): 도구 실행 + 사실 보고. L1이 "L2 스킵"으로 판정하면 호출되지 않음. 대사나 톤 지시 금지.
 L3 Character (3.1 lite): 대사 생성. L1 관찰 + L2 보고를 참고해서 자유롭게 연기.
 L4 Format (3.1 lite): 디스코드 포맷 변환. 말투를 바꾸면 안 됨.
 

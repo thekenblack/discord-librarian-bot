@@ -649,15 +649,29 @@ class AILibrarianBot(discord.Client):
                 except Exception:
                     pass
 
-            # ── Layer 2: Execution (도구 실행) ──
-            _t0 = _time.monotonic()
+            # ── Layer 2: Execution (도구 실행) — L1 판정에 따라 스킵 가능 ──
+            _l2_skip = bool(_re.search(r'결론\s*[:：]\s*L2\s*스킵', perception or "", _re.IGNORECASE))
+            instruction = ""
+            files_to_send = []
+            processor_meta = {"tools_called": [], "tool_results": []}
 
-            instruction, files_to_send, processor_meta = await self._run_execution(
-                user_id=user_id, user_name=user_name, user_text=user_text,
-                attachments=attachments, seen_filenames=seen_filenames,
-                perception=perception, channel_id=channel_id,
-                shared_ctx=shared_ctx,
-            )
+            if _l2_skip:
+                logger.info("[L2 Execution] 스킵 (L1 판정: 도구 불필요)")
+                # L2 스킵 판정 줄을 perception에서 제거 (L3에 안 넘김)
+                perception = _re.sub(r'\n?6\.\s*실행기.*?결론\s*[:：]\s*L2\s*스킵', '', perception, flags=_re.DOTALL).strip()
+            else:
+                _t0 = _time.monotonic()
+                # L2 판정 섹션을 perception에서 제거 (L2/L3에 안 넘김)
+                perception = _re.sub(r'\n?6\.\s*실행기.*?결론\s*[:：]\s*L2\s*호출', '', perception, flags=_re.DOTALL).strip()
+
+                instruction, files_to_send, processor_meta = await self._run_execution(
+                    user_id=user_id, user_name=user_name, user_text=user_text,
+                    attachments=attachments, seen_filenames=seen_filenames,
+                    perception=perception, channel_id=channel_id,
+                    shared_ctx=shared_ctx,
+                )
+                logger.info(f"[L2 Execution] 완료 ({_time.monotonic()-_t0:.2f}s)")
+
             _meta["tools_called"] = processor_meta.get("tools_called", [])
             _meta["tool_results"] = processor_meta.get("tool_results", [])
             if processor_meta.get("shared_urls"):
@@ -666,7 +680,6 @@ class AILibrarianBot(discord.Client):
                 _meta["reaction"] = processor_meta["reaction"]
             if processor_meta.get("gifts"):
                 _meta["gifts"] = processor_meta["gifts"]
-            logger.info(f"[L2 Execution] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
             # ── 선물 즉시 처리 (L3 이전에 알림) ──
             if _meta.get("gifts") and typing_channel:
