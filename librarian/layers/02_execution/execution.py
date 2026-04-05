@@ -268,6 +268,8 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
 
     if response and response.candidates and response.candidates[0].content.parts:
         for part in response.candidates[0].content.parts:
+            if getattr(part, 'thought', False):
+                continue
             if not part.function_call:
                 continue
             fc = part.function_call

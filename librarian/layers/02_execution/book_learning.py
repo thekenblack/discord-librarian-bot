@@ -132,6 +132,8 @@ async def learn_book(librarian_db, book_id: int, title: str, filename: str, stor
         result = ""
         if response.candidates and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
+                if getattr(part, 'thought', False):
+                    continue
                 if part.text:
                     result += part.text
 

@@ -1112,6 +1112,8 @@ class AILibrarianBot(discord.Client):
             return ""
         parts = []
         for part in response.candidates[0].content.parts:
+            if getattr(part, 'thought', False):
+                continue
             if part.text:
                 text = part.text.strip()
                 if text:
