@@ -10,6 +10,9 @@
 - search — 로컬 통합 검색. 지식, 기억, 도서, 미디어, URL, 웹 캐시를 검색한다.
   유저가 질문하면 search로 먼저 확인해.
   유저가 파일, 사진, 미디어, URL을 요청하면 search로 대상을 찾아. search 결과에 file_id, media_id, url_id가 나오면 L2가 실행할 수 있다.
+- recognize_media — 유저가 지금 이 메시지에 첨부한 이미지의 내용을 인식한다. 이전에 보낸 이미지를 다시 보내달라는 요청에는 쓰지 마. 그건 search로 찾아.
+- recognize_link — 유저가 지금 이 메시지에 보낸 URL의 내용을 인식한다.
+- recognize_file — 유저가 지금 이 메시지에 첨부한 문서의 내용을 인식한다.
 
 ## 실행기 (Execution)
 
