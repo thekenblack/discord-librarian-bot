@@ -107,10 +107,13 @@ else:
 async def main():
     restart = False
     try:
-        tasks = [library_bot.start(BOT_TOKEN)]
+        tasks = [asyncio.create_task(library_bot.start(BOT_TOKEN))]
         if ai_bot:
-            tasks.append(ai_bot.start(AI_BOT_TOKEN))
-        await asyncio.gather(*tasks)
+            tasks.append(asyncio.create_task(ai_bot.start(AI_BOT_TOKEN)))
+        # 어느 한쪽이 끝나면 전체 종료
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
     except KeyboardInterrupt:
         pass
     finally:
@@ -118,7 +121,6 @@ async def main():
             await library_bot.close()
         if ai_bot and not ai_bot.is_closed():
             await ai_bot.close()
-        # 어느 쪽이든 restart_on_exit이면 42 반환
         if getattr(library_bot, "restart_on_exit", False) or \
            (ai_bot and getattr(ai_bot, "restart_on_exit", False)):
             restart = True

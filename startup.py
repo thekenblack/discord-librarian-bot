@@ -238,11 +238,13 @@ def main():
     def stop_all():
         for name, proc in processes.items():
             if proc.poll() is None:
-                print(f"[Starter] {name} 종료 중...")
+                print(f"[Starter] {name} 종료 중... (terminate)")
                 proc.terminate()
                 try:
                     proc.wait(timeout=10)
+                    print(f"[Starter] {name} 정상 종료")
                 except subprocess.TimeoutExpired:
+                    print(f"[Starter] {name} 10초 타임아웃 → kill")
                     proc.kill()
 
     for bot in BOTS:
