@@ -46,10 +46,10 @@ MAX_EVALUATION_HISTORY = MAX_HISTORY_L5
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
 _UNICODE_EMOJI_RE = re.compile(
     r"[\U0001F1E0-\U0001F1FF]{2}"          # 국기 이모지
-    r"|(?:[\U0001F600-\U0001FAFF]"          # 이모지 본체
+    r"|(?:[\U0001F300-\U0001FAFF]"          # 이모지 본체 (0x1F300~)
     r"  (?:\uFE0F)?"                        # variation selector
     r"  (?:\u200D"                           # ZWJ 시퀀스
-    r"    [\U0001F600-\U0001FAFF\u2600-\u27BF]"
+    r"    [\U0001F300-\U0001FAFF\u2600-\u27BF]"
     r"    (?:\uFE0F)?"
     r"  )*"
     r")"
@@ -464,7 +464,7 @@ class AILibrarianBot(discord.Client):
                 for em in _extract_emojis(_meta["reaction"]):
                     try:
                         await message.add_reaction(em)
-                        logger.info(f"리액션 전송: {em}")
+                        logger.info(f"이모지 리액션 전송: {em}")
                     except discord.HTTPException as e:
                         logger.info(f"리액션 실패 (건너뜀): {em!r} → {e}")
                     except Exception as e:

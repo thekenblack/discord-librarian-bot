@@ -64,7 +64,7 @@ async def run_character(self, user_id: str, user_name: str,
                 emoji = (dict(part.function_call.args) if part.function_call.args else {}).get("emoji", "")
                 if emoji:
                     reactions.append(emoji)
-                    logger.info(f"[Character] 리액션: {emoji}")
+                    logger.info(f"[Character] 이모지 리액션 호출: {emoji}")
 
     if reply:
         logger.info(f"[Character] 응답: {reply[:150]}")
