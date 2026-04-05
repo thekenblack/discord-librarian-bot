@@ -65,6 +65,17 @@ perception_declarations = [
             required=["indices"],
         ),
     ),
+    types.FunctionDeclaration(
+        name="deliver",
+        description="도서관 파일을 전달한다. 유저가 책이나 자료를 달라고 하면 호출. 도서관 목록의 file ID를 써.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "file_id": types.Schema(type="INTEGER", description="전송할 파일 ID"),
+            },
+            required=["file_id"],
+        ),
+    ),
 ]
 perception_tools = [types.Tool(function_declarations=perception_declarations)]
 
@@ -539,6 +550,30 @@ async def run_perception(self, user_id: str, user_name: str,
                         file_result = "첨부파일이 없어."
                     id_tag = f" (media_id:{media_id})" if media_id else ""
                     tool_results.append(f"문서 인식 ({att_idx}){id_tag}: {file_result}")
+
+            # deliver (L1에서 직접 실행)
+            elif fc.name == "deliver":
+                fc_args = dict(fc.args) if fc.args else {}
+                fc_args["_user_id"] = user_id
+                fc_args["_user_name"] = user_name
+                deliver_result = await execute_tool(
+                    self.library_db, self.librarian_db, "deliver", fc_args)
+                import json as _json
+                deliver_data = _json.loads(deliver_result)
+                if deliver_data.get("_action") == "deliver":
+                    save_path = os.path.join(FILES_DIR, deliver_data["stored_name"])
+                    if os.path.exists(save_path):
+                        if not hasattr(self, '_l1_files'):
+                            self._l1_files = []
+                        import discord as _discord
+                        self._l1_files.append(_discord.File(save_path, filename=deliver_data["filename"]))
+                        await self.library_db.increment_download(deliver_data["file_id"])
+                        tool_results.append(f"[전달 성공] {deliver_data['filename']}")
+                        logger.info(f"[Perception] deliver 성공: {deliver_data['filename']}")
+                    else:
+                        tool_results.append("[전달 실패] 파일을 찾을 수 없다.")
+                elif deliver_data.get("error"):
+                    tool_results.append(f"[전달 실패] {deliver_data['error']}")
 
     # 분석 텍스트 + 도구 결과 합침
     if tool_results:

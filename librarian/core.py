@@ -631,6 +631,11 @@ class AILibrarianBot(discord.Client):
                     self._trim_perception_history(channel_id)
                 logger.info(f"[L1 Perception] 완료 ({_time.monotonic()-_t0:.2f}s)")
 
+            # L1에서 deliver한 파일 회수
+            if hasattr(self, '_l1_files') and self._l1_files:
+                _meta.setdefault("l1_files", []).extend(self._l1_files)
+                self._l1_files.clear()
+
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
                 if _re.search(r'decide_to_pause', perception or "", _re.IGNORECASE):
@@ -826,6 +831,10 @@ class AILibrarianBot(discord.Client):
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
+
+            # L1에서 deliver한 파일 합침
+            if _meta.get("l1_files"):
+                files_to_send = _meta["l1_files"] + files_to_send
 
             return reply, files_to_send, _meta
 
