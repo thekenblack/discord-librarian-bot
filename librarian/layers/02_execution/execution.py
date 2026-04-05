@@ -258,17 +258,11 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
     response = await self._call_gemini(loop_contents, config, model=MODEL_L2)
     logger.info("[Execution] API 응답 수신")
 
-    # ── 1회 응답에서 모든 function_call + 텍스트 추출 ──
+    # ── function_call만 추출 + 실행 (텍스트 응답 무시) ──
     result_parts = []
-    text_response = ""
 
     if response and response.candidates and response.candidates[0].content.parts:
         for part in response.candidates[0].content.parts:
-            # 텍스트 응답
-            if part.text and part.text.strip():
-                text_response = part.text.strip()
-
-            # function_call 실행
             if not part.function_call:
                 continue
             fc = part.function_call
