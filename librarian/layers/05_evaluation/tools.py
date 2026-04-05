@@ -107,6 +107,107 @@ evaluation_declarations += [
     ),
 ]
 
-EVALUATION_TOOL_NAMES = {"feel", "memorize", "forget", "update_summary", "update_channel_summary", "memorize_alias", "forget_alias"}
+evaluation_declarations += [
+    types.FunctionDeclaration(
+        name="update_profile",
+        description="유저 프로필을 갱신한다. 인상이 바뀔 때만. personality, trust_evidence, preferences, risk_notes, relationship 중 변경할 것만.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "user_id": types.Schema(type="STRING", description="유저 ID"),
+                "personality": types.Schema(type="STRING", description="성격/성향"),
+                "trust_evidence": types.Schema(type="STRING", description="신뢰 근거"),
+                "preferences": types.Schema(type="STRING", description="선호/비선호"),
+                "risk_notes": types.Schema(type="STRING", description="주의사항"),
+                "relationship": types.Schema(type="STRING", description="관계 궤적"),
+            },
+            required=["user_id"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="log_conversation",
+        description="대화 품질을 기록한다. 의미 있는 대화에서만. 잡담은 생략.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "channel_id": types.Schema(type="STRING", description="채널 ID"),
+                "participants": types.Schema(type="STRING", description="참여자들"),
+                "quality": types.Schema(type="STRING", description="레이어별 품질 평가"),
+                "key_moments": types.Schema(type="STRING", description="핵심 사건"),
+            },
+            required=["quality"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="note_pattern",
+        description="패턴을 기록한다. 유저별, 채널별, 또는 전체 패턴.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "observation": types.Schema(type="STRING", description="관찰된 패턴"),
+                "scope": types.Schema(type="STRING", description="user / channel / global"),
+                "target_id": types.Schema(type="STRING", description="대상 ID (scope가 user/channel일 때)"),
+            },
+            required=["observation"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="note_self",
+        description="봇 자체 경향을 기록한다. 반복되는 실수, 약점, 전략.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "content": types.Schema(type="STRING", description="기록할 내용"),
+                "category": types.Schema(type="STRING", description="tendency / weakness / strategy"),
+            },
+            required=["content"],
+        ),
+    ),
+]
+
+evaluation_declarations += [
+    types.FunctionDeclaration(
+        name="feedback_user",
+        description="유저별 피드백. 이 유저와 대화할 때의 구체적 지침. 다음 턴에 L1이 읽음.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "user_id": types.Schema(type="STRING", description="유저 ID"),
+                "feedback": types.Schema(type="STRING", description="구체적 지침"),
+            },
+            required=["user_id", "feedback"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_channel",
+        description="채널별 피드백. 이 채널에서의 행동 지침. 다음 턴에 L1이 읽음.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "channel_id": types.Schema(type="STRING", description="채널 ID"),
+                "feedback": types.Schema(type="STRING", description="구체적 지침"),
+            },
+            required=["channel_id", "feedback"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="feedback_global",
+        description="전체 피드백. 모든 대화에 적용되는 지침. 다음 턴에 L1이 읽음.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "feedback": types.Schema(type="STRING", description="구체적 지침"),
+            },
+            required=["feedback"],
+        ),
+    ),
+]
+
+EVALUATION_TOOL_NAMES = {
+    "feel", "memorize", "forget", "update_summary", "update_channel_summary",
+    "memorize_alias", "forget_alias",
+    "update_profile", "log_conversation", "note_pattern", "note_self",
+    "feedback_user", "feedback_channel", "feedback_global",
+}
 
 evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]

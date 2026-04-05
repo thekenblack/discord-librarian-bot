@@ -270,6 +270,50 @@ class LibrarianDB:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_web_query ON web_results(query)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_url_normalized ON url_results(normalized)")
 
+            # ── L5 커맨드 센터 전용 ─────────────────────────
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_profile (
+                    user_id      TEXT PRIMARY KEY,
+                    personality  TEXT NOT NULL DEFAULT '',
+                    trust_evidence TEXT NOT NULL DEFAULT '',
+                    preferences  TEXT NOT NULL DEFAULT '',
+                    risk_notes   TEXT NOT NULL DEFAULT '',
+                    relationship TEXT NOT NULL DEFAULT '',
+                    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_log (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id   TEXT,
+                    participants TEXT,
+                    quality      TEXT,
+                    key_moments  TEXT,
+                    layer_feedback TEXT,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pattern_notes (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scope        TEXT NOT NULL DEFAULT 'global',
+                    target_id    TEXT,
+                    observation  TEXT NOT NULL,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS self_notes (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category     TEXT NOT NULL DEFAULT 'tendency',
+                    content      TEXT NOT NULL,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # alias_groups → aliases 마이그레이션
             try:
                 await db.execute("DROP TABLE IF EXISTS alias_groups")
@@ -1288,7 +1332,7 @@ class LibrarianDB:
     # ── Evaluation 피드백 ──────────────────────────────────
 
     async def save_feedback(self, user_id: str, feedback: str):
-        """Evaluation 피드백 저장 (유저별 최신 1건)"""
+        """유저별 피드백 저장 (최신 1건)"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("""
                 INSERT INTO evaluation_feedback (user_id, feedback) VALUES (?, ?)
@@ -1296,11 +1340,45 @@ class LibrarianDB:
             """, (user_id, feedback))
             await db.commit()
 
+    async def save_channel_feedback(self, channel_id: str, feedback: str):
+        """채널별 피드백 저장 (최신 1건)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO evaluation_feedback (user_id, feedback) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET feedback=excluded.feedback, created_at=datetime('now')
+            """, (f"channel:{channel_id}", feedback))
+            await db.commit()
+
+    async def save_global_feedback(self, feedback: str):
+        """전체 피드백 저장 (최신 1건)"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("""
+                INSERT INTO evaluation_feedback (user_id, feedback) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET feedback=excluded.feedback, created_at=datetime('now')
+            """, ("global", feedback))
+            await db.commit()
+
     async def get_feedback(self, user_id: str) -> str | None:
-        """유저별 최신 Evaluation 피드백 조회"""
+        """유저별 피드백 조회"""
         async with aiosqlite.connect(self.path) as db:
             cursor = await db.execute(
                 "SELECT feedback FROM evaluation_feedback WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    async def get_channel_feedback(self, channel_id: str) -> str | None:
+        """채널별 피드백 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT feedback FROM evaluation_feedback WHERE user_id = ?", (f"channel:{channel_id}",))
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    async def get_global_feedback(self) -> str | None:
+        """전체 피드백 조회"""
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                "SELECT feedback FROM evaluation_feedback WHERE user_id = 'global'")
             row = await cursor.fetchone()
             return row[0] if row else None
 
@@ -1520,4 +1598,67 @@ class LibrarianDB:
                 cursor = await db.execute(
                     "SELECT user_name, changes, reason, created_at FROM emotion_log ORDER BY id DESC LIMIT ?",
                     (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    # ── L5 커맨드 센터 ──────────────────────────────────
+
+    async def get_user_profile(self, user_id: str) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM user_profile WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def upsert_user_profile(self, user_id: str, **fields):
+        async with aiosqlite.connect(self.path) as db:
+            existing = await db.execute("SELECT 1 FROM user_profile WHERE user_id = ?", (user_id,))
+            if await existing.fetchone():
+                sets = ", ".join(f"{k} = ?" for k in fields)
+                vals = list(fields.values()) + [user_id]
+                await db.execute(f"UPDATE user_profile SET {sets}, updated_at = datetime('now') WHERE user_id = ?", vals)
+            else:
+                fields["user_id"] = user_id
+                cols = ", ".join(fields.keys())
+                placeholders = ", ".join("?" for _ in fields)
+                await db.execute(f"INSERT INTO user_profile ({cols}) VALUES ({placeholders})", list(fields.values()))
+            await db.commit()
+
+    async def save_conversation_log(self, channel_id: str, participants: str,
+                                     quality: str, key_moments: str, layer_feedback: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO conversation_log (channel_id, participants, quality, key_moments, layer_feedback) VALUES (?,?,?,?,?)",
+                (channel_id, participants, quality, key_moments, layer_feedback))
+            await db.commit()
+
+    async def save_pattern_note(self, observation: str, scope: str = "global", target_id: str = None):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO pattern_notes (scope, target_id, observation) VALUES (?,?,?)",
+                (scope, target_id, observation))
+            await db.commit()
+
+    async def save_self_note(self, content: str, category: str = "tendency"):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO self_notes (category, content) VALUES (?,?)",
+                (category, content))
+            await db.commit()
+
+    async def get_pattern_notes(self, limit: int = 20) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM pattern_notes ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_self_notes(self, limit: int = 10) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM self_notes ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_recent_conversation_logs(self, limit: int = 5) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM conversation_log ORDER BY id DESC LIMIT ?", (limit,))
             return [dict(r) for r in await cursor.fetchall()]

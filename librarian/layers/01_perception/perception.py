@@ -172,11 +172,17 @@ async def gather_context(self, user_id: str, user_name: str,
         econ_block += "선물 가능한 아이템 없음 (잔고 부족)"
     parts.append(econ_block)
 
-    # 이전 피드백 (shared_ctx에서)
-    prev_feedback = ctx.get("feedback")
-    if prev_feedback:
-        parts.append(f"## 이전 피드백\n{prev_feedback}")
-        logger.info(f"[Perception] 이전 피드백 로드 ({len(prev_feedback)}자)")
+    # 이전 피드백 3종 (shared_ctx에서)
+    fb_parts = []
+    if ctx.get("feedback"):
+        fb_parts.append(f"[유저] {ctx['feedback']}")
+    if ctx.get("channel_feedback"):
+        fb_parts.append(f"[채널] {ctx['channel_feedback']}")
+    if ctx.get("global_feedback"):
+        fb_parts.append(f"[전체] {ctx['global_feedback']}")
+    if fb_parts:
+        parts.append("## 이전 피드백 (최우선)\n" + "\n".join(fb_parts))
+        logger.info(f"[Perception] 이전 피드백 로드 ({len(fb_parts)}건)")
 
     # 대화 요약 (shared_ctx에서)
     user_summary = ctx.get("user_summary")

@@ -211,25 +211,31 @@ class AILibrarianBot(discord.Client):
         self._spontaneous_gen: dict[str, int] = {}
 
     async def _evaluation_worker(self):
-        """L5 큐 워커. 큐에서 하나씩 꺼내서 순서대로 처리."""
+        """L5 디바운스 워커. 30초 조용하거나 5건 쌓이면 배치 처리."""
+        MAX_BATCH = 5
+        DEBOUNCE_SEC = 30.0
         while True:
-            got_item = False
             try:
-                kwargs = await self._evaluation_queue.get()
-                got_item = True
-                await self._run_evaluation(**kwargs)
+                # 첫 번째 턴 대기
+                first = await self._evaluation_queue.get()
+                batch = [first]
+
+                # 디바운스: 30초간 추가 대기 또는 5건 도달
+                while len(batch) < MAX_BATCH:
+                    try:
+                        next_turn = await asyncio.wait_for(
+                            self._evaluation_queue.get(), timeout=DEBOUNCE_SEC)
+                        batch.append(next_turn)
+                    except asyncio.TimeoutError:
+                        break  # 30초간 안 들어오면 시작
+
+                logger.info(f"[Evaluation Worker] 배치 시작 ({len(batch)}턴)")
+                await self._run_evaluation_batch(batch)
+
             except asyncio.CancelledError:
-                if got_item:
-                    self._evaluation_queue.task_done()
                 return
             except Exception as e:
                 logger.warning(f"[Evaluation Worker] 에러 (무시): {e}")
-            finally:
-                if got_item:
-                    try:
-                        self._evaluation_queue.task_done()
-                    except ValueError:
-                        pass
 
     async def _flush_admin_notify(self, delay: float = 10.0):
         """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
@@ -568,6 +574,8 @@ class AILibrarianBot(discord.Client):
                 "user_summary": await self.librarian_db.get_user_summary(user_id),
                 "channel_summary": await self.librarian_db.get_channel_summary(channel_id) if channel_id else "",
                 "feedback": await self.librarian_db.get_feedback(user_id),
+                "channel_feedback": await self.librarian_db.get_channel_feedback(channel_id) if channel_id else "",
+                "global_feedback": await self.librarian_db.get_global_feedback(),
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
@@ -776,6 +784,7 @@ class AILibrarianBot(discord.Client):
                 self._evaluation_queue.put_nowait({
                     "user_id": user_id, "user_name": user_name,
                     "user_text": user_text, "bot_reply": reply,
+                    "raw_reply": raw_reply,
                     "context": perception, "tool_results": instruction,
                     "channel_id": channel_id,
                 })
@@ -1454,4 +1463,4 @@ _postprocess = _il.import_module("librarian.layers.04_postprocess.postprocess")
 AILibrarianBot._run_postprocess = _postprocess.run_postprocess
 
 _evaluation = _il.import_module("librarian.layers.05_evaluation.evaluation")
-AILibrarianBot._run_evaluation = _evaluation.run_evaluation
+AILibrarianBot._run_evaluation_batch = _evaluation.run_evaluation_batch
