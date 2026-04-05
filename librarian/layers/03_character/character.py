@@ -57,9 +57,24 @@ async def run_character(self, user_id: str, user_name: str,
 
     reply = ""
     reactions = []
+    if response and response.candidates:
+        candidate = response.candidates[0]
+        finish = getattr(candidate, 'finish_reason', None)
+        part_types = []
+        if candidate.content and candidate.content.parts:
+            for p in candidate.content.parts:
+                if getattr(p, 'thought', False):
+                    part_types.append("thought")
+                elif p.function_call:
+                    part_types.append(f"fc:{p.function_call.name}")
+                elif p.text:
+                    part_types.append(f"text({len(p.text)})")
+                else:
+                    part_types.append("other")
+        logger.info(f"[Character] 응답 구조: finish={finish}, parts={part_types}")
+
     if response and response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
         for part in response.candidates[0].content.parts:
-            # thinking part 제외 (thought=True인 텍스트는 내부 사고)
             if getattr(part, 'thought', False):
                 continue
             if part.text and part.text.strip():
@@ -69,6 +84,34 @@ async def run_character(self, user_id: str, user_name: str,
                 if emoji:
                     reactions.append(emoji)
                     logger.info(f"[Character] 이모지 리액션 호출: {emoji}")
+
+        # react function call만 있고 텍스트가 없으면 function_response를 보내서 대사 생성 유도
+        if not reply and reactions:
+            logger.info("[Character] 리액션만 반환 → function_response 후 대사 생성")
+            # 모델 응답(function_call 포함)을 히스토리에 추가
+            loop_contents.append(response.candidates[0].content)
+            # function_response 추가
+            func_response_parts = [
+                types.Part.from_function_response(
+                    name="react", response={"status": "ok"})
+            ]
+            loop_contents.append(types.Content(role="user", parts=func_response_parts))
+            # 도구 없이 재호출 → 텍스트만 생성
+            config_no_tools = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                temperature=TEMP_L3,
+                thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
+            )
+            response2 = await self._call_gemini(loop_contents, config_no_tools, model=MODEL_L3)
+            if response2 and response2.candidates and response2.candidates[0].content and response2.candidates[0].content.parts:
+                for part in response2.candidates[0].content.parts:
+                    if getattr(part, 'thought', False):
+                        continue
+                    if part.text and part.text.strip():
+                        reply = part.text.strip()
+            if reply:
+                logger.info(f"[Character] function_response 후 응답: {reply[:150]}")
 
     if reply:
         logger.info(f"[Character] 응답: {reply[:150]}")
