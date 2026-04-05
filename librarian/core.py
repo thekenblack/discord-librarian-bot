@@ -421,6 +421,17 @@ class AILibrarianBot(discord.Client):
                 ref = message.reference.resolved
                 if self.user and ref.author.id != self.user.id:
                     return
+            # 다른 사람 멘션(유저/역할)만 있고 자기가 없으면 무시
+            # 단, 역할 멘션으로 자기가 포함된 경우는 예외
+            has_other_mentions = bool(message.mentions) or bool(message.role_mentions)
+            if has_other_mentions and self.user:
+                bot_in_role = False
+                if message.guild:
+                    bot_member = message.guild.get_member(self.user.id)
+                    if bot_member:
+                        bot_in_role = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
+                if not bot_in_role:
+                    return
             # 자발적 채널이면 debounce 후 응답 가능성
             if (SPONTANEOUS_CHANNEL_ID
                     and str(message.channel.id) == SPONTANEOUS_CHANNEL_ID):
