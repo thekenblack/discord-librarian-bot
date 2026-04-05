@@ -67,20 +67,9 @@ def normalize_url(url: str) -> str:
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
 # L2 도구 이름
-PROCESSOR_TOOL_NAMES = {"deliver", "attach", "gift_user", "web_search"}
+PROCESSOR_TOOL_NAMES = {"attach", "gift_user", "web_search"}
 # L2 도구 선언
 execution_declarations = [
-        types.FunctionDeclaration(
-            name="deliver",
-            description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "file_id": types.Schema(type="INTEGER", description="전송할 파일 ID"),
-                },
-                required=["file_id"],
-            ),
-        ),
         types.FunctionDeclaration(
             name="attach",
             description="이전에 인식한 미디어 또는 URL을 공유한다. search 결과의 media_id 또는 url_id를 사용.",

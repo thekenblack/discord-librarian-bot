@@ -305,16 +305,7 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
             tool_data = json.loads(tool_result)
             _meta["tool_results"].append(tool_result)
 
-            if tool_data.get("_action") == "deliver":
-                save_path = os.path.join(FILES_DIR, tool_data["stored_name"])
-                if os.path.exists(save_path):
-                    files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
-                    await self.library_db.increment_download(tool_data["file_id"])
-                    result_parts.append(f"[전달 성공] {tool_data['filename']}")
-                else:
-                    result_parts.append(f"[전달 실패] 파일을 찾을 수 없다.")
-
-            elif tool_data.get("_action") == "attach":
+            if tool_data.get("_action") == "attach":
                 save_path = os.path.join(MEDIA_DIR, tool_data["stored_name"])
                 if os.path.exists(save_path):
                     files_to_send.append(discord.File(save_path, filename=tool_data["filename"]))
