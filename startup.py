@@ -23,7 +23,7 @@ if sys.platform != "win32":
         print("[설치] venv 생성 중...")
         subprocess.run([sys.executable, "-m", "venv", VENV_DIR], check=True)
 
-    if os.path.realpath(sys.executable) != os.path.realpath(VENV_PYTHON):
+    if not sys.prefix.startswith(VENV_DIR):
         os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
 
     # 매 시작 시 패키지 업데이트
