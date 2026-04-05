@@ -140,7 +140,8 @@ async def run_evaluation_batch(self, batch: list[dict]):
         logger.info(f"[Evaluation] 배치 API 호출 ({len(batch)}턴, model={MODEL_L5})")
         response = await self._call_gemini(contents, config, model=MODEL_L5)
 
-        # ── 도구 결과 처리 ──
+        # ── 도구 결과 처리 (로그 버퍼링) ──
+        _log_lines = []
         feedback_text = ""
         if response and response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
@@ -151,10 +152,8 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     continue
                 fc = part.function_call
                 fc_args = dict(fc.args) if fc.args else {}
-                logger.info(f"[Evaluation] 도구: {fc.name}({fc_args})")
 
                 if fc.name == "feel":
-                    # 기존 feel 처리 (배치의 마지막 턴 기준)
                     last_turn = batch[-1]
                     targets = fc_args.get("targets") or []
                     reason = fc_args.get("reason", "")
@@ -187,7 +186,9 @@ async def run_evaluation_batch(self, batch: list[dict]):
                                 before_str = " ".join(f"{k}:{before_emo.get(k, 50):.1f}" for k in self.librarian_db.USER_AXES)
                             before_str += " " + " ".join(f"{k}:{before_bot.get(k, 50):.1f}" for k in self.librarian_db.SELF_AXES + self.librarian_db.SERVER_AXES)
                             current_str = " ".join(f"{k}:{v:.1f}" for k, v in current.items())
-                            logger.info(f"[Evaluation] 감정: {target_name} | {changes_str} | {reason}\n  전: {before_str.strip()}\n  후: {current_str}")
+                            _log_lines.append(f"  감정: {target_name} | {changes_str} | {reason}")
+                            _log_lines.append(f"    전: {before_str.strip()}")
+                            _log_lines.append(f"    후: {current_str}")
 
                         bot_changes = {}
 
@@ -196,37 +197,37 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     last_user = batch[-1].get("_user_name", "")
                     result = await execute_tool(self.library_db, self.librarian_db, "memorize",
                                                 {"content": content, "_user_name": last_user})
-                    logger.info(f"[Evaluation] memorize: {result}")
+                    _log_lines.append(f"  memorize: {result}")
 
                 elif fc.name == "forget":
                     result = await execute_tool(self.library_db, self.librarian_db, "forget", fc_args)
-                    logger.info(f"[Evaluation] forget: {result}")
+                    _log_lines.append(f"  forget: {result}")
 
                 elif fc.name == "memorize_alias":
                     result = await execute_tool(self.library_db, self.librarian_db, "memorize_alias", fc_args)
-                    logger.info(f"[Evaluation] memorize_alias: {result}")
+                    _log_lines.append(f"  memorize_alias: {result}")
 
                 elif fc.name == "forget_alias":
                     result = await execute_tool(self.library_db, self.librarian_db, "forget_alias", fc_args)
-                    logger.info(f"[Evaluation] forget_alias: {result}")
+                    _log_lines.append(f"  forget_alias: {result}")
 
                 elif fc.name == "update_summary":
                     summary = fc_args.get("summary", "")
                     last_uid = batch[-1]["user_id"]
                     await self.librarian_db.save_user_summary(last_uid, summary)
-                    logger.info(f"[Evaluation] 유저 요약 갱신 ({len(summary)}자): {summary[:100]}")
+                    _log_lines.append(f"  유저 요약: {summary}")
 
                 elif fc.name == "update_channel_summary":
                     summary = fc_args.get("summary", "")
                     last_cid = batch[-1].get("channel_id")
                     if last_cid:
                         await self.librarian_db.save_channel_summary(last_cid, summary)
-                        logger.info(f"[Evaluation] 채널 요약 갱신 ({len(summary)}자): {summary[:100]}")
+                        _log_lines.append(f"  채널 요약: {summary}")
 
                 elif fc.name == "update_profile":
                     uid = fc_args.pop("user_id", batch[-1]["user_id"])
                     await self.librarian_db.upsert_user_profile(uid, **fc_args)
-                    logger.info(f"[Evaluation] 프로필 갱신: {uid} → {fc_args}")
+                    _log_lines.append(f"  프로필: {uid} → {fc_args}")
 
                 elif fc.name == "log_conversation":
                     await self.librarian_db.save_conversation_log(
@@ -235,42 +236,45 @@ async def run_evaluation_batch(self, batch: list[dict]):
                         quality=fc_args.get("quality", ""),
                         key_moments=fc_args.get("key_moments", ""),
                         layer_feedback=fc_args.get("layer_feedback", feedback_text[:500]))
-                    logger.info(f"[Evaluation] 대화 로그: {fc_args.get('quality', '')[:100]}")
+                    _log_lines.append(f"  대화 로그: {fc_args.get('quality', '')}")
 
                 elif fc.name == "note_pattern":
                     await self.librarian_db.save_pattern_note(
                         observation=fc_args.get("observation", ""),
                         scope=fc_args.get("scope", "global"),
                         target_id=fc_args.get("target_id"))
-                    logger.info(f"[Evaluation] 패턴: {fc_args.get('observation', '')[:100]}")
+                    _log_lines.append(f"  패턴 [{fc_args.get('scope', 'global')}]: {fc_args.get('observation', '')}")
 
                 elif fc.name == "note_self":
                     await self.librarian_db.save_self_note(
                         content=fc_args.get("content", ""),
                         category=fc_args.get("category", "tendency"))
-                    logger.info(f"[Evaluation] 자기 기록:\n{fc_args.get('content', '')}")
+                    _log_lines.append(f"  자기 기록 [{fc_args.get('category', 'tendency')}]: {fc_args.get('content', '')}")
 
                 elif fc.name == "feedback_user":
                     uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
-                    # L5가 닉네임(@Ken)을 넣을 수 있으므로 ID로 변환
                     import re as _re_uid
                     uid_match = _re_uid.search(r'(\d{15,})', str(uid_raw))
                     uid = uid_match.group(1) if uid_match else next(
                         (t["user_id"] for t in batch if t["user_name"] in str(uid_raw)), batch[-1]["user_id"])
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_feedback(uid, fb)
-                    logger.info(f"[Evaluation] 유저 피드백 ({uid}):\n{fb}")
+                    _log_lines.append(f"  유저 피드백 ({uid}):")
+                    for line in fb.split("["):
+                        line = line.strip()
+                        if line:
+                            _log_lines.append(f"    [{line}" if not line.startswith("[") else f"    {line}")
 
                 elif fc.name == "feedback_channel":
                     cid = fc_args.get("channel_id", batch[-1].get("channel_id", ""))
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_channel_feedback(cid, fb)
-                    logger.info(f"[Evaluation] 채널 피드백 ({cid}):\n{fb}")
+                    _log_lines.append(f"  채널 피드백 ({cid}): {fb}")
 
                 elif fc.name == "feedback_global":
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_global_feedback(fb)
-                    logger.info(f"[Evaluation] 전체 피드백:\n{fb}")
+                    _log_lines.append(f"  전체 피드백: {fb}")
 
                 elif fc.name == "set_thinking":
                     uid = fc_args.get("user_id", batch[-1]["user_id"])
@@ -280,13 +284,14 @@ async def run_evaluation_batch(self, batch: list[dict]):
                         l2=fc_args.get("l2"),
                         l3=fc_args.get("l3"))
                     parts = [f"{k}={fc_args[k]}" for k in ("l1", "l2", "l3") if k in fc_args]
-                    logger.info(f"[Evaluation] thinking 조정: {uid} → {', '.join(parts)}")
+                    _log_lines.append(f"  thinking: {uid} → {', '.join(parts)}")
 
-        # ── 텍스트 피드백 (도구로 안 보낸 경우 폴백) ──
         if feedback_text:
-            logger.info(f"[Evaluation] 텍스트 피드백:\n{feedback_text}")
+            _log_lines.append(f"  텍스트: {feedback_text}")
 
-        logger.info(f"[Evaluation] 배치 완료 ({len(batch)}턴)")
+        # 버퍼링된 로그를 한번에 출력
+        report = "\n".join(_log_lines) if _log_lines else "  (도구 호출 없음)"
+        logger.info(f"[Evaluation] 배치 완료 ({len(batch)}턴)\n{'─' * 50}\n{report}\n{'─' * 50}")
 
     except Exception as e:
         logger.warning(f"[Evaluation] 배치 처리 실패: {e}")
