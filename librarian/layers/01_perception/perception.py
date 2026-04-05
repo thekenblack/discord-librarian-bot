@@ -1,7 +1,7 @@
 """
 Layer 01: Perception (인식)
 맥락 수집 + Gemini API 호출로 상황 분석 + 검색/인식 도구 실행.
-결과를 Functioning과 Character에 넘긴다.
+결과를 Execution과 Character에 넘긴다.
 """
 
 import os
@@ -12,8 +12,8 @@ from google.genai import types
 from config import ADMIN_IDS, LIGHTNING_ADDRESS, AI_MAX_OUTPUT_TOKENS, GEMINI_API_KEY, GEMINI_MODEL, MEDIA_DIR, TEMP_L1
 
 import importlib as _il
-_btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
-_tools = _il.import_module("librarian.layers.02_functioning.tools")
+_btc = _il.import_module("librarian.layers.02_execution.bitcoin_data")
+_tools = _il.import_module("librarian.layers.02_execution.tools")
 execute_tool = _tools.execute_tool
 parse_url = _tools.parse_url
 
@@ -219,16 +219,38 @@ async def gather_context(self, user_id: str, user_name: str,
 
 SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
 
-멘션 없는 메시지다. 현재 메시지만 보고 판정해. 관찰이나 분석보다 판정이 먼저다.
+멘션 없는 메시지다. 기본값은 ignore다. 대부분의 메시지는 너한테 하는 말이 아니다.
 
-사람들은 메시지를 끊어서 친다. 한 문장을 여러 메시지로 나눠 보낸다.
-말이 끝났는지 확신이 없으면 decide_to_pause.
-자기한테 말하는 게 아니면 decide_to_ignore.
+판정을 먼저 해. 판정이 ignore나 pause면 관찰/분석 전부 생략하고 판정 + 사유만 쓰고 끝내.
 
-"decide_to_pause" — 아직 말하는 중인 것 같다. 기다린다. 판정만 쓰고 끝. 관찰 생략.
-"decide_to_ignore" — 자기한테 하는 말이 아니다. 다른 사람끼리의 대화, 혼잣말, 관계 없는 주제. 판정만 쓰고 끝. 관찰 생략.
-"decide_to_reply" — 말이 확실히 끝났고, 그냥 채널에 말할 때.
-"decide_to_reply_to" — 여러 대화가 섞여 있어서 어떤 메시지에 대한 반응인지 특정해야 할 때. 답글로 단다."""
+ignore 예시:
+- 다른 사람을 부르고 있다 (다른 이름을 언급, 다른 사람에게 말하는 톤)
+- 사람들끼리 대화 중이다
+- 혼잣말이다
+- 너와 관련 없는 주제다
+다른 사람 이름이 언급됐으면 그건 너한테 하는 말이 아니다.
+
+pause 예시:
+- 메시지가 끊어져 있다 (문장이 안 끝남)
+- 사람들은 메시지를 여러 개로 나눠 보낸다
+
+reply 조건 (전부 충족해야 함):
+- 너를 지칭하거나 너한테 말하고 있다는 명확한 근거가 있다
+- 다른 사람을 부르고 있지 않다
+- 말이 끝났다 (문장이 완결됨)
+근거 없으면 ignore.
+
+출력 형식 (반드시 사유를 써):
+"decide_to_ignore — 사유"
+"decide_to_pause — 사유"
+"decide_to_reply — 사유"
+"decide_to_reply_to — 사유"
+
+예:
+"decide_to_ignore — 다른 유저(@이름)에게 말하고 있다"
+"decide_to_ignore — 사람들끼리 대화 중"
+"decide_to_pause — 문장이 끝나지 않았다"
+"decide_to_reply — 비트쨩을 부르면서 질문했다" """
 
 
 async def run_perception(self, user_id: str, user_name: str,
@@ -236,7 +258,8 @@ async def run_perception(self, user_id: str, user_name: str,
                          history: list = None,
                          attachments: list = None,
                          seen_filenames: list = None,
-                         is_spontaneous: bool = False) -> str:
+                         is_spontaneous: bool = False,
+                         thinking_level: str = "minimal") -> str:
     """raw context를 Gemini에 보내서 상황 분석 + 검색/인식 도구 실행. 1회 호출."""
     import asyncio
 
@@ -249,11 +272,13 @@ async def run_perception(self, user_id: str, user_name: str,
         sys_parts.append(raw_context)
     system_prompt = "\n\n".join(p for p in sys_parts if p)
 
+    _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=perception_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=TEMP_L1,
+        thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
     )
 
     if user_text:
@@ -265,8 +290,9 @@ async def run_perception(self, user_id: str, user_name: str,
     contents = list(history) if history else []
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
-    logger.info(f"[Perception] API 호출 (히스토리={len(contents)-1}턴)")
-    response = await self._call_gemini(contents, config)
+    from librarian.core import MODEL_L1
+    logger.info(f"[Perception] API 호출 (히스토리={len(contents)-1}턴, model={MODEL_L1})")
+    response = await self._call_gemini(contents, config, model=MODEL_L1)
 
     # 1회 응답에서 텍스트 + function_call 모두 추출
     result = ""
@@ -328,7 +354,8 @@ async def run_perception(self, user_id: str, user_name: str,
                                     types.Part.from_text(text="3-4줄로 핵심만 설명해."),
                                 ]
                                 media_config = types.GenerateContentConfig(
-                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                    max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=1.0,
+                                    media_resolution="MEDIA_RESOLUTION_LOW")
                                 media_response = await self._call_gemini(
                                     [types.Content(role="user", parts=media_parts)], media_config)
                                 media_result = self._extract_reply(media_response)
@@ -372,7 +399,8 @@ async def run_perception(self, user_id: str, user_name: str,
                                             types.Part.from_text(text="이 영상의 첫 장면이야. 3-4줄로 설명해."),
                                         ]
                                         media_config = types.GenerateContentConfig(
-                                            max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                            max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=1.0,
+                                            media_resolution="MEDIA_RESOLUTION_LOW")
                                         media_response = await self._call_gemini(
                                             [types.Content(role="user", parts=media_parts)], media_config)
                                         media_result = self._extract_reply(media_response)
@@ -383,8 +411,8 @@ async def run_perception(self, user_id: str, user_name: str,
                                             os.remove(p)
                                         except Exception:
                                             pass
-                            except Exception as e:
-                                logger.warning(f"[Perception] 영상 썸네일 추출 실패 ({att_idx}): {e}")
+                                except Exception as e:
+                                    logger.warning(f"[Perception] 영상 썸네일 추출 실패 ({att_idx}): {e}")
                         else:
                             media_result = f"이 파일 형식({ct})은 인식할 수 없어."
                     else:
@@ -413,7 +441,7 @@ async def run_perception(self, user_id: str, user_name: str,
                                 types.Part(file_data=types.FileData(file_uri=url)),
                                 types.Part.from_text(text="이 이미지를 설명해."),
                             ]
-                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=1.0)
                             img_response = await self._call_gemini(
                                 [types.Content(role="user", parts=img_parts)], img_config)
                             link_result = self._extract_reply(img_response)

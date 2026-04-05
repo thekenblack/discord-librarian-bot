@@ -314,6 +314,16 @@ class LibrarianDB:
                 )
             """)
 
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_thinking (
+                    user_id  TEXT PRIMARY KEY,
+                    l1       TEXT NOT NULL DEFAULT 'minimal',
+                    l2       TEXT NOT NULL DEFAULT 'minimal',
+                    l3       TEXT NOT NULL DEFAULT 'minimal',
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
             # alias_groups → aliases 마이그레이션
             try:
                 await db.execute("DROP TABLE IF EXISTS alias_groups")
@@ -1662,3 +1672,33 @@ class LibrarianDB:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM conversation_log ORDER BY id DESC LIMIT ?", (limit,))
             return [dict(r) for r in await cursor.fetchall()]
+
+    # ── 유저별 thinking level ──────────────────────────
+
+    async def get_user_thinking(self, user_id: str) -> dict:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM user_thinking WHERE user_id = ?", (user_id,))
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            return {"l1": "minimal", "l2": "minimal", "l3": "minimal"}
+
+    async def set_user_thinking(self, user_id: str, l1: str = None, l2: str = None, l3: str = None):
+        async with aiosqlite.connect(self.path) as db:
+            existing = await db.execute("SELECT 1 FROM user_thinking WHERE user_id = ?", (user_id,))
+            if await existing.fetchone():
+                sets = []
+                vals = []
+                for col, val in [("l1", l1), ("l2", l2), ("l3", l3)]:
+                    if val:
+                        sets.append(f"{col} = ?")
+                        vals.append(val)
+                if sets:
+                    vals.append(user_id)
+                    await db.execute(f"UPDATE user_thinking SET {', '.join(sets)}, updated_at = datetime('now') WHERE user_id = ?", vals)
+            else:
+                await db.execute(
+                    "INSERT INTO user_thinking (user_id, l1, l2, l3) VALUES (?, ?, ?, ?)",
+                    (user_id, l1 or "minimal", l2 or "minimal", l3 or "minimal"))
+            await db.commit()

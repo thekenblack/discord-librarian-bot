@@ -122,7 +122,7 @@ async def learn_book(librarian_db, book_id: int, title: str, filename: str, stor
                 contents=[types.Content(role="user", parts=parts)],
                 config=types.GenerateContentConfig(
                     max_output_tokens=8192,
-                    temperature=0.3,
+                    temperature=1.0,
                 ),
             )
 

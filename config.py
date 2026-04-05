@@ -73,7 +73,9 @@ SPONTANEOUS_CHANCE = int(os.getenv("SPONTANEOUS_CHANCE", "25"))               # 
 # ── AI 설정 ───────────────────────────────────
 _ai = _conf.get("ai", {})
 GEMINI_MODEL     = _ai.get("model", "gemini-2.5-flash-lite")
+GEMINI_MODEL_L1  = _ai.get("model_l1", GEMINI_MODEL)
 GEMINI_MODEL_L2  = _ai.get("model_l2", GEMINI_MODEL)
+GEMINI_MODEL_L3  = _ai.get("model_l3", GEMINI_MODEL)
 GEMINI_MODEL_L4  = _ai.get("model_l4", GEMINI_MODEL)
 GEMINI_MODEL_L5  = _ai.get("model_l5", GEMINI_MODEL)
 AI_NAME          = os.getenv("AI_NAME", _ai.get("name", "사서봇"))
@@ -86,12 +88,12 @@ AI_CREATOR       = os.getenv("AI_CREATOR", "Ken")
 AI_COMMUNITY     = os.getenv("AI_COMMUNITY", "시타델")
 AI_COMMUNITY_DESC = os.getenv("AI_COMMUNITY_DESC", "비트코인 맥시멀리스트들의 요새")
 
-# ── 레이어 온도 ───────────────────────────────
-TEMP_L1 = float(os.getenv("TEMP_L1", "0.3"))
-TEMP_L2 = float(os.getenv("TEMP_L2", "0.3"))
-TEMP_L3 = float(os.getenv("TEMP_L3", "1.2"))
-TEMP_L4 = float(os.getenv("TEMP_L4", "0.1"))
-TEMP_L5 = float(os.getenv("TEMP_L5", "0.5"))
+# ── 레이어 온도 (Gemini 3 시리즈: 1.0 권장) ──
+TEMP_L1 = float(os.getenv("TEMP_L1", "1.0"))
+TEMP_L2 = float(os.getenv("TEMP_L2", "1.0"))
+TEMP_L3 = float(os.getenv("TEMP_L3", "1.0"))
+TEMP_L4 = float(os.getenv("TEMP_L4", "1.0"))
+TEMP_L5 = float(os.getenv("TEMP_L5", "1.0"))
 
 # ── 히스토리 ──────────────────────────────────
 MAX_HISTORY_L1 = int(os.getenv("MAX_HISTORY_L1", "5"))

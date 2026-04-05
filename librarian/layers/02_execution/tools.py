@@ -10,7 +10,7 @@ from library.db import LibraryDB
 from library.cogs.shop import SHOP_ITEMS, SHOP_MAP
 from librarian.db import LibrarianDB
 import importlib as _il
-_btc = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
+_btc = _il.import_module("librarian.layers.02_execution.bitcoin_data")
 get_news = _btc.get_news
 get_weather_for = _btc.get_weather_for
 
@@ -67,31 +67,9 @@ def normalize_url(url: str) -> str:
 google_search_tool = [types.Tool(google_search=types.GoogleSearch())]
 
 # L2 도구 이름
-PROCESSOR_TOOL_NAMES = {"deliver", "attach", "gift_user", "web_search", "recognize_media", "recognize_link"}
+PROCESSOR_TOOL_NAMES = {"deliver", "attach", "gift_user", "web_search"}
 # L2 도구 선언
-functioning_declarations = [
-        types.FunctionDeclaration(
-            name="recognize_media",
-            description="첨부된 이미지나 PDF의 내용을 확인한다. 유저가 이미지나 파일을 보내면서 물어보면 사용. 여러 개면 인덱스를 배열로.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "indices": types.Schema(type="ARRAY", items=types.Schema(type="INTEGER"), description="첨부파일 번호 배열 (0부터). 예: [0], [0, 1]"),
-                },
-                required=["indices"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="recognize_link",
-            description="URL의 웹페이지 내용을 확인한다. 유저가 링크를 보내면서 물어보면 사용. 여러 개면 URL을 배열로.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "urls": types.Schema(type="ARRAY", items=types.Schema(type="STRING"), description="확인할 URL 배열"),
-                },
-                required=["urls"],
-            ),
-        ),
+execution_declarations = [
         types.FunctionDeclaration(
             name="deliver",
             description="책이나 자료를 갖다준다. 유저가 '줘', '보내줘', '갖다줘', '가져와' 등 요청하면 호출해. 도서관 목록의 file ID를 써.",
@@ -143,7 +121,7 @@ functioning_declarations = [
         ),
 ]
 
-functioning_tools = [types.Tool(function_declarations=functioning_declarations)]
+execution_tools = [types.Tool(function_declarations=execution_declarations)]
 
 # ── 도구 실행 ────────────────────────────────────────
 

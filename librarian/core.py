@@ -15,7 +15,7 @@ from google.genai.errors import ClientError
 from library.db import LibraryDB
 from librarian.db import LibrarianDB
 from config import (
-    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, GEMINI_MODEL_L2, GEMINI_MODEL_L4, GEMINI_MODEL_L5,
+    ADMIN_IDS, LIGHTNING_ADDRESS, GEMINI_MODEL, GEMINI_MODEL_L1, GEMINI_MODEL_L2, GEMINI_MODEL_L3, GEMINI_MODEL_L4, GEMINI_MODEL_L5,
     AI_MAX_OUTPUT_TOKENS, LOG_DIR,
     SPONTANEOUS_CHANNEL_ID, SPONTANEOUS_QUIET_HOURS, SPONTANEOUS_CHECK_HOURS, SPONTANEOUS_CHANCE,
     AI_HOURLY_WAGE,
@@ -23,8 +23,8 @@ from config import (
 from librarian import server_log
 import importlib as _il
 _persona_mod = _il.import_module("librarian.layers.03_character.persona")
-_tools_mod = _il.import_module("librarian.layers.02_functioning.tools")
-_btc_mod = _il.import_module("librarian.layers.02_functioning.bitcoin_data")
+_tools_mod = _il.import_module("librarian.layers.02_execution.tools")
+_btc_mod = _il.import_module("librarian.layers.02_execution.bitcoin_data")
 Persona = _persona_mod.Persona
 parse_url = _tools_mod.parse_url
 bitcoin_data = _btc_mod
@@ -32,7 +32,9 @@ bitcoin_data = _btc_mod
 logger = logging.getLogger("AILibrarian")
 
 MODEL = GEMINI_MODEL
+MODEL_L1 = GEMINI_MODEL_L1
 MODEL_L2 = GEMINI_MODEL_L2
+MODEL_L3 = GEMINI_MODEL_L3
 MODEL_L4 = GEMINI_MODEL_L4
 MODEL_L5 = GEMINI_MODEL_L5
 from config import MAX_HISTORY_L1, MAX_HISTORY_L3, MAX_HISTORY_L5
@@ -163,7 +165,14 @@ class AILibrarianBot(discord.Client):
             self.librarian_db.vector_store = None
 
         from config import VERSION, GIT_HASH
-        logger.info(f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}] model={MODEL}")
+        logger.info(
+            f"{self.user} 온라인! ({self.persona.name}) v{VERSION} [{GIT_HASH}]\n"
+            f"  [L1] {MODEL_L1}\n"
+            f"  [L2] {MODEL_L2}\n"
+            f"  [L3] {MODEL_L3}\n"
+            f"  [L4] {MODEL_L4}\n"
+            f"  [L5] {MODEL_L5}"
+        )
 
         # 어드민 알림 대기열 (일정 시간 내 에러를 모아서 1회 전송)
         self._admin_notify_queue: list[str] = []
@@ -274,9 +283,11 @@ class AILibrarianBot(discord.Client):
         if tail:
             content += f"\n```\n{tail[-1500:]}\n```"
 
+        # 라이브러리 봇으로 DM 전송 (사서봇이 아닌 시스템 봇으로)
+        client = getattr(self, "library_bot_client", None) or self
         for admin_id in ADMIN_IDS:
             try:
-                user = await self.fetch_user(int(admin_id))
+                user = await client.fetch_user(int(admin_id))
                 if not user:
                     continue
                 await user.send(content[:2000])
@@ -295,7 +306,7 @@ class AILibrarianBot(discord.Client):
 
     async def _learn_all_books(self):
         """미학습 도서 일괄 학습"""
-        _bl = _il.import_module("librarian.layers.02_functioning.book_learning")
+        _bl = _il.import_module("librarian.layers.02_execution.book_learning")
         learn_book = _bl.learn_book
         try:
             books = await self.library_db.list_all_books()
@@ -535,7 +546,7 @@ class AILibrarianBot(discord.Client):
                           typing_channel=None,
                           is_spontaneous: bool = False,
                           preset_perception: str = None) -> tuple[str, list, dict]:
-        """v5 5레이어: Perception → Functioning → Character → Postprocess → Evaluation"""
+        """v5 5레이어: Perception → Execution → Character → Postprocess → Evaluation"""
         import time as _time
         import re as _re
         _meta = {"tools_called": [], "tool_results": [], "error": None}
@@ -567,6 +578,7 @@ class AILibrarianBot(discord.Client):
                     prefix = "a:" if e.animated else ":"
                     _all_emojis[e.name] = f"<{prefix}{e.name}:{e.id}>"
 
+            user_thinking = await self.librarian_db.get_user_thinking(user_id)
             shared_ctx = {
                 "bot_emotion": await self.librarian_db.get_bot_emotion(),
                 "user_emotion": await self.librarian_db.get_user_emotion(user_id),
@@ -578,6 +590,7 @@ class AILibrarianBot(discord.Client):
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
+                "thinking": user_thinking,
                 "_all_channels": _all_channels,
                 "_all_roles": _all_roles,
                 "_all_emojis": _all_emojis,
@@ -600,7 +613,8 @@ class AILibrarianBot(discord.Client):
                     user_id, user_name, user_text, raw_context,
                     history=p_history,
                     attachments=attachments, seen_filenames=seen_filenames,
-                    is_spontaneous=is_spontaneous)
+                    is_spontaneous=is_spontaneous,
+                    thinking_level=user_thinking.get("l1", "minimal"))
                 # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
                 if channel_id is not None:
                     self.perception_histories[channel_id].append(types.Content(role="user", parts=[
@@ -638,7 +652,7 @@ class AILibrarianBot(discord.Client):
             # ── Layer 2: Execution (도구 실행) ──
             _t0 = _time.monotonic()
 
-            instruction, files_to_send, processor_meta = await self._run_functioning(
+            instruction, files_to_send, processor_meta = await self._run_execution(
                 user_id=user_id, user_name=user_name, user_text=user_text,
                 attachments=attachments, seen_filenames=seen_filenames,
                 perception=perception, channel_id=channel_id,
@@ -723,6 +737,8 @@ class AILibrarianBot(discord.Client):
                 user_id=user_id, user_name=user_name,
                 user_text=user_text, instruction=instruction,
                 context_block=perception,
+                raw_context=shared_ctx.get("raw_context", ""),
+                thinking_level=user_thinking.get("l3", "minimal"),
             )
             logger.info(f"[L3 Character] 완료 ({_time.monotonic()-_t0:.2f}s) | {raw_reply[:100] if raw_reply else '(빈 응답)'}")
 
@@ -813,7 +829,7 @@ class AILibrarianBot(discord.Client):
                     retry_config = types.GenerateContentConfig(
                         system_instruction=self.persona.persona_text,
                         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-                        temperature=0.8,
+                        temperature=1.0,
                     )
                     response = await self._call_gemini(clean_message, retry_config)
                     reply = self._extract_reply(response)
@@ -1444,12 +1460,12 @@ _perception = _il.import_module("librarian.layers.01_perception.perception")
 AILibrarianBot._gather_context = _perception.gather_context
 AILibrarianBot._run_perception = _perception.run_perception
 
-_functioning = _il.import_module("librarian.layers.02_functioning.functioning")
-AILibrarianBot._run_functioning = _functioning.run_functioning
-AILibrarianBot._recognize_url_background = _functioning.recognize_url_background
-AILibrarianBot._recognize_file_background = _functioning.recognize_file_background
-AILibrarianBot._build_catalog = _functioning.build_catalog
-AILibrarianBot._build_memories = _functioning.build_memories
+_execution = _il.import_module("librarian.layers.02_execution.execution")
+AILibrarianBot._run_execution = _execution.run_execution
+AILibrarianBot._recognize_url_background = _execution.recognize_url_background
+AILibrarianBot._recognize_file_background = _execution.recognize_file_background
+AILibrarianBot._build_catalog = _execution.build_catalog
+AILibrarianBot._build_memories = _execution.build_memories
 
 _character = _il.import_module("librarian.layers.03_character.character")
 AILibrarianBot._run_character = _character.run_character

@@ -203,11 +203,29 @@ evaluation_declarations += [
     ),
 ]
 
+evaluation_declarations += [
+    types.FunctionDeclaration(
+        name="set_thinking",
+        description="유저별 레이어 사고 수준을 조정한다. 기본값은 minimal이고 이게 정상이다. 올리면 비용과 지연이 늘어난다. 레이어가 맥락을 못 잡거나 대사가 밋밋하거나 검색이 엉뚱할 때만 올려. 잡담/인사/단순 요청이면 minimal로 내려. 올렸으면 다음 배치에서 내릴지 반드시 재평가해.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "user_id": types.Schema(type="STRING", description="유저 ID"),
+                "l1": types.Schema(type="STRING", description="L1 Perception 사고 수준: minimal / low / medium / high"),
+                "l2": types.Schema(type="STRING", description="L2 Execution 사고 수준: minimal / low / medium / high"),
+                "l3": types.Schema(type="STRING", description="L3 Character 사고 수준: minimal / low / medium / high"),
+            },
+            required=["user_id"],
+        ),
+    ),
+]
+
 EVALUATION_TOOL_NAMES = {
     "feel", "memorize", "forget", "update_summary", "update_channel_summary",
     "memorize_alias", "forget_alias",
     "update_profile", "log_conversation", "note_pattern", "note_self",
     "feedback_user", "feedback_channel", "feedback_global",
+    "set_thinking",
 }
 
 evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]

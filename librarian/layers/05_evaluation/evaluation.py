@@ -8,7 +8,7 @@ import logging
 from google.genai import types
 from config import TEMP_L5
 import importlib as _il
-_tools = _il.import_module("librarian.layers.02_functioning.tools")
+_tools = _il.import_module("librarian.layers.02_execution.tools")
 _eval_tools = _il.import_module("librarian.layers.05_evaluation.tools")
 evaluation_tools = _eval_tools.evaluation_tools
 execute_tool = _tools.execute_tool
@@ -91,6 +91,14 @@ async def run_evaluation_batch(self, batch: list[dict]):
             sys_parts.append("## 패턴 기록\n" + "\n".join(f"- [{p['scope']}] {p['observation']}" for p in patterns))
         if self_notes:
             sys_parts.append("## 자기 기록\n" + "\n".join(f"- [{n['category']}] {n['content']}" for n in self_notes))
+
+        # 유저별 thinking 설정
+        thinking_lines = []
+        for uid in user_ids:
+            uname = next((t["user_name"] for t in batch if t["user_id"] == uid), uid)
+            ut = await self.librarian_db.get_user_thinking(uid)
+            thinking_lines.append(f"@{uname}: L1={ut['l1']} L2={ut['l2']} L3={ut['l3']}")
+        sys_parts.append("## 현재 thinking 설정\n" + "\n".join(thinking_lines))
 
         # 서버 히스토리
         if server_history:
@@ -258,6 +266,16 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_global_feedback(fb)
                     logger.info(f"[Evaluation] 전체 피드백: {fb[:100]}")
+
+                elif fc.name == "set_thinking":
+                    uid = fc_args.get("user_id", batch[-1]["user_id"])
+                    await self.librarian_db.set_user_thinking(
+                        uid,
+                        l1=fc_args.get("l1"),
+                        l2=fc_args.get("l2"),
+                        l3=fc_args.get("l3"))
+                    parts = [f"{k}={fc_args[k]}" for k in ("l1", "l2", "l3") if k in fc_args]
+                    logger.info(f"[Evaluation] thinking 조정: {uid} → {', '.join(parts)}")
 
         # ── 텍스트 피드백 (도구로 안 보낸 경우 폴백) ──
         if feedback_text:

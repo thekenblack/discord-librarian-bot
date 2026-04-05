@@ -23,7 +23,7 @@ if sys.platform != "win32":
         print("[설치] venv 생성 중...")
         subprocess.run([sys.executable, "-m", "venv", VENV_DIR], check=True)
 
-    if sys.executable != VENV_PYTHON:
+    if os.path.realpath(sys.executable) != os.path.realpath(VENV_PYTHON):
         os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
 
     # 매 시작 시 패키지 업데이트
@@ -117,12 +117,13 @@ if os.path.isdir(MIGRATIONS_DIR):
         with open(tracking_file, encoding="utf-8") as f:
             applied = set(json.load(f))
 
-    # 하위 폴더(날짜_커밋) 포함 재귀 탐색, 파일명 기준 정렬
+    # 하위 폴더(날짜_커밋) 포함 재귀 탐색, 상대경로 기준 정렬
     scripts = []
     for root, dirs, files in os.walk(MIGRATIONS_DIR):
         for f in files:
             if f.endswith(".py"):
-                scripts.append((f, os.path.join(root, f)))
+                rel = os.path.relpath(os.path.join(root, f), MIGRATIONS_DIR)
+                scripts.append((rel, os.path.join(root, f)))
     scripts.sort(key=lambda x: x[0])
 
     for script_name, script_path in scripts:
@@ -150,7 +151,7 @@ if os.path.exists(patches_tracking):
     with open(patches_tracking, encoding="utf-8") as f:
         patches_applied = set(json.load(f))
 
-for patch_file in sorted(os.listdir(PATCHES_DIR)):
+for patch_file in sorted(os.listdir(PATCHES_DIR)) if os.path.isdir(PATCHES_DIR) else []:
     if not (patch_file.endswith(".sql") or patch_file.endswith(".py")):
         continue
     if patch_file in patches_applied:
@@ -187,8 +188,9 @@ for patch_file in sorted(os.listdir(PATCHES_DIR)):
         else:
             print(f"[패치] {patch_file} 실패 (코드: {result.returncode})")
 
-with open(patches_tracking, "w", encoding="utf-8") as f:
-    json.dump(sorted(patches_applied), f)
+if os.path.isdir(PATCHES_DIR):
+    with open(patches_tracking, "w", encoding="utf-8") as f:
+        json.dump(sorted(patches_applied), f)
 
 # ── DB 백업 ─────────────────────────────────────────
 for db_name in [_db.get("library", "library.db"), _db.get("librarian", "librarian.db")]:
@@ -218,7 +220,11 @@ if not BOTS:
 
 
 def main():
+    import time
+
     processes: dict[str, subprocess.Popen] = {}
+    crash_counts: dict[str, int] = {}
+    MAX_CRASHES = 3
 
     def start_bot(bot):
         print(f"[Starter] {bot['name']} 시작... (python -m {bot['module']})")
@@ -277,15 +283,22 @@ def main():
                     print("[Starter] 전체 재시작합니다...")
                     stop_all()
                     processes.clear()
+                    crash_counts.clear()
                     for b in BOTS:
                         start_bot(b)
                     break
                 else:
-                    print(f"[Starter] {name} 종료 (코드: {ret})")
+                    print(f"[Starter] {name} 비정상 종료 (코드: {ret})")
                     del processes[name]
+                    crash_counts[name] = crash_counts.get(name, 0) + 1
+                    if crash_counts[name] >= MAX_CRASHES:
+                        print(f"[Starter] {name} {MAX_CRASHES}회 연속 크래시, 포기합니다.")
+                    else:
+                        print(f"[Starter] {name} 재시도 ({crash_counts[name]}/{MAX_CRASHES})...")
+                        time.sleep(3)
+                        start_bot(bot)
 
             else:
-                import time
                 time.sleep(1)
 
     except KeyboardInterrupt:

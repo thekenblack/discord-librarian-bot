@@ -7,8 +7,8 @@ from google.genai import types
 from google.genai.errors import ClientError
 from config import FILES_DIR, MEDIA_DIR, ADMIN_IDS, AI_MAX_OUTPUT_TOKENS, TEMP_L2
 import importlib as _il
-_tools = _il.import_module("librarian.layers.02_functioning.tools")
-functioning_tools = _tools.functioning_tools
+_tools = _il.import_module("librarian.layers.02_execution.tools")
+execution_tools = _tools.execution_tools
 execute_tool = _tools.execute_tool
 normalize_url = _tools.normalize_url
 parse_url = _tools.parse_url
@@ -34,7 +34,7 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                 text = " ".join(t["text"] for t in transcript_list)[:8000]
                 if text:
                     prompt = f"다음은 유튜브 영상 자막이야. 3-4줄로 핵심만 설명해.\n\n{text}"
-                    config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                    config = types.GenerateContentConfig(max_output_tokens=500, temperature=1.0)
                     response = await self._call_gemini(
                         [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
                     result = self._extract_reply(response)
@@ -95,7 +95,7 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                             types.Part(file_data=types.FileData(file_uri=extractor.og_image)),
                             types.Part.from_text(text="이 웹페이지 프리뷰 이미지를 설명해."),
                         ]
-                        og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=0.5)
+                        og_config = types.GenerateContentConfig(max_output_tokens=300, temperature=1.0)
                         og_response = await self._call_gemini(
                             [types.Content(role="user", parts=og_parts)], og_config)
                         og_result = self._extract_reply(og_response)
@@ -107,7 +107,7 @@ async def recognize_url_background(self, parsed: dict, user_name: str):
                 # 텍스트 요약
                 if text and len(text) > 50:
                     prompt = f"다음은 웹페이지({url})에서 추출한 텍스트야. 3-4줄로 핵심만 설명해.\n\n{text}"
-                    config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
+                    config = types.GenerateContentConfig(max_output_tokens=500, temperature=1.0)
                     response = await self._call_gemini(
                         [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
                     text_result = self._extract_reply(response)
@@ -166,7 +166,7 @@ async def recognize_file_background(self, filename: str, stored_name: str, ext: 
 
             if text:
                 prompt = f"다음은 {ext} 파일({filename})의 내용이야. 3-4줄로 핵심만 설명해.\n\n{text}"
-                config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                config = types.GenerateContentConfig(max_output_tokens=500, temperature=1.0)
                 response = await self._call_gemini(
                     [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], config)
                 result = self._extract_reply(response)
@@ -178,7 +178,7 @@ async def recognize_file_background(self, filename: str, stored_name: str, ext: 
                     types.Part.from_bytes(data=data, mime_type="application/epub+zip"),
                     types.Part.from_text(text="3-4줄로 핵심만 설명해."),
                 ]
-                config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.3)
+                config = types.GenerateContentConfig(max_output_tokens=500, temperature=1.0)
                 response = await self._call_gemini(
                     [types.Content(role="user", parts=file_parts)], config)
                 result = self._extract_reply(response)
@@ -192,14 +192,14 @@ async def recognize_file_background(self, filename: str, stored_name: str, ext: 
             logger.warning(f"문서 인식 실패 ({filename}): {e}")
 
 
-async def run_functioning(self, user_id: str, user_name: str, user_text: str,
+async def run_execution(self, user_id: str, user_name: str, user_text: str,
                           attachments: list = None,
                           seen_filenames: list[str] = None,
                           perception: str = "",
                           channel_id: str = None,
                           shared_ctx: dict = None,
                           ) -> tuple[str, discord.File | None, dict]:
-    """Functioning: 도구 실행 + 결과 보고. (tool_results_text, files_to_send, meta) 반환."""
+    """Execution: 도구 실행 + 결과 보고. (tool_results_text, files_to_send, meta) 반환."""
     import time as _time
     _meta = {"tools_called": [], "tool_results": []}
 
@@ -207,7 +207,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     _tp0 = _time.monotonic()
     parts = []
 
-    func_prompt = self.persona.functioning_text or self.persona.prompt_text
+    func_prompt = self.persona.execution_text or self.persona.prompt_text
     parts.append(func_prompt)
 
     # 공통 컨텍스트 직접 포함 (L1과 동일한 원본)
@@ -219,7 +219,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
         parts.append(f"## 관찰자 분석 (Perception)\n{perception}")
 
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
-    logger.info(f"[Functioning] 대화 상대: @{user_name} (ID: {user_id}) → {role}")
+    logger.info(f"[Execution] 대화 상대: @{user_name} (ID: {user_id}) → {role}")
 
     # search 중복 제거용 ID 수집
     memory_ids = shared_ctx["memories"][1] if shared_ctx and isinstance(shared_ctx.get("memories"), tuple) else []
@@ -229,7 +229,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
 
 
     dynamic_prompt = "\n\n".join(p for p in parts if p)
-    logger.info(f"[Functioning] 프롬프트: {len(dynamic_prompt)}자 ({_time.monotonic()-_tp0:.2f}s)")
+    logger.info(f"[Execution] 프롬프트: {len(dynamic_prompt)}자 ({_time.monotonic()-_tp0:.2f}s)")
 
     # ── 유저 메시지 ──
     if user_text:
@@ -240,20 +240,23 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     self._current_attachments = attachments or []
     files_to_send = []
 
+    _thinking_level = (shared_ctx or {}).get("thinking", {}).get("l2", "minimal")
+    _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=dynamic_prompt,
-        tools=[types.Tool(function_declarations=functioning_tools[0].function_declarations)],
+        tools=[types.Tool(function_declarations=execution_tools[0].function_declarations)],
         max_output_tokens=500,
         temperature=TEMP_L2,
+        thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(_thinking_level, "MINIMAL")),
     )
 
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
     from librarian.core import MODEL_L2
-    logger.info(f"[Functioning] API 호출 (temp={TEMP_L2}, model={MODEL_L2})")
+    logger.info(f"[Execution] API 호출 (temp={TEMP_L2}, model={MODEL_L2})")
     response = await self._call_gemini(loop_contents, config, model=MODEL_L2)
-    logger.info("[Functioning] API 응답 수신")
+    logger.info("[Execution] API 응답 수신")
 
     # ── 1회 응답에서 모든 function_call + 텍스트 추출 ──
     result_parts = []
@@ -269,7 +272,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
             if not part.function_call:
                 continue
             fc = part.function_call
-            logger.info(f"[Functioning] 도구: {fc.name}({fc.args})")
+            logger.info(f"[Execution] 도구: {fc.name}({fc.args})")
             _meta["tools_called"].append(fc.name)
 
             # web_search: Gemini google_search_tool 사용
@@ -290,57 +293,12 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
                         ws_response = await self._call_gemini(ws_contents, ws_config)
                         ws_result = self._extract_reply(ws_response)
                     except Exception as e:
-                        logger.warning(f"[Functioning] 웹 검색 실패: {e}")
+                        logger.warning(f"[Execution] 웹 검색 실패: {e}")
                     if ws_result:
                         await self.librarian_db.save_web_result(query, ws_result, user_name)
                     ws_text = f"웹 검색({query}): {ws_result or '결과 없음'}"
                 result_parts.append(ws_text)
                 _meta["tool_results"].append(ws_text)
-                continue
-
-                    link_result = ""
-                    parsed = parse_url(url)
-                    normalized = parsed["normalized"]
-                    _img_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
-                    _url_path = url.split("?")[0].split("#")[0].lower()
-                    _is_image_url = any(_url_path.endswith(ext) for ext in _img_exts)
-
-                    if _is_image_url:
-                        try:
-                            img_parts = [
-                                types.Part(file_data=types.FileData(file_uri=url)),
-                                types.Part.from_text(text="이 이미지를 설명해."),
-                            ]
-                            img_config = types.GenerateContentConfig(max_output_tokens=500, temperature=0.5)
-                            img_response = await self._call_gemini(
-                                [types.Content(role="user", parts=img_parts)], img_config)
-                            link_result = self._extract_reply(img_response)
-                            if link_result:
-                                await self.librarian_db.save_url_result(
-                                    normalized, url, link_result, user_name=user_name, status="done")
-                        except Exception as e:
-                            logger.warning(f"[Execution] 이미지 URL 인식 실패 ({url}): {e}")
-
-                    if not link_result:
-                        cached = await self.librarian_db.get_url_by_normalized(normalized)
-                        if cached:
-                            if cached.get("status") == "pending":
-                                link_result = "아직 읽는 중."
-                            elif cached.get("status") == "failed":
-                                await self.librarian_db.update_url_result(normalized, "", status="pending")
-                                asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                                link_result = "방금 읽기 시작했어."
-                            else:
-                                link_result = cached["result"]
-
-                    if not link_result:
-                        await self.librarian_db.save_url_result(
-                            normalized, url, "", user_name=user_name, status="pending")
-                        asyncio.create_task(self._recognize_url_background(parsed, user_name))
-                        link_result = "방금 읽기 시작했어."
-
-                    result_parts.append(f"[링크 인식] ({url}): {link_result or '인식 실패'}")
-                    _meta["tools_called"].append(f"recognize_link({url[:50]})")
                 continue
 
             # deliver / attach / gift_user
@@ -396,6 +354,7 @@ async def run_functioning(self, user_id: str, user_name: str, user_text: str,
     if result_parts:
         parts_out.append("\n".join(result_parts))
     # 경제 상태 요약 (L3가 선물 맥락 이해용)
+    bot_id = str(self.user.id) if self.user else ""
     updated_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
     parts_out.append(f"(내 잔고: {updated_balance} sat)")
     tool_results_text = "\n".join(parts_out)

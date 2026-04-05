@@ -8,7 +8,8 @@ logger = logging.getLogger("AILibrarian")
 async def run_character(self, user_id: str, user_name: str,
                          user_text: str, instruction: str,
                          context_block: str = "",
-                         raw_context: str = "") -> str:
+                         raw_context: str = "",
+                         thinking_level: str = "minimal") -> str:
     """Character: 컨텍스트 + 도구 결과 + 페르소나로 대사 생성. 도구 없음."""
     history = self.chat_histories.get(user_id, [])
     # 시스템 프롬프트: character + 공통 컨텍스트 + L1 분석 + L2 보고
@@ -22,16 +23,19 @@ async def run_character(self, user_id: str, user_name: str,
     if instruction:
         sys_parts.append(f"## 실행 보고 (Execution)\n{instruction}")
     system_prompt = "\n\n".join(p for p in sys_parts if p)
+    _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=None,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=TEMP_L3,
+        thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
     )
 
     loop_contents = list(history)
-    logger.info(f"[Character] API 호출 (temp={TEMP_L3}, 히스토리={len(loop_contents)}턴)")
-    response = await self._call_gemini(loop_contents, config)
+    from librarian.core import MODEL_L3
+    logger.info(f"[Character] API 호출 (temp={TEMP_L3}, model={MODEL_L3}, 히스토리={len(loop_contents)}턴)")
+    response = await self._call_gemini(loop_contents, config, model=MODEL_L3)
     reply = self._extract_reply(response)
 
     if reply:

@@ -46,8 +46,8 @@ class Persona:
         # 5레이어 프롬프트
         self.perception_text: str = _load_prompts_dir(
             os.path.join(layers_dir, "01_perception", "prompts"), name)
-        self.functioning_text: str = _load_prompts_dir(
-            os.path.join(layers_dir, "02_functioning", "prompts"), name)
+        self.execution_text: str = _load_prompts_dir(
+            os.path.join(layers_dir, "02_execution", "prompts"), name)
         self.character_text: str = _load_prompts_dir(
             os.path.join(layers_dir, "03_character", "prompts"), name)
         self.postprocess_text: str = _load_prompts_dir(
@@ -56,9 +56,9 @@ class Persona:
             os.path.join(layers_dir, "05_evaluation", "prompts"), name)
 
         # 하위 호환
-        self.processor_text: str = self.functioning_text
+        self.processor_text: str = self.execution_text
 
-        self.prompt_text: str = self.functioning_text
+        self.prompt_text: str = self.execution_text
         self.persona_text: str = self.character_text
         self.reminder_text: str = ""
 
