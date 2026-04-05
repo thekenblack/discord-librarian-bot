@@ -636,10 +636,7 @@ class AILibrarianBot(discord.Client):
                 _meta.setdefault("l1_files", []).extend(self._l1_files)
                 self._l1_files.clear()
 
-            # L1에서 react 회수
-            if hasattr(self, '_l1_reactions') and self._l1_reactions:
-                _meta["reaction"] = " ".join(self._l1_reactions)
-                self._l1_reactions.clear()
+            # (리액션은 L3 function call로 처리됨)
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
@@ -760,6 +757,10 @@ class AILibrarianBot(discord.Client):
                 raw_context=shared_ctx.get("raw_context", ""),
                 thinking_level=user_thinking.get("l3", "minimal"),
             )
+            # L3에서 react 회수
+            if hasattr(self, '_l3_reactions') and self._l3_reactions:
+                _meta["reaction"] = " ".join(self._l3_reactions)
+                self._l3_reactions.clear()
             logger.info(f"[L3 Character] 완료 ({_time.monotonic()-_t0:.2f}s) | {raw_reply[:100] if raw_reply else '(빈 응답)'}")
 
             if not raw_reply:
