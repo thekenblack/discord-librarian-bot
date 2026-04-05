@@ -823,23 +823,34 @@ class AILibrarianBot(discord.Client):
                 valid_ids = set(self._mention_map.values())
                 if self.user:
                     valid_ids.add(str(self.user.id))
-                l4_reply = reply  # L4 원본 보존
                 for m in re.finditer(r'<@!?(\d+)>', reply):
                     uid = m.group(1)
-                    if uid not in valid_ids:
-                        # raw_reply에 있던 @이름 중 유효 <@ID>가 reply에 없는 것을 찾아 복원
-                        reverted = False
-                        for name, valid_id in self._mention_map.items():
-                            if f'@{name}' in raw_reply and f'<@{valid_id}>' not in reply:
-                                reply = reply.replace(m.group(0), f'@{name}', 1)
-                                mention_fixes.append(f"{m.group(0)} → @{name}")
-                                logger.warning(f"[멘션 검증] 복원: {m.group(0)} → @{name}")
-                                reverted = True
-                                break
-                        if not reverted:
-                            reply = reply.replace(m.group(0), '', 1)
-                            mention_fixes.append(f"{m.group(0)} 제거")
-                            logger.warning(f"[멘션 검증] L3에 없던 멘션 제거: {m.group(0)}")
+                    if uid in valid_ids:
+                        continue
+                    # mention_map에 없으면 Discord API로 실존 확인
+                    try:
+                        if guild:
+                            member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
+                        else:
+                            member = self.get_user(int(uid)) or await self.fetch_user(int(uid))
+                        # 실존 유저 — mention_map에 추가하고 통과
+                        self._mention_map[member.display_name] = uid
+                        logger.info(f"[멘션 검증] 확인: {m.group(0)} = @{member.display_name}")
+                        continue
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+                    # 실존하지 않는 ID — raw_reply에서 원래 @이름을 찾아 복원
+                    reverted = False
+                    for name, valid_id in self._mention_map.items():
+                        if f'@{name}' in raw_reply and f'<@{valid_id}>' not in reply:
+                            reply = reply.replace(m.group(0), f'@{name}', 1)
+                            mention_fixes.append(f"{m.group(0)} → @{name}")
+                            logger.warning(f"[멘션 검증] 복원: {m.group(0)} → @{name}")
+                            reverted = True
+                            break
+                    if not reverted:
+                        # 원래 이름도 못 찾으면 그대로 둠
+                        logger.warning(f"[멘션 검증] 미확인 멘션 유지: {m.group(0)}")
                 if mention_fixes:
                     logger.info(f"[멘션 검증] {len(mention_fixes)}건 수정: {', '.join(mention_fixes)}")
                 logger.info(f"[L4 Postprocess] 변환 ({_time.monotonic()-_t0:.2f}s)")
