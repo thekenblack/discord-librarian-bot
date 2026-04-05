@@ -25,7 +25,8 @@ async def run_character(self, user_id: str, user_name: str,
                          context_block: str = "",
                          raw_context: str = "",
                          thinking_level: str = "minimal",
-                         feedback: str = "") -> str:
+                         feedback: str = "",
+                         no_tools: bool = False) -> str:
     """Character: 컨텍스트 + 도구 결과 + 페르소나로 대사 생성 + 리액션."""
     history = self.chat_histories.get(user_id, [])
     sys_parts = []
@@ -43,7 +44,7 @@ async def run_character(self, user_id: str, user_name: str,
     _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
-        tools=character_tools,
+        tools=None if no_tools else character_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=TEMP_L3,
         thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
@@ -58,6 +59,9 @@ async def run_character(self, user_id: str, user_name: str,
     reactions = []
     if response and response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
         for part in response.candidates[0].content.parts:
+            # thinking part 제외 (thought=True인 텍스트는 내부 사고)
+            if getattr(part, 'thought', False):
+                continue
             if part.text and part.text.strip():
                 reply = part.text.strip()
             if part.function_call and part.function_call.name == "react":

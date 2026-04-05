@@ -152,6 +152,8 @@ async def run_evaluation_batch(self, batch: list[dict]):
         feedback_text = ""
         if response and response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
+                if getattr(part, 'thought', False):
+                    continue
                 if part.text:
                     feedback_text = part.text.strip()
 

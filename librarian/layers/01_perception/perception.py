@@ -325,6 +325,8 @@ async def run_perception(self, user_id: str, user_name: str,
         logger.warning(f"[Perception] 빈 응답 (finish_reason: {finish})")
     else:
         for part in response.candidates[0].content.parts:
+            if getattr(part, 'thought', False):
+                continue
             if part.text and part.text.strip():
                 result = part.text.strip()
 

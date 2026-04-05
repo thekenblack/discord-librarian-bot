@@ -764,6 +764,18 @@ class AILibrarianBot(discord.Client):
             if hasattr(self, '_l3_reactions') and self._l3_reactions:
                 _meta["reaction"] = " ".join(self._l3_reactions)
                 self._l3_reactions.clear()
+            # 리액션만 있고 대사가 없으면 도구 없이 재시도 (자발적 발화 제외)
+            if not raw_reply and _meta.get("reaction") and not is_spontaneous:
+                logger.info("[L3 Character] 리액션만 반환 → 도구 없이 재시도")
+                raw_reply = await self._run_character(
+                    user_id=user_id, user_name=user_name,
+                    user_text=user_text, instruction=instruction,
+                    context_block=perception,
+                    raw_context=shared_ctx.get("raw_context", ""),
+                    thinking_level=user_thinking.get("l3", "minimal"),
+                    feedback=shared_ctx.get("feedback_l3", ""),
+                    no_tools=True,
+                )
             logger.info(f"[L3 Character] 완료 ({_time.monotonic()-_t0:.2f}s) | {raw_reply[:100] if raw_reply else '(빈 응답)'}")
 
             if not raw_reply:
@@ -1112,6 +1124,8 @@ class AILibrarianBot(discord.Client):
             return ""
         parts = []
         for part in response.candidates[0].content.parts:
+            if getattr(part, 'thought', False):
+                continue
             if part.text:
                 text = part.text.strip()
                 if text:
