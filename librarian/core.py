@@ -781,7 +781,7 @@ class AILibrarianBot(discord.Client):
             _all_ch = shared_ctx.get("_all_channels", {})
             _all_ro = shared_ctx.get("_all_roles", {})
             _all_em = shared_ctx.get("_all_emojis", {})
-            _ctx_text = raw_reply + " " + (instruction or "")
+            _ctx_text = raw_reply
             channel_map = {n: i for n, i in _all_ch.items() if n in _ctx_text}
             role_map = {n: i for n, i in _all_ro.items() if n in _ctx_text}
             emoji_map = {n: i for n, i in _all_em.items() if n in _ctx_text}
@@ -789,7 +789,6 @@ class AILibrarianBot(discord.Client):
             reply = await self._run_postprocess(
                 raw_reply, user_name,
                 mention_map=dict(self._mention_map),
-                instruction=instruction,
                 channel_map=channel_map,
                 role_map=role_map,
                 emoji_map=emoji_map)

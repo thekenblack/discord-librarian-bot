@@ -12,11 +12,10 @@ logger = logging.getLogger("AILibrarian")
 
 async def run_postprocess(self, raw_reply: str, user_name: str,
                           mention_map: dict[str, str] | None = None,
-                          instruction: str = "",
                           channel_map: dict[str, str] | None = None,
                           role_map: dict[str, str] | None = None,
                           emoji_map: dict[str, str] | None = None) -> str:
-    """멘션/채널/역할/이모지 변환 + 행동 정합성 확인."""
+    """멘션/채널/역할/이모지 변환 + 시스템 텍스트 정리."""
     if not raw_reply or not raw_reply.strip():
         return ""
 
@@ -34,8 +33,6 @@ async def run_postprocess(self, raw_reply: str, user_name: str,
     )
 
     prompt_parts = [f"대사:\n{raw_reply}"]
-    if instruction:
-        prompt_parts.append(f"\n실행 보고:\n{instruction}")
     if mention_map:
         lines = [f"- @{name} → <@{uid}>" for name, uid in mention_map.items()]
         prompt_parts.append("\n멘션 매핑:\n" + "\n".join(lines))
