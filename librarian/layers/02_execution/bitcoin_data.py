@@ -132,7 +132,7 @@ async def _fetch():
                         _cache["difficulty"] = data["difficulty"][-1].get("difficulty")
 
             _cache["updated"] = datetime.now()
-            logger.info(f"데이터 갱신: ${_cache['price_usd']} / ₩{_cache.get('price_krw', '?')} | $1=₩{_cache.get('usd_krw', '?')} | 블록 {_cache['block_height']}")
+            logger.debug(f"데이터 갱신: ${_cache['price_usd']} / ₩{_cache.get('price_krw', '?')} | $1=₩{_cache.get('usd_krw', '?')} | 블록 {_cache['block_height']}")
 
     except Exception as e:
         logger.warning(f"비트코인 데이터 갱신 실패: {e}")
@@ -166,7 +166,7 @@ async def _fetch():
                                 "temp": temp,
                                 "desc": WMO_CODES.get(code, "알 수 없음"),
                             }
-                    logger.info(f"날씨 데이터 갱신: {len(_weather_cache)}개 도시")
+                    logger.debug(f"날씨 데이터 갱신: {len(_weather_cache)}개 도시")
     except Exception as e:
         logger.warning(f"날씨 데이터 갱신 실패: {e}")
 
@@ -183,7 +183,7 @@ async def _fetch():
                         root = ET.fromstring(text)
                         titles = [item.find("title").text for item in root.findall(".//item") if item.find("title") is not None]
                         _news_cache[key] = random.sample(titles, min(5, len(titles))) if titles else []
-            logger.info(f"뉴스 갱신: 국내 {len(_news_cache['domestic'])}건, 국제 {len(_news_cache['international'])}건")
+            logger.debug(f"뉴스 갱신: 국내 {len(_news_cache['domestic'])}건, 국제 {len(_news_cache['international'])}건")
     except Exception as e:
         logger.warning(f"뉴스 데이터 갱신 실패: {e}")
 
