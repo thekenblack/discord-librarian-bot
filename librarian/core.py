@@ -109,16 +109,26 @@ class AILibrarianBot(discord.Client):
                 extras.append(f"[임베드: {' - '.join(parts)}]")
         for att in msg.attachments:
             cached = await self.librarian_db.get_media_by_filename(att.filename)
+            if not cached:
+                # 해시 기반 폴백
+                try:
+                    data = await att.read()
+                    import hashlib
+                    file_hash = hashlib.sha256(data).hexdigest()
+                    cached = await self.librarian_db.get_media_by_hash(file_hash)
+                except Exception:
+                    pass
             desc = ""
             media_id = None
             if cached:
                 desc = cached["result"][:200]
-                if cached.get("stored_name"):
-                    media_id = cached["id"]
+                media_id = cached.get("id")
             if desc and media_id:
                 extras.append(f"[첨부: {att.filename} | media_id:{media_id} | {desc}]")
             elif desc:
                 extras.append(f"[첨부: {att.filename} | {desc}]")
+            elif media_id:
+                extras.append(f"[첨부: {att.filename} | media_id:{media_id}]")
             else:
                 extras.append(f"[첨부: {att.filename}]")
 

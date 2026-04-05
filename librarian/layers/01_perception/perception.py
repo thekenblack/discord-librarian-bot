@@ -215,15 +215,22 @@ async def gather_context(self, user_id: str, user_name: str,
         parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
     result = "\n\n".join(parts)
-    # 포함된 섹션 로깅 (내용 포함)
+    # 동적 맥락만 로깅 (답글, 앵커, 최근 대화)
+    _dynamic = {"답글 흐름", "답글 대상 주변 맥락", "최근 채널 대화"}
     _log = []
     for p in parts:
         if p.startswith("##"):
             title = p.split("\n")[0].strip("# ")
-            body = p[len(p.split("\n")[0]):].strip()
-            preview = body[:150].replace("\n", " ") if body else "(비어있음)"
-            _log.append(f"  {title}: {preview}")
-    logger.info(f"[gather_context] {len(result)}자\n" + "\n".join(_log))
+            if title in _dynamic:
+                body = p[len(p.split("\n")[0]):].strip()
+                _log.append(f"  [{title}]")
+                for line in body.split("\n"):
+                    if line.strip():
+                        _log.append(f"    {line.strip()}")
+    _static = [p.split("\n")[0].strip("# ") for p in parts if p.startswith("##") and p.split("\n")[0].strip("# ") not in _dynamic]
+    logger.info(f"[gather_context] {len(result)}자, 고정: {_static}")
+    if _log:
+        logger.info("[gather_context] 동적 맥락:\n" + "\n".join(_log))
     return result
 
 
