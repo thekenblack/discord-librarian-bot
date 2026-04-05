@@ -595,7 +595,8 @@ class AILibrarianBot(discord.Client):
                 "_all_roles": _all_roles,
                 "_all_emojis": _all_emojis,
             }
-            logger.info(f"[공통 컨텍스트] 조립 완료 ({_time.monotonic()-_tc:.2f}s)")
+            _ctx_keys = [k for k, v in shared_ctx.items() if v and not k.startswith("_")]
+            logger.info(f"[공통 컨텍스트] 조립 완료 ({_time.monotonic()-_tc:.2f}s) 포함: {', '.join(_ctx_keys)}")
 
             # ─�� Layer 1: Perception (맥락 파악) ──
             if preset_perception:
@@ -608,6 +609,9 @@ class AILibrarianBot(discord.Client):
                     anchor_context=anchor_context, recent_context=recent_context,
                     channel_id=channel_id, shared_ctx=shared_ctx)
                 shared_ctx["raw_context"] = raw_context
+                # raw_context 섹션 목록 로깅
+                _sections = [line.strip("# ").split("\n")[0] for line in raw_context.split("\n## ") if line.strip()]
+                logger.info(f"[raw_context] {len(raw_context)}자, 섹션: {_sections}")
                 p_history = list(self.perception_histories.get(channel_id, [])) if channel_id else []
                 perception = await self._run_perception(
                     user_id, user_name, user_text, raw_context,
