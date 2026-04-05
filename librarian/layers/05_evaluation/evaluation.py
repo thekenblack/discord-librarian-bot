@@ -260,10 +260,11 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_feedback(uid, fb)
                     _log_lines.append(f"  유저 피드백 ({uid}):")
-                    for line in fb.split("["):
+                    import re as _re_fb
+                    for line in _re_fb.split(r'(?=\[L\d\])', fb):
                         line = line.strip()
                         if line:
-                            _log_lines.append(f"    [{line}" if not line.startswith("[") else f"    {line}")
+                            _log_lines.append(f"    {line}")
 
                 elif fc.name == "feedback_channel":
                     cid = fc_args.get("channel_id", batch[-1].get("channel_id", ""))
