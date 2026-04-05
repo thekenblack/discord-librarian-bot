@@ -1451,6 +1451,16 @@ class AILibrarianBot(discord.Client):
                 if _meta.get("no_response"):
                     return
 
+            # 이모지 리액션
+            if _meta.get("reaction"):
+                for em in _extract_emojis(_meta["reaction"]):
+                    try:
+                        await message.add_reaction(em)
+                    except discord.NotFound:
+                        logger.info(f"리액션 실패 (건너뜀): {em!r}")
+                    except Exception as e:
+                        logger.warning(f"리액션 실패: {em!r} → {e}")
+
             if reply:
                 if _meta.get("reply_to"):
                     await message.reply(reply, files=files_to_send or None)
