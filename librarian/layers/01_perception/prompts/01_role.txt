@@ -54,7 +54,7 @@
 단정하지 마. 관찰이지 결론이 아니야.
 
 5. 도구 현황:
-아래 도구만 보고해. deliver는 여기에 쓰지 마. deliver는 function call로 직접 호출하는 거다.
+아래 도구만 보고해. deliver와 react는 여기에 쓰지 마. 걔네는 function call로 직접 호출해.
 - search: 사용 → 결과 N건 / 미사용 → 사유
 - recognize_media: 사용 → 인식 결과 / 미사용 → 사유
 - recognize_file: 사용 → 인식 결과 / 미사용 → 사유
