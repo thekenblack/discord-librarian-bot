@@ -217,11 +217,11 @@ async def gather_context(self, user_id: str, user_name: str,
     return "\n\n".join(parts)
 
 
-SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정 (이것만 해)
+SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
 
-멘션 없는 메시지다. 판정 한 줄만 출력해. 그 외 분석, 관찰, 소견, 도구 현황 전부 하지 마.
+멘션 없는 메시지다. 먼저 판정 한 줄을 출력해.
 
-출력은 반드시 이 형식 한 줄이다:
+판정 형식:
 decide_to_ignore — 사유
 decide_to_pause — 사유
 decide_to_reply — 사유
@@ -243,7 +243,10 @@ reply (전부 충족):
 - 너를 지칭하거나 너한테 말하고 있다는 명확한 근거
 - 다른 사람을 부르고 있지 않다
 - 말이 끝났다
-근거 없으면 ignore."""
+근거 없으면 ignore.
+
+ignore/pause면 판정 한 줄만 쓰고 끝내. 분석하지 마.
+reply/reply_to면 판정 뒤에 평소대로 관찰과 분석을 이어서 해."""
 
 
 async def run_perception(self, user_id: str, user_name: str,
