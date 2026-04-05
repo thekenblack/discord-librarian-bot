@@ -216,6 +216,7 @@ class LibrarianDB:
                     author_id    TEXT NOT NULL,
                     author_name  TEXT NOT NULL,
                     content      TEXT NOT NULL DEFAULT '',
+                    extras       TEXT NOT NULL DEFAULT '',
                     reference_id TEXT,
                     is_bot       INTEGER NOT NULL DEFAULT 0,
                     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
@@ -223,6 +224,11 @@ class LibrarianDB:
             """)
             await db.execute("CREATE INDEX IF NOT EXISTS idx_msglog_channel ON message_log(channel_id, created_at)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_msglog_ref ON message_log(reference_id)")
+            # extras 컬럼 마이그레이션
+            try:
+                await db.execute("ALTER TABLE message_log ADD COLUMN extras TEXT NOT NULL DEFAULT ''")
+            except Exception:
+                pass
 
             # 마이그레이션: 기존 테이블들 → learned로 통합
             for old_table in ["memories", "user_memories", "long_term_memories",
@@ -1378,15 +1384,16 @@ class LibrarianDB:
 
     async def save_message(self, message_id: str, channel_id: str,
                            author_id: str, author_name: str, content: str,
-                           reference_id: str | None = None, is_bot: bool = False):
+                           reference_id: str | None = None, is_bot: bool = False,
+                           extras: str = ""):
         """메시지 저장."""
         async with aiosqlite.connect(self.path) as db:
             await db.execute("""
                 INSERT OR IGNORE INTO message_log
-                (message_id, channel_id, author_id, author_name, content, reference_id, is_bot, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                (message_id, channel_id, author_id, author_name, content, extras, reference_id, is_bot, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """, (message_id, channel_id, author_id, author_name,
-                  content[:2000], reference_id, 1 if is_bot else 0))
+                  content[:2000], extras[:1000], reference_id, 1 if is_bot else 0))
             await db.commit()
 
     async def get_messages_before(self, channel_id: str, message_id: str,

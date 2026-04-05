@@ -342,6 +342,7 @@ class AILibrarianBot(discord.Client):
             ref_id = None
             if message.reference and message.reference.message_id:
                 ref_id = str(message.reference.message_id)
+            msg_extras = await self._extract_extras(message)
             await self.librarian_db.save_message(
                 message_id=str(message.id),
                 channel_id=str(message.channel.id),
@@ -350,6 +351,7 @@ class AILibrarianBot(discord.Client):
                 content=message.content or "",
                 reference_id=ref_id,
                 is_bot=message.author.bot,
+                extras=msg_extras,
             )
         except Exception:
             pass  # 저장 실패해도 대화 진행에 영향 없음
@@ -394,13 +396,7 @@ class AILibrarianBot(discord.Client):
             ref = message.reference.resolved
             if ref and ref.author.id == self.user.id:
                 reply_to_bot = True
-        role_mentioned = False
-        if not bot_mentioned and not reply_to_bot and self.user and message.guild:
-            bot_member = message.guild.get_member(self.user.id)
-            if bot_member:
-                role_mentioned = any(role in message.role_mentions for role in bot_member.roles if role.name != "@everyone")
-
-        if not bot_mentioned and not reply_to_bot and not role_mentioned:
+        if not bot_mentioned and not reply_to_bot:
             # 다른 유저에게 답글이면 무시 (자발적 채널에서도)
             if message.reference and message.reference.resolved:
                 ref = message.reference.resolved
@@ -947,6 +943,9 @@ class AILibrarianBot(discord.Client):
             name = f"@{row['author_name']}"
             self._mention_map[row["author_name"]] = row["author_id"]
             content = row["content"][:150]
+        extras = row.get("extras", "")
+        if extras:
+            content = f"{content} {extras}" if content else extras
         return f"{name}: {content}"
 
     async def _build_reply_chain(self, message) -> tuple[list[str], list[str], list, str | None]:
@@ -1046,7 +1045,9 @@ class AILibrarianBot(discord.Client):
                     before_msgs = [m async for m in message.channel.history(limit=2, before=anchor_msg)]
                     after_msgs = [m async for m in message.channel.history(limit=2, after=anchor_msg)]
                     before_msgs.reverse()
-                    for m in before_msgs + [anchor_msg] + after_msgs:
+                    all_msgs = before_msgs + [anchor_msg] + after_msgs
+                    extras_list = await asyncio.gather(*(self._extract_extras(m) for m in all_msgs))
+                    for m, extras in zip(all_msgs, extras_list):
                         seen_ids.add(str(m.id))
                         if self.user and m.author.id == self.user.id:
                             name = self.persona.name
@@ -1055,6 +1056,8 @@ class AILibrarianBot(discord.Client):
                             name = f"@{m.author.display_name}"
                             self._mention_map[m.author.display_name] = str(m.author.id)
                             content = m.content[:150]
+                        if extras:
+                            content = f"{content} {extras}" if content else extras
                         anchor_lines.append(f"{name}: {content}")
                 except Exception as e:
                     logger.warning(f"[맥락] anchor API 폴백 실패: {e}")
@@ -1073,7 +1076,8 @@ class AILibrarianBot(discord.Client):
             try:
                 msgs = [m async for m in message.channel.history(limit=10, before=message)]
                 msgs.reverse()
-                for m in msgs:
+                extras_list = await asyncio.gather(*(self._extract_extras(m) for m in msgs))
+                for m, extras in zip(msgs, extras_list):
                     if str(m.id) not in seen_ids:
                         seen_ids.add(str(m.id))
                         if self.user and m.author.id == self.user.id:
@@ -1083,6 +1087,8 @@ class AILibrarianBot(discord.Client):
                             name = f"@{m.author.display_name}"
                             self._mention_map[m.author.display_name] = str(m.author.id)
                             content = m.content[:150]
+                        if extras:
+                            content = f"{content} {extras}" if content else extras
                         recent_lines.append(f"{name}: {content}")
             except Exception as e:
                 logger.warning(f"[맥락] 직전 대화 API 폴백 실패: {e}")
