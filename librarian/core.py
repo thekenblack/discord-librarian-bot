@@ -60,15 +60,15 @@ _UNICODE_EMOJI_RE = re.compile(
 
 
 def _extract_emojis(raw: str) -> list[str]:
-    """reaction 문자열에서 유효한 이모지만 개별 추출."""
+    """reaction 문자열에서 유효한 이모지만 개별 추출. Discord용으로 variation selector 제거."""
     if not raw:
         return []
     custom = _CUSTOM_EMOJI_RE.findall(raw)
     if custom:
         return custom
-    # variation selector (U+FE0F) 단독 매칭 방지 — 이모지 본체가 있을 때만 유효
     results = _UNICODE_EMOJI_RE.findall(raw)
-    return [e for e in results if len(e.rstrip("\uFE0F")) > 0]
+    # variation selector (U+FE0F) 제거 — Discord API가 거부함
+    return [e.replace("\uFE0F", "") for e in results if len(e.replace("\uFE0F", "")) > 0]
 
 
 class AILibrarianBot(discord.Client):
@@ -658,6 +658,14 @@ class AILibrarianBot(discord.Client):
                 # 응답 판정 줄을 perception에서 제거 (L2/L3에 안 넘김)
                 perception = _re.sub(r'\n?decide_to_\w+', '', perception, flags=_re.MULTILINE).strip()
 
+            # ── L1 출력 정리 (시스템 태그 오염 방지) ──
+            if perception:
+                # 시스템 태그 제거 — 다음 레이어에 넘어가면 오염됨
+                perception = _re.sub(r'\[L[1-5]\s*(분석|보고|대사|최종|판정)\].*', '', perception, flags=_re.DOTALL).strip()
+                # max_output_tokens 이상 나온 경우 잘린 텍스트 정리
+                if len(perception) > 2000:
+                    perception = perception[:2000]
+
             # ── typing 유지 (L2~전송 직전까지) ──
             if typing_channel:
                 try:
@@ -764,6 +772,9 @@ class AILibrarianBot(discord.Client):
             if hasattr(self, '_l3_reactions') and self._l3_reactions:
                 _meta["reaction"] = " ".join(self._l3_reactions)
                 self._l3_reactions.clear()
+            # L3 출력 정리 (시스템 태그 오염 방지)
+            if raw_reply:
+                raw_reply = _re.sub(r'\[L[1-5]\s*(분석|보고|대사|최종|판정)\].*', '', raw_reply, flags=_re.DOTALL).strip()
             logger.info(f"[L3 Character] 완료 ({_time.monotonic()-_t0:.2f}s) | {raw_reply[:100] if raw_reply else '(빈 응답)'}")
 
             if not raw_reply:
