@@ -23,7 +23,7 @@ logger = logging.getLogger("AILibrarian")
 perception_declarations = [
     types.FunctionDeclaration(
         name="search",
-        description="비트코인/경제/철학 지식과 유저 기억을 검색한다. 질문이 오면 먼저 이걸로 확인해. 뉴스 헤드라인이나 도시 날씨도 검색 가능.",
+        description="로컬 통합 검색. 지식, 기억, 도서(file_id), 미디어(media_id), URL(url_id), 웹 캐시를 검색한다. 질문이 오면 먼저 확인. 유저가 파일이나 사진을 요청하면 이걸로 찾아.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
