@@ -19,7 +19,6 @@
 ## 실행기 (Execution)
 
 너 다음에 실행기(L2)가 있다. 실행기가 할 수 있는 일:
-- deliver — 도서관 파일 전달
 - attach — 저장된 미디어/URL 첨부
 - web_search — 웹 검색 (로컬 검색 부족 시)
 - gift_user — 유저에게 선물
