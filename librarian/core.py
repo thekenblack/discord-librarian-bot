@@ -607,7 +607,6 @@ class AILibrarianBot(discord.Client):
                     prefix = "a:" if e.animated else ":"
                     _all_emojis[e.name] = f"<{prefix}{e.name}:{e.id}>"
 
-            user_thinking = await self.librarian_db.get_user_thinking(user_id)
             shared_ctx = {
                 "bot_emotion": await self.librarian_db.get_bot_emotion(),
                 "user_emotion": await self.librarian_db.get_user_emotion(user_id),
@@ -621,7 +620,6 @@ class AILibrarianBot(discord.Client):
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
-                "thinking": user_thinking,
                 "_all_channels": _all_channels,
                 "_all_roles": _all_roles,
                 "_all_emojis": _all_emojis,
@@ -646,7 +644,7 @@ class AILibrarianBot(discord.Client):
                     history=p_history,
                     attachments=attachments, seen_filenames=seen_filenames,
                     is_spontaneous=is_spontaneous,
-                    thinking_level=user_thinking.get("l1", "minimal"))
+                    )
                 # L1 히스토리에 이번 턴 추가 (asyncio 싱글 스레드라 락 불필요)
                 if channel_id is not None:
                     self.perception_histories[channel_id].append(types.Content(role="user", parts=[
@@ -780,7 +778,6 @@ class AILibrarianBot(discord.Client):
                 user_text=user_text, instruction=instruction,
                 context_block=perception,
                 raw_context=shared_ctx.get("raw_context", ""),
-                thinking_level=user_thinking.get("l3", "minimal"),
                 feedback=shared_ctx.get("feedback_l3", ""),
             )
             # L3에서 react 회수

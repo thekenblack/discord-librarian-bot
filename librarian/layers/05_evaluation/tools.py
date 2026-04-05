@@ -157,20 +157,6 @@ evaluation_declarations = [
             required=["content"],
         ),
     ),
-    types.FunctionDeclaration(
-        name="set_thinking",
-        description="유저별 레이어 사고 수준 조정. 기본 minimal. 문제 있을 때만 올려.",
-        parameters=types.Schema(
-            type="OBJECT",
-            properties={
-                "user_id": types.Schema(type="STRING"),
-                "l1": types.Schema(type="STRING", description="minimal / low / medium / high"),
-                "l2": types.Schema(type="STRING"),
-                "l3": types.Schema(type="STRING"),
-            },
-            required=["user_id"],
-        ),
-    ),
     # ── 레이어별 피드백 (각 레이어가 직접 읽음) ──
     types.FunctionDeclaration(
         name="feedback_l1",
@@ -230,7 +216,6 @@ EVALUATION_TOOL_NAMES = {
     "feel", "memorize", "forget", "update_summary", "update_channel_summary",
     "memorize_alias", "forget_alias",
     "update_profile", "log_conversation", "note_pattern", "note_self",
-    "set_thinking",
     "feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4", "feedback_l5",
     "feedback_admin",
 }

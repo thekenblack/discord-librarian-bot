@@ -279,7 +279,7 @@ async def run_perception(self, user_id: str, user_name: str,
                          attachments: list = None,
                          seen_filenames: list = None,
                          is_spontaneous: bool = False,
-                         thinking_level: str = "minimal") -> str:
+                         ) -> str:
     """raw context를 Gemini에 보내서 상황 분석 + 검색/인식 도구 실행. 1회 호출."""
     import asyncio
 
@@ -292,13 +292,12 @@ async def run_perception(self, user_id: str, user_name: str,
         sys_parts.append(raw_context)
     system_prompt = "\n\n".join(p for p in sys_parts if p)
 
-    _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=perception_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS_L1,
         temperature=TEMP_L1,
-        thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
+        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
     )
 
     if user_text:
@@ -311,7 +310,7 @@ async def run_perception(self, user_id: str, user_name: str,
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_content)]))
 
     from librarian.core import MODEL_L1
-    logger.info(f"[Perception] API 호출 (model={MODEL_L1}, thinking={thinking_level}, 히스토리={len(contents)-1}턴)")
+    logger.info(f"[Perception] API 호출 (model={MODEL_L1}, 히스토리={len(contents)-1}턴)")
     response = await self._call_gemini(contents, config, model=MODEL_L1)
 
     # 1회 응답에서 텍스트 + function_call 모두 추출

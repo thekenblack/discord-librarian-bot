@@ -92,14 +92,6 @@ async def run_evaluation_batch(self, batch: list[dict]):
         if self_notes:
             sys_parts.append("## 자기 기록\n" + "\n".join(f"- [{n['category']}] {n['content']}" for n in self_notes))
 
-        # 유저별 thinking 설정
-        thinking_lines = []
-        for uid in user_ids:
-            uname = next((t["user_name"] for t in batch if t["user_id"] == uid), uid)
-            ut = await self.librarian_db.get_user_thinking(uid)
-            thinking_lines.append(f"@{uname}: L1={ut['l1']} L2={ut['l2']} L3={ut['l3']}")
-        sys_parts.append("## 현재 thinking 설정\n" + "\n".join(thinking_lines))
-
         # L5 자기 피드백
         for uid in user_ids:
             fb_l5 = await self.librarian_db.get_layer_feedback("l5", uid)
@@ -298,15 +290,6 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     _log_lines.append(f"  관리자 보고 ({uid}): {msg}")
                     logger.warning(f"[L5→Admin] {msg}")
 
-                elif fc.name == "set_thinking":
-                    uid = fc_args.get("user_id", batch[-1]["user_id"])
-                    await self.librarian_db.set_user_thinking(
-                        uid,
-                        l1=fc_args.get("l1"),
-                        l2=fc_args.get("l2"),
-                        l3=fc_args.get("l3"))
-                    parts = [f"{k}={fc_args[k]}" for k in ("l1", "l2", "l3") if k in fc_args]
-                    _log_lines.append(f"  thinking: {uid} → {', '.join(parts)}")
 
         if feedback_text:
             _log_lines.append(f"  텍스트: {feedback_text}")

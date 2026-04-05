@@ -245,21 +245,19 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
     self._current_attachments = attachments or []
     files_to_send = []
 
-    _thinking_level = (shared_ctx or {}).get("thinking", {}).get("l2", "minimal")
-    _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=dynamic_prompt,
         tools=[types.Tool(function_declarations=execution_tools[0].function_declarations)],
         max_output_tokens=500,
         temperature=TEMP_L2,
-        thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(_thinking_level, "MINIMAL")),
+        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
     )
 
     # Processor는 히스토리 없이 단발 호출
     loop_contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_content)])]
 
     from librarian.core import MODEL_L2
-    logger.info(f"[Execution] API 호출 (model={MODEL_L2}, thinking={_thinking_level})")
+    logger.info(f"[Execution] API 호출 (model={MODEL_L2})")
     response = await self._call_gemini(loop_contents, config, model=MODEL_L2)
     logger.info("[Execution] API 응답 수신")
 
