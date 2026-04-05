@@ -174,35 +174,39 @@ evaluation_declarations = [
     # ── 레이어별 피드백 (각 레이어가 직접 읽음) ──
     types.FunctionDeclaration(
         name="feedback_l1",
-        description="L1(관찰자)에게 지시. 다음 턴에 L1이 직접 읽는다.",
+        description="L1(관찰자)에게 지시. 다음 턴에 L1이 직접 읽는다. scope: user(유저별), channel(채널별), global(전체).",
         parameters=types.Schema(type="OBJECT", properties={
-            "user_id": types.Schema(type="STRING"),
+            "scope": types.Schema(type="STRING", description="user / channel / global"),
+            "scope_id": types.Schema(type="STRING", description="유저ID 또는 채널ID. global이면 생략."),
             "feedback": types.Schema(type="STRING"),
-        }, required=["user_id", "feedback"]),
+        }, required=["scope", "feedback"]),
     ),
     types.FunctionDeclaration(
         name="feedback_l2",
-        description="L2(실행기)에게 지시. 다음 턴에 L2가 직접 읽는다.",
+        description="L2(실행기)에게 지시. 다음 턴에 L2가 직접 읽는다. scope: user/channel/global.",
         parameters=types.Schema(type="OBJECT", properties={
-            "user_id": types.Schema(type="STRING"),
+            "scope": types.Schema(type="STRING", description="user / channel / global"),
+            "scope_id": types.Schema(type="STRING"),
             "feedback": types.Schema(type="STRING"),
-        }, required=["user_id", "feedback"]),
+        }, required=["scope", "feedback"]),
     ),
     types.FunctionDeclaration(
         name="feedback_l3",
-        description="L3(캐릭터)에게 지시. 다음 턴에 L3가 직접 읽는다.",
+        description="L3(캐릭터)에게 지시. 다음 턴에 L3가 직접 읽는다. scope: user/channel/global.",
         parameters=types.Schema(type="OBJECT", properties={
-            "user_id": types.Schema(type="STRING"),
+            "scope": types.Schema(type="STRING", description="user / channel / global"),
+            "scope_id": types.Schema(type="STRING"),
             "feedback": types.Schema(type="STRING"),
-        }, required=["user_id", "feedback"]),
+        }, required=["scope", "feedback"]),
     ),
     types.FunctionDeclaration(
         name="feedback_l4",
-        description="L4(포매터)에게 지시. 다음 턴에 L4가 직접 읽는다.",
+        description="L4(포매터)에게 지시. 다음 턴에 L4가 직접 읽는다. scope: user/channel/global.",
         parameters=types.Schema(type="OBJECT", properties={
-            "user_id": types.Schema(type="STRING"),
+            "scope": types.Schema(type="STRING", description="user / channel / global"),
+            "scope_id": types.Schema(type="STRING"),
             "feedback": types.Schema(type="STRING"),
-        }, required=["user_id", "feedback"]),
+        }, required=["scope", "feedback"]),
     ),
     types.FunctionDeclaration(
         name="feedback_l5",

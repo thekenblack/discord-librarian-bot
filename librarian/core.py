@@ -590,10 +590,10 @@ class AILibrarianBot(discord.Client):
                 "user_emotion": await self.librarian_db.get_user_emotion(user_id),
                 "user_summary": await self.librarian_db.get_user_summary(user_id),
                 "channel_summary": await self.librarian_db.get_channel_summary(channel_id) if channel_id else "",
-                "feedback_l1": await self.librarian_db.get_layer_feedback("l1", user_id),
-                "feedback_l2": await self.librarian_db.get_layer_feedback("l2", user_id),
-                "feedback_l3": await self.librarian_db.get_layer_feedback("l3", user_id),
-                "feedback_l4": await self.librarian_db.get_layer_feedback("l4", user_id),
+                "feedback_l1": await self._load_layer_feedback("l1", user_id, channel_id),
+                "feedback_l2": await self._load_layer_feedback("l2", user_id, channel_id),
+                "feedback_l3": await self._load_layer_feedback("l3", user_id, channel_id),
+                "feedback_l4": await self._load_layer_feedback("l4", user_id, channel_id),
                 "feedback_l5": await self.librarian_db.get_layer_feedback("l5", user_id),
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
@@ -1152,6 +1152,21 @@ class AILibrarianBot(discord.Client):
                 i += 1
 
         self.chat_histories[user_id] = clean
+
+    async def _load_layer_feedback(self, layer: str, user_id: str, channel_id: str = None) -> str:
+        """레이어별 피드백 로드. 유저 + 채널 + 전체를 합침."""
+        parts = []
+        fb_user = await self.librarian_db.get_layer_feedback(layer, user_id)
+        if fb_user:
+            parts.append(f"[유저] {fb_user}")
+        if channel_id:
+            fb_ch = await self.librarian_db.get_layer_feedback(layer, f"channel:{channel_id}")
+            if fb_ch:
+                parts.append(f"[채널] {fb_ch}")
+        fb_global = await self.librarian_db.get_layer_feedback(layer, "global")
+        if fb_global:
+            parts.append(f"[전체] {fb_global}")
+        return "\n".join(parts) if parts else ""
 
     def _trim_perception_history(self, channel_id: str):
         """L1 채널별 히스토리를 MAX_PERCEPTION_HISTORY로 제한."""

@@ -258,16 +258,31 @@ async def run_evaluation_batch(self, batch: list[dict]):
                         category=fc_args.get("category", "tendency"))
                     _log_lines.append(f"  자기 기록 [{fc_args.get('category', 'tendency')}]: {fc_args.get('content', '')}")
 
-                elif fc.name in ("feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4", "feedback_l5"):
-                    layer = fc.name.split("_")[1]  # "l1", "l2", etc.
-                    uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
-                    import re as _re_uid
-                    uid_match = _re_uid.search(r'(\d{15,})', str(uid_raw))
-                    uid = uid_match.group(1) if uid_match else next(
-                        (t["user_id"] for t in batch if t["user_name"] in str(uid_raw)), batch[-1]["user_id"])
+                elif fc.name in ("feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4"):
+                    layer = fc.name.split("_")[1]  # "l1"~"l4"
+                    scope = fc_args.get("scope", "user")
+                    scope_id_raw = fc_args.get("scope_id", "")
                     fb = fc_args.get("feedback", "")
-                    await self.librarian_db.save_layer_feedback(layer, uid, fb)
-                    _log_lines.append(f"  피드백 [{layer.upper()}] ({uid}): {fb}")
+                    if scope == "global":
+                        key = "global"
+                    elif scope == "channel":
+                        key = f"channel:{scope_id_raw or batch[-1].get('channel_id', '')}"
+                    else:
+                        import re as _re_uid
+                        uid_match = _re_uid.search(r'(\d{15,})', str(scope_id_raw)) if scope_id_raw else None
+                        key = uid_match.group(1) if uid_match else next(
+                            (t["user_id"] for t in batch if t["user_name"] in str(scope_id_raw)), batch[-1]["user_id"])
+                    await self.librarian_db.save_layer_feedback(layer, key, fb)
+                    _log_lines.append(f"  피드백 [{layer.upper()}] ({scope}:{key}): {fb}")
+
+                elif fc.name == "feedback_l5":
+                    uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
+                    import re as _re_uid5
+                    uid_match = _re_uid5.search(r'(\d{15,})', str(uid_raw))
+                    uid = uid_match.group(1) if uid_match else batch[-1]["user_id"]
+                    fb = fc_args.get("feedback", "")
+                    await self.librarian_db.save_layer_feedback("l5", uid, fb)
+                    _log_lines.append(f"  피드백 [L5 셀프] ({uid}): {fb}")
 
                 elif fc.name == "feedback_admin":
                     uid_raw = fc_args.get("user_id", batch[-1]["user_id"])
