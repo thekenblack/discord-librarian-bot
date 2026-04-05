@@ -464,7 +464,7 @@ class AILibrarianBot(discord.Client):
                 for em in _extract_emojis(_meta["reaction"]):
                     try:
                         await message.add_reaction(em)
-                        logger.info(f"이모지 리액션: {em}")
+                        logger.info(f"리액션 전송: {em}")
                     except discord.HTTPException as e:
                         logger.info(f"리액션 실패 (건너뜀): {em!r} → {e}")
                     except Exception as e:
