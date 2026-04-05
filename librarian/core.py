@@ -792,29 +792,8 @@ class AILibrarianBot(discord.Client):
                 mention_map=dict(self._mention_map),
                 channel_map=channel_map,
                 role_map=role_map,
-                emoji_map=emoji_map,
-                feedback=shared_ctx.get("feedback_l4", ""))
-            if reply != raw_reply:
-                # L4 결과 검증: 유효하지 않은 ID만 부분 폴백 (해당 패턴을 원본 텍스트로 되돌림)
-                valid_ids = set(self._mention_map.values()) | set(_all_ch.values()) | set(_all_ro.values())
-                if self.user:
-                    valid_ids.add(str(self.user.id))
-                def _validate_id(m):
-                    found_id = m.group(1) or m.group(2) or m.group(3)
-                    if found_id in valid_ids:
-                        return m.group()
-                    logger.warning(f"[L4 검증] 유효하지 않은 ID 제거: {m.group()}")
-                    # ID를 제거하고 @ 또는 # 형태로 되돌림
-                    if m.group(1):
-                        return f"@{found_id}"
-                    elif m.group(2):
-                        return f"#{found_id}"
-                    else:
-                        return f"@{found_id}"
-                reply = _re.sub(r'<@!?(\d+)>|<#(\d+)>|<@&(\d+)>', _validate_id, reply)
-                logger.info(f"[L4 Postprocess] 정제 ({_time.monotonic()-_t0:.2f}s)\n  원본: {raw_reply[:200]}\n  변환: {reply[:200]}")
-            else:
-                logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
+                emoji_map=emoji_map)
+            logger.info(f"[L4 Postprocess] ({_time.monotonic()-_t0:.2f}s)")
 
             # 히스토리에 L4 변환 전 원본 저장 (L3가 깨끗한 히스토리를 보도록)
             history.append(types.Content(role="model", parts=[types.Part.from_text(text=raw_reply)]))
