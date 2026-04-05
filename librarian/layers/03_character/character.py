@@ -26,7 +26,7 @@ async def run_character(self, user_id: str, user_name: str,
                          raw_context: str = "",
                          thinking_level: str = "minimal",
                          feedback: str = "",
-                         no_tools: bool = False) -> str:
+                         ) -> str:
     """Character: 컨텍스트 + 도구 결과 + 페르소나로 대사 생성 + 리액션."""
     history = self.chat_histories.get(user_id, [])
     sys_parts = []
@@ -44,7 +44,7 @@ async def run_character(self, user_id: str, user_name: str,
     _level_map = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
-        tools=None if no_tools else character_tools,
+        tools=character_tools,
         max_output_tokens=AI_MAX_OUTPUT_TOKENS,
         temperature=TEMP_L3,
         thinking_config=types.ThinkingConfig(thinking_level=_level_map.get(thinking_level, "MINIMAL")),
