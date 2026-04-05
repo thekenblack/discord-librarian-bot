@@ -942,7 +942,7 @@ class AILibrarianBot(discord.Client):
         text = re.sub(r'\[mood:[+-]?\d+\]', '', text).strip()
         text = re.sub(r'\*\*\*\*', '', text).strip()
         text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
-        return text[:150]
+        return text[:300]
 
     def _format_msg_row(self, row: dict) -> str:
         """DB 메시지 행을 텍스트로 포맷. @닉네임 형태 통일."""
@@ -952,7 +952,7 @@ class AILibrarianBot(discord.Client):
         else:
             name = f"@{row['author_name']}"
             self._mention_map[row["author_name"]] = row["author_id"]
-            content = row["content"][:150]
+            content = row["content"][:300]
         extras = row.get("extras", "")
         if extras:
             content = f"{content} {extras}" if content else extras
