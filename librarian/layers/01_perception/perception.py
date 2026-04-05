@@ -217,40 +217,33 @@ async def gather_context(self, user_id: str, user_name: str,
     return "\n\n".join(parts)
 
 
-SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정
+SPONTANEOUS_RESPONSE_PROMPT = """## 응답 판정 (이것만 해)
 
-멘션 없는 메시지다. 기본값은 ignore다. 대부분의 메시지는 너한테 하는 말이 아니다.
+멘션 없는 메시지다. 판정 한 줄만 출력해. 그 외 분석, 관찰, 소견, 도구 현황 전부 하지 마.
 
-판정을 먼저 해. 판정이 ignore나 pause면 관찰/분석 전부 생략하고 판정 + 사유만 쓰고 끝내.
+출력은 반드시 이 형식 한 줄이다:
+decide_to_ignore — 사유
+decide_to_pause — 사유
+decide_to_reply — 사유
+decide_to_reply_to — 사유
 
-ignore 예시:
-- 다른 사람을 부르고 있다 (다른 이름을 언급, 다른 사람에게 말하는 톤)
+기본값은 ignore다. 대부분의 메시지는 너한테 하는 말이 아니다.
+
+ignore:
+- 다른 사람을 부르고 있다 (다른 이름 언급)
 - 사람들끼리 대화 중이다
-- 혼잣말이다
-- 너와 관련 없는 주제다
-다른 사람 이름이 언급됐으면 그건 너한테 하는 말이 아니다.
+- 혼잣말, 감탄, 욕설, 감정 분출
+- 너와 관련 없는 주제
+다른 사람 이름이 언급됐으면 ignore.
 
-pause 예시:
-- 메시지가 끊어져 있다 (문장이 안 끝남)
-- 사람들은 메시지를 여러 개로 나눠 보낸다
+pause:
+- 메시지가 끊어져 있다 (문장 미완결)
 
-reply 조건 (전부 충족해야 함):
-- 너를 지칭하거나 너한테 말하고 있다는 명확한 근거가 있다
+reply (전부 충족):
+- 너를 지칭하거나 너한테 말하고 있다는 명확한 근거
 - 다른 사람을 부르고 있지 않다
-- 말이 끝났다 (문장이 완결됨)
-근거 없으면 ignore.
-
-출력 형식 (반드시 사유를 써):
-"decide_to_ignore — 사유"
-"decide_to_pause — 사유"
-"decide_to_reply — 사유"
-"decide_to_reply_to — 사유"
-
-예:
-"decide_to_ignore — 다른 유저(@이름)에게 말하고 있다"
-"decide_to_ignore — 사람들끼리 대화 중"
-"decide_to_pause — 문장이 끝나지 않았다"
-"decide_to_reply — 비트쨩을 부르면서 질문했다" """
+- 말이 끝났다
+근거 없으면 ignore."""
 
 
 async def run_perception(self, user_id: str, user_name: str,
