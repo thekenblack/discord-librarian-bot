@@ -1466,6 +1466,15 @@ class AILibrarianBot(discord.Client):
                 )
 
             if _meta.get("no_response") or _meta.get("ignore"):
+                # 텍스트 없이 리액션만 있는 경우 리액션은 전송
+                if _meta.get("reaction"):
+                    for em in _extract_emojis(_meta["reaction"]):
+                        try:
+                            await message.add_reaction(em)
+                        except discord.NotFound:
+                            logger.info(f"리액션 실패 (건너뜀): {em!r}")
+                        except Exception as e:
+                            logger.warning(f"리액션 실패: {em!r} → {e}")
                 return
 
             if _meta.get("wait"):
