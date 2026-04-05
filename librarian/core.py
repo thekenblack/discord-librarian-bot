@@ -1263,6 +1263,7 @@ class AILibrarianBot(discord.Client):
                 user_text=gift_text,
                 guild=message.guild,
                 channel_id=channel_id,
+                typing_channel=message.channel,
             )
 
             if reply:
