@@ -637,9 +637,9 @@ class AILibrarianBot(discord.Client):
                 self._l1_files.clear()
 
             # L1에서 react 회수
-            if hasattr(self, '_l1_reaction') and self._l1_reaction:
-                _meta["reaction"] = self._l1_reaction
-                self._l1_reaction = ""
+            if hasattr(self, '_l1_reactions') and self._l1_reactions:
+                _meta["reaction"] = " ".join(self._l1_reactions)
+                self._l1_reactions.clear()
 
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:

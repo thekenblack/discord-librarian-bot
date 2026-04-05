@@ -590,9 +590,9 @@ async def run_perception(self, user_id: str, user_name: str,
             elif fc.name == "react":
                 emoji = (dict(fc.args) if fc.args else {}).get("emoji", "")
                 if emoji:
-                    if not hasattr(self, '_l1_reaction'):
-                        self._l1_reaction = ""
-                    self._l1_reaction = emoji
+                    if not hasattr(self, '_l1_reactions'):
+                        self._l1_reactions = []
+                    self._l1_reactions.append(emoji)
                     logger.info(f"[Perception] 리액션: {emoji}")
 
     # 분석 텍스트 + 도구 결과 합침
