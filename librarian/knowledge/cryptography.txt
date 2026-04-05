@@ -1,0 +1,20 @@
+secp256k1: 비트코인이 사용하는 타원곡선. y² = x³ + 7 (mod p). a=0, b=7인 Koblitz 곡선. 효율적 연산이 장점. NIST 곡선과 달리 파라미터가 투명하게 선택됨. | secp256k1, 타원곡선
+secp256k1 소수 p: 2²⁵⁶ - 2³² - 977. 유한체의 크기를 정의. 모든 좌표 연산은 이 소수로 모듈러 산술. | secp256k1 p, 소수, prime
+secp256k1 위수 n: FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141 (hex). 생성점 G의 위수. 개인키는 1 ~ n-1 범위. n은 p와 매우 가까움(하세 정리). | secp256k1 n, 위수, order, 스칼라 범위
+secp256k1 생성점 G 좌표 (hex): Gx = 79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798, Gy = 483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8. | G점, 생성점, generator point
+타원곡선 점 덧셈: 두 점 P, Q를 잇는 직선이 곡선과 만나는 세 번째 점의 x축 대칭. P=Q이면 접선 사용(점 더블링). 항등원은 무한원점. 아벨 군을 형성. | 점 덧셈, point addition, 더블링
+스칼라 곱셈: k·G = G를 k번 더한 것. 이것이 공개키 생성의 핵심. k(개인키) → k·G(공개키)는 쉽지만, k·G에서 k를 찾는 건 ECDLP. | 스칼라 곱셈, scalar multiplication
+ECDLP(타원곡선 이산 로그 문제): Q = k·G일 때 Q와 G를 알아도 k를 찾을 수 없는 문제. 비트코인 보안의 수학적 토대. 최적 알고리즘(Pollard's rho)으로도 O(√n) ≈ 2¹²⁸ 연산 필요. | ECDLP, 이산로그, discrete log
+유한체(Finite Field, 갈루아 체): 사칙연산이 모두 가능하고 원소가 유한한 대수적 구조. 컴퓨터가 무한 실수를 다룰 수 없으므로 모듈러 연산으로 닫힘성 부여. 원소 개수가 소수 p인 체를 GF(p)라 함. | 유한체, finite field, 갈루아, Galois
+모듈러 연산: a mod n = a를 n으로 나눈 나머지. 유한체에서 덧셈/곱셈/뺄셈 결과를 0~n-1 범위에 가둠. 나눗셈은 곱셈의 역원(유클리드 호제법)으로 처리. 모듈러스가 소수여야 모든 원소의 역원 보장. | 모듈러, modular, mod, 나머지 연산
+정수 집합(Z)은 체(Field)가 아니다: 3/2=1.5처럼 나눗셈이 집합을 벗어남(곱셈 역원 없음). 정수는 가환환(Commutative Ring)이며 정역(Integral Domain). | 정수, 환, ring, integral domain
+합성수 모듈러스의 문제: 모듈러스가 합성수이면 gcd(a,n)>1인 원소는 곱셈 역원이 없음. 나눗셈 불가 → 체 불가. 소수만 체를 보장. | 합성수, 소인수분해, 영인자
+ECDSA 서명 과정: 임시 키 k 생성 → R = k·G의 x좌표(r) → s = k⁻¹(z + r·d) mod n (z=메시지 해시, d=개인키). 서명 = (r, s). k 재사용 시 개인키 유출. | ECDSA, 서명, 검증
+ECDSA 검증 과정: u₁ = z·s⁻¹ mod n, u₂ = r·s⁻¹ mod n → P = u₁·G + u₂·Q → P의 x좌표 == r이면 유효. | ECDSA 검증
+슈노르 서명: s = k + e·d (k=임시키, e=해시(R||P||m), d=개인키). ECDSA보다 간결(64바이트). 선형성으로 키/서명 결합 가능. 배치 검증 효율. BIP-340. | schnorr, 슈노르
+SHA-256: 256비트 해시 함수. 비트코인 채굴(이중 SHA-256), 주소 생성, 머클 트리에 사용. 입력 길이와 무관하게 32바이트 출력. 충돌 저항성, 역상 저항성, 제2역상 저항성. | SHA256, SHA-256
+RIPEMD-160: 160비트 해시 함수. SHA-256 후 적용하여 비트코인 주소 길이를 줄임. HASH160 = RIPEMD-160(SHA-256(x)). | RIPEMD160, HASH160
+HMAC-SHA512: 키 기반 메시지 인증 코드. BIP-32 키 파생, BIP-39 시드 생성에 사용. HMAC(key, data) = H((key⊕opad) || H((key⊕ipad) || data)). | HMAC, HMAC-SHA512
+PBKDF2: 비밀번호 기반 키 파생 함수. BIP-39에서 니모닉+패스프레이즈 → 512비트 시드. HMAC-SHA512 사용, 2048회 반복으로 브루트포스 방지. | PBKDF2
+머클 트리: 트랜잭션 해시들을 쌍으로 묶어 해시하면서 트리를 만듦. 루트 해시 하나로 모든 트랜잭션 무결성 검증. 개별 트랜잭션 검증에 O(log n). SPV의 기반. | 머클, merkle tree
+128비트 보안: secp256k1의 키 길이는 256비트이지만 ECDLP 최적 공격(Pollard's rho)은 O(2¹²⁸). RSA로 같은 보안을 얻으려면 ~3072비트 키 필요. 효율성이 ECC의 장점. | 128비트 보안, 키 길이, RSA 비교

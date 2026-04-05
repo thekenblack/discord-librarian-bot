@@ -7,20 +7,21 @@ logger = logging.getLogger("AILibrarian")
 
 async def run_character(self, user_id: str, user_name: str,
                          user_text: str, instruction: str,
-                         context_block: str = "") -> str:
+                         context_block: str = "",
+                         raw_context: str = "") -> str:
     """Character: 컨텍스트 + 도구 결과 + 페르소나로 대사 생성. 도구 없음."""
     history = self.chat_histories.get(user_id, [])
-
-    # 시스템 프롬프트: character + 컨텍스트 + 도구 결과
+    # 시스템 프롬프트: character + 공통 컨텍스트 + L1 분석 + L2 보고
     sys_parts = []
     if self.persona.character_text:
         sys_parts.append(self.persona.character_text)
+    if raw_context:
+        sys_parts.append(raw_context)
     if context_block:
-        sys_parts.append(context_block)
+        sys_parts.append(f"## 관찰자 분석 (Perception)\n{context_block}")
     if instruction:
-        sys_parts.append(f"## 실행 보고\n{instruction}")
+        sys_parts.append(f"## 실행 보고 (Execution)\n{instruction}")
     system_prompt = "\n\n".join(p for p in sys_parts if p)
-
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         tools=None,

@@ -1,0 +1,8 @@
+
+주소 재사용 금지: 같은 주소를 두 번 쓰면 거래 내역이 연결됨. HD 지갑이 매번 새 주소를 생성하는 이유. | 주소 재사용, address reuse
+코인조인(CoinJoin): 여러 사람의 트랜잭션을 합쳐 누가 누구에게 보냈는지 추적 불가. Wasabi Wallet, Whirlpool(Samourai). | 코인조인, coinjoin, wasabi, whirlpool
+페이조인(PayJoin): 수신자도 입력을 추가해 일반 결제처럼 보이게 만드는 프라이버시 기법. | 페이조인, payjoin
+체인 분석: Chainalysis 등이 트랜잭션 그래프를 분석해 주소를 클러스터링. 거래소 KYC 데이터와 연결. | 체인 분석, chainalysis, 추적
+KYC(Know Your Customer): 거래소가 신원 확인을 요구하는 것. KYC된 비트코인은 추적 가능. 노KYC 구매: Bisq, HodlHodl, P2P. | KYC, 노KYC, bisq, hodlhodl
+Tor 연결: 풀노드를 Tor로 연결하면 IP 주소 노출 방지. 트랜잭션 브로드캐스트 시 IP 추적 차단. | Tor, 토르, IP 프라이버시
+비트코인 프라이버시 베스트 프랙티스: 1)주소 재사용 금지 2)자기 노드 사용 3)코인 컨트롤 4)코인조인 5)Tor 연결 6)노KYC 구매. | 프라이버시, privacy

@@ -350,36 +350,39 @@ async def run_perception(self, user_id: str, user_name: str,
                                 logger.warning(f"[Perception] 미디어 인식 실패 ({att_idx}): {e}")
                         elif ct.startswith("video/"):
                             # 영상 → ffmpeg 첫 프레임 추출 → 이미지 인식
-                            try:
-                                data = await att.read()
-                                import tempfile, subprocess
-                                with tempfile.NamedTemporaryFile(suffix=os.path.splitext(att.filename)[1] or ".mp4", delete=False) as tmp_video:
-                                    tmp_video.write(data)
-                                    tmp_video_path = tmp_video.name
-                                tmp_thumb_path = tmp_video_path + ".jpg"
-                                subprocess.run(
-                                    ["ffmpeg", "-i", tmp_video_path, "-vframes", "1", "-q:v", "2", tmp_thumb_path, "-y"],
-                                    capture_output=True, timeout=10)
-                                if os.path.exists(tmp_thumb_path):
-                                    with open(tmp_thumb_path, "rb") as f:
-                                        thumb_data = f.read()
-                                    media_parts = [
-                                        types.Part.from_bytes(data=thumb_data, mime_type="image/jpeg"),
-                                        types.Part.from_text(text="이 영상의 첫 장면이야. 3-4줄로 설명해."),
-                                    ]
-                                    media_config = types.GenerateContentConfig(
-                                        max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
-                                    media_response = await self._call_gemini(
-                                        [types.Content(role="user", parts=media_parts)], media_config)
-                                    media_result = self._extract_reply(media_response)
-                                    if media_result:
-                                        media_result = f"[영상 썸네일] {media_result}"
-                                # 임시 파일 정리
-                                for p in [tmp_video_path, tmp_thumb_path]:
-                                    try:
-                                        os.remove(p)
-                                    except Exception:
-                                        pass
+                            import shutil
+                            if not shutil.which("ffmpeg"):
+                                media_result = "영상 인식 불가 (ffmpeg 미설치)"
+                            else:
+                                try:
+                                    data = await att.read()
+                                    import tempfile, subprocess
+                                    with tempfile.NamedTemporaryFile(suffix=os.path.splitext(att.filename)[1] or ".mp4", delete=False) as tmp_video:
+                                        tmp_video.write(data)
+                                        tmp_video_path = tmp_video.name
+                                    tmp_thumb_path = tmp_video_path + ".jpg"
+                                    subprocess.run(
+                                        ["ffmpeg", "-i", tmp_video_path, "-vframes", "1", "-q:v", "2", tmp_thumb_path, "-y"],
+                                        capture_output=True, timeout=10)
+                                    if os.path.exists(tmp_thumb_path):
+                                        with open(tmp_thumb_path, "rb") as f:
+                                            thumb_data = f.read()
+                                        media_parts = [
+                                            types.Part.from_bytes(data=thumb_data, mime_type="image/jpeg"),
+                                            types.Part.from_text(text="이 영상의 첫 장면이야. 3-4줄로 설명해."),
+                                        ]
+                                        media_config = types.GenerateContentConfig(
+                                            max_output_tokens=AI_MAX_OUTPUT_TOKENS, temperature=0.5)
+                                        media_response = await self._call_gemini(
+                                            [types.Content(role="user", parts=media_parts)], media_config)
+                                        media_result = self._extract_reply(media_response)
+                                        if media_result:
+                                            media_result = f"[영상 썸네일] {media_result}"
+                                    for p in [tmp_video_path, tmp_thumb_path]:
+                                        try:
+                                            os.remove(p)
+                                        except Exception:
+                                            pass
                             except Exception as e:
                                 logger.warning(f"[Perception] 영상 썸네일 추출 실패 ({att_idx}): {e}")
                         else:

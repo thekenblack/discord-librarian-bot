@@ -1,19 +1,30 @@
 BIP(Bitcoin Improvement Proposal)은 비트코인 프로토콜 변경을 제안하는 공식 문서. 누구나 작성 가능, 커뮤니티 검토를 거침. | BIP, 비트코인 개선 제안
-BIP 1: BIP 절차 자체를 정의한 문서.
-BIP 9: 소프트포크 활성화 메커니즘. 채굴자 시그널링으로 업그레이드 합의.
-BIP 32: HD(Hierarchical Deterministic) 지갑. 하나의 시드에서 무한한 키 파생. 하나만 백업하면 모든 주소 복구 가능. | BIP32, HD지갑
-BIP 39: 니모닉 시드. 12/24개 영어 단어로 마스터 시드를 표현. 2048개 단어 목록. | BIP39, 니모닉, 시드문구, 복구구문, mnemonic
-BIP 44: 멀티 계정 HD 지갑 구조. m/44'/0'/0' 경로로 비트코인 계정 관리. | BIP44, 파생경로
-BIP 47: 재사용 가능 결제 코드. PayNym. 프라이버시를 유지하면서 같은 상대에게 반복 결제. | BIP47, PayNym
-BIP 84: Native SegWit(bech32) 지갑의 파생 경로. m/84'/0'/0'. | BIP84, bech32
-BIP 85: 하나의 마스터 시드에서 여러 독립 시드를 파생. 하나만 백업하면 여러 지갑 관리 가능. 자식 시드 유출돼도 마스터는 안전. | BIP85
-BIP 86: Taproot 지갑의 파생 경로. m/86'/0'/0'. | BIP86
-BIP 101: 개빈 안드레센의 블록 크기 증가안(8MB 시작, 2년마다 2배). 탈중앙화 약화 우려로 거부됨. 블록 크기 전쟁의 핵심. | BIP101, 개빈
-BIP 125: RBF(Replace-By-Fee). 미확인 트랜잭션의 수수료를 올려 교체. | BIP125
-BIP 141: SegWit. 서명을 witness로 분리. 4MB weight, 트랜잭션 가변성 해결, 라이트닝 전제조건. 2017년 8월 활성화. | BIP141
-BIP 148: UASF(User Activated Soft Fork). 유저가 직접 세그윗 활성화를 강제한 운동. 채굴자가 아닌 유저가 비트코인의 규칙을 정한다는 선례. | BIP148, UASF
-BIP 174: PSBT(Partially Signed Bitcoin Transaction). 오프라인 서명 표준. 에어갭 하드월렛에 필수. | BIP174
-BIP 340: 슈노르 서명. 여러 서명을 하나로 합침. 탭루트의 핵심. | BIP340
-BIP 341: 탭루트 출력 규칙. 슈노르 + MAST로 프라이버시와 효율성 개선. | BIP341
-BIP 342: 탭스크립트. 탭루트에서의 스크립트 실행 규칙. | BIP342
-BIP 370: PSBT v2. BIP 174의 개선판. 더 유연한 트랜잭션 구성. | BIP370
+BIP 1: BIP 절차 자체를 정의한 문서. 표준, 정보, 프로세스 세 가지 유형.
+BIP 8: 소프트포크 활성화 메커니즘. BIP 9의 개선. LOT=true 옵션으로 강제 활성화 가능. | BIP8
+BIP 9: 소프트포크 활성화 메커니즘. 채굴자 시그널링으로 업그레이드 합의. | BIP9
+BIP 21: 비트코인 URI 스킴. bitcoin:주소?amount=0.1 형태. QR코드에 사용. | BIP21, URI
+BIP 32: HD 지갑의 키 파생 표준. 마스터 시드에서 HMAC-SHA512로 자식 키를 파생. 자식 개인키 = (IL + 부모 개인키) mod n. IL 자체가 n 이상이거나 결과가 0이면 해당 인덱스 스킵. 강화 파생은 부모 개인키를 입력에 포함시켜 xpub 유출 시에도 자식 개인키를 보호. 일반 파생은 부모 공개키만 사용하여 xpub만으로 자식 공개키 생성 가능(감시 전용 지갑). | BIP32, HD지갑, 키파생, CKD, 강화파생, hardened
+BIP 32 CKD 함수: CKDpriv(부모 개인키, 인덱스) → HMAC-SHA512(체인코드, 데이터). 강화: 데이터 = 0x00 || 부모개인키(32바이트) || 인덱스. 일반: 데이터 = 부모공개키(33바이트 압축) || 인덱스. 결과 좌측 256비트(IL) + 부모개인키를 mod n으로 자식개인키 생성. | CKDpriv, CKDpub, 체인코드, chain code
+BIP 32 xpub 위험: 부모 xpub(공개키+체인코드)과 일반 파생 자식 개인키가 동시 유출되면 부모 개인키 역산 가능. 자식개인키 - 조정값(IL) = 부모개인키. 강화 파생은 이 공격을 차단. | xpub, 확장공개키, 키유출
+BIP 39: 니모닉 시드. 128/256비트 엔트로피 → 체크섬 추가 → 2048개 단어 목록에서 12/24개 선택. 니모닉 + 패스프레이즈(선택) → PBKDF2(HMAC-SHA512, 2048회) → 512비트 시드. 시드 → HMAC-SHA512("Bitcoin seed") → 좌측 256비트가 마스터 개인키, 우측이 마스터 체인코드. | BIP39, 니모닉, mnemonic, 시드, PBKDF2, 엔트로피
+BIP 43: 목적(purpose) 필드 정의. m/purpose'에서 purpose 값으로 지갑 유형 구분. | BIP43, purpose
+BIP 44: 멀티 계정 HD 지갑 구조. 경로: m/purpose'/coin_type'/account'/change/index. purpose=44(P2PKH). coin_type은 SLIP-0044에서 정의(비트코인=0). account는 용도별 분리. change: 0=외부(수신), 1=내부(거스름). 강화 파생: purpose, coin_type, account 단계. 일반 파생: change, index 단계. | BIP44, 파생경로, 계정, 어카운트
+BIP 47: 재사용 가능 결제 코드. PayNym. 통지 트랜잭션으로 공유 비밀 생성 후 일회용 주소를 무한 파생. 프라이버시 유지하면서 반복 결제. | BIP47, PayNym, 결제코드
+BIP 49: P2SH-P2WPKH(Nested SegWit) 지갑 경로. m/49'/0'/0'. 구형 지갑 호환. | BIP49, nested segwit
+BIP 84: P2WPKH(Native SegWit, bech32) 지갑 경로. m/84'/0'/0'. 가장 효율적인 일반 전송 형식. | BIP84, bech32, 네이티브세그윗
+BIP 85: 마스터 시드에서 독립 자식 시드를 파생. 하나의 백업으로 여러 지갑 관리. 자식 시드 유출돼도 마스터 안전. | BIP85
+BIP 86: Taproot(P2TR) 지갑 경로. m/86'/0'/0'. 키 경로 지출용. | BIP86, taproot, P2TR
+BIP 101: 개빈 안드레센의 블록 크기 증가안(8MB→8GB). 탈중앙화 약화 우려로 거부. 블록 크기 전쟁의 핵심. | BIP101
+BIP 125: RBF(Replace-By-Fee). 미확인 트랜잭션의 수수료를 올려 교체. nSequence 값으로 신호. | BIP125, RBF
+BIP 141: SegWit. 서명을 witness 영역으로 분리. 블록 weight 4MW, 트랜잭션 가변성 해결, 라이트닝 전제조건. 2017년 8월 활성화. | BIP141, segwit, 세그윗
+BIP 148: UASF. 유저가 직접 세그윗 활성화를 강제. 채굴자가 아닌 유저가 규칙을 정한다는 선례. 2017년 8월 1일. | BIP148, UASF
+BIP 152: 컴팩트 블록. 블록 전파 시 이미 알고 있는 트랜잭션은 해시만 전송. 전파 속도 향상. | BIP152, compact block
+BIP 155: addrv2. Tor v3(.onion 주소), I2P 등 다양한 네트워크 주소 지원. | BIP155, tor, addrv2
+BIP 174: PSBT(Partially Signed Bitcoin Transaction). 오프라인 서명 표준. 에어갭 하드월렛, 멀티시그에 필수. 역할 분리: creator → updater → signer → combiner → finalizer → extractor. | BIP174, PSBT
+BIP 324: v2 P2P 전송 프로토콜. 노드 간 통신을 암호화. 도청과 조작 방지. | BIP324, v2 transport, 암호화 통신
+BIP 327: MuSig2. 2라운드 슈노르 멀티시그 프로토콜. 여러 서명자가 하나의 공개키와 서명을 생성. | BIP327, MuSig2, 멀티시그
+BIP 340: 슈노르 서명 스킴. 64바이트 서명(ECDSA의 ~72바이트보다 작음). 선형성으로 키/서명 결합 가능. 배치 검증. | BIP340, schnorr, 슈노르
+BIP 341: 탭루트 출력 규칙. 키 경로(단일 서명처럼 보임)와 스크립트 경로(MAST) 두 가지 지출 방식. 프라이버시와 효율성 개선. | BIP341, taproot
+BIP 342: 탭스크립트. 탭루트 안에서의 스크립트 실행 규칙. OP_CHECKSIGADD 등 새 옵코드. | BIP342, tapscript
+BIP 370: PSBT v2. BIP 174 개선. 입출력을 점진적으로 추가 가능. 더 유연한 트랜잭션 구성. | BIP370, PSBTv2
+SLIP-0044: 코인 타입 번호 정의. 비트코인=0, 테스트넷=1, 라이트코인=2 등. BIP-44의 coin_type 필드에 사용. | SLIP44, 코인타입

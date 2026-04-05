@@ -132,7 +132,21 @@ class LibraryDB:
             """)
 
             await _add_column("invoices", "buy_item_id", "TEXT")
-
+            # 봇→유저 선물 대기 (AI 사서봇이 기록, 라이브러리 봇이 알림 전송)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS pending_bot_gifts (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id   TEXT NOT NULL,
+                    recipient_id TEXT NOT NULL,
+                    recipient_name TEXT NOT NULL,
+                    bot_name     TEXT NOT NULL,
+                    item_emoji   TEXT NOT NULL,
+                    item_name    TEXT NOT NULL,
+                    item_price   INTEGER NOT NULL,
+                    message      TEXT,
+                    created_at   TEXT NOT NULL
+                )
+            """)
             await db.commit()
             logger.info("도서관 DB 초기화 완료")
 
