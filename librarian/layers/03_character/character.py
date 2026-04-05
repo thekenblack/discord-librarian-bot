@@ -7,11 +7,11 @@ logger = logging.getLogger("AILibrarian")
 character_declarations = [
     types.FunctionDeclaration(
         name="react",
-        description="유저 메시지에 이모지 리액션을 단다. 분위기에 맞는 이모지를 골라 자유롭게.",
+        description="유저 메시지에 이모지 리액션을 단다. 자유롭게.",
         parameters=types.Schema(
             type="OBJECT",
             properties={
-                "emoji": types.Schema(type="STRING", description="이모지 (예: 😊, 📚, 👋)"),
+                "emoji": types.Schema(type="STRING", description="이모지. 여러 개 가능 (예: 😊📚👋)"),
             },
             required=["emoji"],
         ),
