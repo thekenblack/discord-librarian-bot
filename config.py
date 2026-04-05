@@ -50,6 +50,16 @@ MAX_FILE_SIZE = _conf.get("max_file_size", 10 * 1024 * 1024)
 # 하위 호환: UPLOAD_DIR → FILES_DIR
 UPLOAD_DIR = FILES_DIR
 
+# ── 디스코드 포맷 ──────────────────────────────
+# context_mode: 맥락에 들어가는 형태 (name / id / both)
+# output_mode: AI가 출력하는 형태 (name / id / both)
+# name: @Ken, #자유토론
+# id: <@907264078421037136>, <#123456>
+# both: @Ken(<@907264078421037136>), #자유토론(<#123456>)
+_discord_fmt = _conf.get("discord_format", {})
+DISCORD_CONTEXT_MODE = _discord_fmt.get("context_mode", "name")
+DISCORD_OUTPUT_MODE = _discord_fmt.get("output_mode", "name")
+
 # ── .env 비밀값 ─────────────────────────────────
 BOT_TOKEN     = os.getenv("DISCORD_BOT_TOKEN", "")
 GUILD_ID      = os.getenv("DISCORD_GUILD_ID", "")

@@ -19,6 +19,7 @@ from config import (
     AI_MAX_OUTPUT_TOKENS, LOG_DIR,
     SPONTANEOUS_CHANNEL_ID, SPONTANEOUS_QUIET_HOURS, SPONTANEOUS_CHECK_HOURS, SPONTANEOUS_CHANCE,
     AI_HOURLY_WAGE,
+    DISCORD_CONTEXT_MODE, DISCORD_OUTPUT_MODE,
 )
 from librarian import server_log
 import importlib as _il
@@ -41,6 +42,23 @@ from config import MAX_HISTORY_L1, MAX_HISTORY_L3, MAX_HISTORY_L5
 MAX_HISTORY = MAX_HISTORY_L3
 MAX_PERCEPTION_HISTORY = MAX_HISTORY_L1
 MAX_EVALUATION_HISTORY = MAX_HISTORY_L5
+
+def fmt_mention(name: str, uid: str, mode: str = None) -> str:
+    """디스코드 멘션 포맷. mode: name / id / both"""
+    m = mode or DISCORD_CONTEXT_MODE
+    if m == "id":
+        return f"<@{uid}>"
+    elif m == "both":
+        return f"@{name}(<@{uid}>)"
+    return f"@{name}"
+
+def fmt_channel(name: str, cid: str, mode: str = None) -> str:
+    m = mode or DISCORD_CONTEXT_MODE
+    if m == "id":
+        return f"<#{cid}>"
+    elif m == "both":
+        return f"#{name}(<#{cid}>)"
+    return f"#{name}"
 
 # 커스텀 이모지 <:name:id> 또는 유니코드 이모지 (ZWJ 시퀀스 포함) 개별 추출
 _CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:\d+>")
@@ -366,19 +384,20 @@ class AILibrarianBot(discord.Client):
             return
 
         text = message.content
-        # 유저 멘션: <@ID> → @닉네임
+        # 유저 멘션: <@ID> → 모드에 따라 변환
         if message.mentions:
             for user in message.mentions:
-                text = text.replace(f"<@{user.id}>", f"@{user.display_name}")
-                text = text.replace(f"<@!{user.id}>", f"@{user.display_name}")
-        # 채널: <#ID> → #채널이름
+                formatted = fmt_mention(user.display_name, str(user.id))
+                text = text.replace(f"<@{user.id}>", formatted)
+                text = text.replace(f"<@!{user.id}>", formatted)
+        # 채널: <#ID> → 모드에 따라 변환
         if message.guild:
             import re as _re_input
             for m in _re_input.finditer(r'<#(\d+)>', text):
                 ch = message.guild.get_channel(int(m.group(1)))
                 if ch:
-                    text = text.replace(m.group(), f"#{ch.name}")
-            # 역할: <@&ID> → @역할이름
+                    text = text.replace(m.group(), fmt_channel(ch.name, str(ch.id)))
+            # 역할: <@&ID> → @역할이름 (역할은 항상 이름으로)
             for m in _re_input.finditer(r'<@&(\d+)>', text):
                 role = message.guild.get_role(int(m.group(1)))
                 if role:
@@ -928,12 +947,12 @@ class AILibrarianBot(discord.Client):
         return text[:300]
 
     def _format_msg_row(self, row: dict) -> str:
-        """DB 메시지 행을 텍스트로 포맷. @닉네임 형태 통일."""
+        """DB 메시지 행을 텍스트로 포맷. DISCORD_CONTEXT_MODE에 따라 형태 결정."""
         if self.user and row["author_id"] == str(self.user.id):
             name = self.persona.name
             content = self._clean_bot_content(row["content"][:300])
         else:
-            name = f"@{row['author_name']}"
+            name = fmt_mention(row["author_name"], row["author_id"])
             self._mention_map[row["author_name"]] = row["author_id"]
             content = row["content"][:300]
         extras = row.get("extras", "")
