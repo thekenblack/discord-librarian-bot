@@ -248,9 +248,9 @@ class AILibrarianBot(discord.Client):
         self._spontaneous_gen: dict[str, int] = {}
 
     async def _evaluation_worker(self):
-        """L5 디바운스 워커. 30초 조용하거나 5건 쌓이면 배치 처리."""
+        """L5 디바운스 워커. 30분 조용하거나 5건 쌓이면 배치 처리."""
         MAX_BATCH = 5
-        DEBOUNCE_SEC = 30.0
+        DEBOUNCE_SEC = 1800.0
         while True:
             try:
                 # 첫 번째 턴 대기
