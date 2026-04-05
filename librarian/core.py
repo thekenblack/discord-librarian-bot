@@ -909,11 +909,13 @@ class AILibrarianBot(discord.Client):
         msg_id = str(message.id)
         channel_id = str(message.channel.id)
 
+        # 앵커: 유저가 직접 답글을 건 대상 메시지
+        anchor_id = str(message.reference.message_id)
+
         # DB에서 reply_chain 조회
         db_chain = await self.librarian_db.get_reply_chain(msg_id, limit=5)
         if db_chain:
             chain = [self._format_msg_row(r) for r in db_chain]
-            anchor_id = db_chain[0]["message_id"]  # 가장 오래된 메시지
             # 첨부파일은 DB에 없으므로 빈 리스트
             return chain, [], [], anchor_id
 
@@ -956,7 +958,6 @@ class AILibrarianBot(discord.Client):
                 chain_attachments.append(att)
             chain.append(f"{name}: {content}")
 
-        anchor_id = str(raw_msgs[-1].id) if raw_msgs else None
         chain.reverse()
         return chain, seen_filenames, chain_attachments, anchor_id
 
