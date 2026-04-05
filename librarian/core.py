@@ -959,6 +959,13 @@ class AILibrarianBot(discord.Client):
             name = fmt_mention(row["author_name"], row["author_id"])
             self._mention_map[row["author_name"]] = row["author_id"]
             content = row["content"][:300]
+        # <@ID>를 @닉네임으로 변환 (DB에 <@ID>로 저장된 경우)
+        import re as _re_fmt
+        for _name, _uid in self._mention_map.items():
+            content = content.replace(f"<@{_uid}>", fmt_mention(_name, _uid))
+            content = content.replace(f"<@!{_uid}>", fmt_mention(_name, _uid))
+        if self.user:
+            content = _re_fmt.sub(f"<@!?{self.user.id}>", self.persona.name, content)
         extras = row.get("extras", "")
         if extras:
             content = f"{content} {extras}" if content else extras

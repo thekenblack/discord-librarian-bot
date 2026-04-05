@@ -22,8 +22,8 @@ logger = logging.getLogger("ShopCog")
 SHOP_PAGE1 = [
     {"id": "water",     "name": "생수",         "emoji": "💧", "price": 12,   "description": "시원한 생수 한 병",           "effects": {"hydration": 5, "self_energy": 1}},
     {"id": "cookie",    "name": "쿠키",         "emoji": "🍪", "price": 21,   "description": "바삭한 쿠키 한 봉지",         "effects": {"fullness": 3, "self_mood": 1}},
-    {"id": "tea",       "name": "차",           "emoji": "🍵", "price": 30,   "description": "따뜻한 차 한 잔",             "effects": {"hydration": 8, "self_mood": 1, "self_energy": 1}},
-    {"id": "coffee",    "name": "커피",         "emoji": "☕", "price": 50,   "description": "향긋한 커피 한 잔",           "effects": {"hydration": 8, "self_mood": 1, "self_energy": 2}},
+    {"id": "coffee",    "name": "커피",         "emoji": "☕", "price": 30,   "description": "향긋한 커피 한 잔",           "effects": {"hydration": 8, "self_mood": 1, "self_energy": 2}},
+    {"id": "tea",       "name": "차",           "emoji": "🍵", "price": 50,   "description": "따뜻한 차 한 잔",             "effects": {"hydration": 8, "self_mood": 1, "self_energy": 1}},
     {"id": "chocolate", "name": "초콜릿",       "emoji": "🍫", "price": 80,   "description": "달콤한 초콜릿 한 상자",       "effects": {"fullness": 5, "self_mood": 2}},
     {"id": "ramen",     "name": "라면",         "emoji": "🍜", "price": 120,  "description": "뜨끈한 라면 한 그릇",         "effects": {"fullness": 8, "hydration": 5, "self_mood": 2, "self_energy": 1}},
     {"id": "cake",      "name": "케이크",       "emoji": "🍰", "price": 210,  "description": "달콤한 케이크 한 조각",       "effects": {"fullness": 10, "self_mood": 3}},
