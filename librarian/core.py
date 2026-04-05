@@ -181,16 +181,14 @@ class AILibrarianBot(discord.Client):
         await self.librarian_db.reset_stale_url_results()
         await self.librarian_db.reset_stale_book_knowledge()
 
-        # 벡터 스토어 초기화 + 동기화 (60초 타임아웃)
+        # 벡터 스토어 초기화 + 동기화
         try:
             from librarian.vector_store import VectorStore
             from config import CHROMA_DIR
+            logger.info("벡터 스토어 동기화 중... (오래 걸릴 수 있음)")
             self.librarian_db.vector_store = VectorStore(CHROMA_DIR)
-            await asyncio.wait_for(self.librarian_db.sync_vector_store(), timeout=60)
+            await self.librarian_db.sync_vector_store()
             logger.info("벡터 스토어 초기화 완료")
-        except asyncio.TimeoutError:
-            logger.warning("벡터 스토어 동기화 타임아웃 (60초) — LIKE 검색으로 동작")
-            self.librarian_db.vector_store = None
         except Exception as e:
             logger.warning(f"벡터 스토어 초기화 실패 (LIKE 검색으로 동작): {e}")
             self.librarian_db.vector_store = None
