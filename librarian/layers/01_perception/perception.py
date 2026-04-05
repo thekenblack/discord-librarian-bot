@@ -76,6 +76,17 @@ perception_declarations = [
             required=["file_id"],
         ),
     ),
+    types.FunctionDeclaration(
+        name="react",
+        description="유저 메시지에 이모지 리액션을 단다. 가벼운 인사, 감사, 재밌는 말에만.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "emoji": types.Schema(type="STRING", description="이모지 (예: 😊, 📚, 👋)"),
+            },
+            required=["emoji"],
+        ),
+    ),
 ]
 perception_tools = [types.Tool(function_declarations=perception_declarations)]
 
@@ -574,6 +585,15 @@ async def run_perception(self, user_id: str, user_name: str,
                         tool_results.append("[전달 실패] 파일을 찾을 수 없다.")
                 elif deliver_data.get("error"):
                     tool_results.append(f"[전달 실패] {deliver_data['error']}")
+
+            # react (이모지 리액션)
+            elif fc.name == "react":
+                emoji = (dict(fc.args) if fc.args else {}).get("emoji", "")
+                if emoji:
+                    if not hasattr(self, '_l1_reaction'):
+                        self._l1_reaction = ""
+                    self._l1_reaction = emoji
+                    logger.info(f"[Perception] 리액션: {emoji}")
 
     # 분석 텍스트 + 도구 결과 합침
     if tool_results:

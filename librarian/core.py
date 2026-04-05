@@ -636,6 +636,11 @@ class AILibrarianBot(discord.Client):
                 _meta.setdefault("l1_files", []).extend(self._l1_files)
                 self._l1_files.clear()
 
+            # L1에서 react 회수
+            if hasattr(self, '_l1_reaction') and self._l1_reaction:
+                _meta["reaction"] = self._l1_reaction
+                self._l1_reaction = ""
+
             # ── L1 응답 판정 (자발적 발화 전용) ──
             if is_spontaneous:
                 if _re.search(r'decide_to_pause', perception or "", _re.IGNORECASE):
@@ -736,17 +741,7 @@ class AILibrarianBot(discord.Client):
                     except Exception as e:
                         logger.warning(f"[선물] 처리 실패: {e}")
 
-            # L1 분석에서 리액션 파싱 ("리액션: 😊")
-            if perception:
-                reaction_match = _re.search(r'리액션\s*[:：]\s*(.+?)$', perception, _re.MULTILINE)
-                if reaction_match:
-                    emoji_str = reaction_match.group(1).strip()
-                    emojis = _extract_emojis(emoji_str)
-                    if emojis:
-                        _meta["reaction"] = emoji_str
-                        logger.info(f"[L1] 리액션 감지: {emoji_str}")
-                    # 리액션 줄을 perception에서 제거 (L2/L3에 안 넘김)
-                    perception = _re.sub(r'\n?리액션\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
+            # (리액션은 L1 function call로 처리됨)
 
             # ── Layer 3: Character (대사 생성) ──
             _t0 = _time.monotonic()
