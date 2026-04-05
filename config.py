@@ -88,10 +88,10 @@ AI_COMMUNITY_DESC = os.getenv("AI_COMMUNITY_DESC", "비트코인 맥시멀리스
 
 # ── 레이어 온도 ───────────────────────────────
 TEMP_L1 = float(os.getenv("TEMP_L1", "0.3"))
-TEMP_L2 = float(os.getenv("TEMP_L2", "0.5"))
+TEMP_L2 = float(os.getenv("TEMP_L2", "0.3"))
 TEMP_L3 = float(os.getenv("TEMP_L3", "1.2"))
 TEMP_L4 = float(os.getenv("TEMP_L4", "0.1"))
-TEMP_L5 = float(os.getenv("TEMP_L5", "0.3"))
+TEMP_L5 = float(os.getenv("TEMP_L5", "0.5"))
 
 # ── 히스토리 ──────────────────────────────────
 MAX_HISTORY_L1 = int(os.getenv("MAX_HISTORY_L1", "5"))
