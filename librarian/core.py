@@ -837,10 +837,9 @@ class AILibrarianBot(discord.Client):
                                 reverted = True
                                 break
                         if not reverted:
-                            plain = m.group(0).replace('<', '').replace('>', '')
-                            reply = reply.replace(m.group(0), plain, 1)
-                            mention_fixes.append(f"{m.group(0)} → {plain}")
-                            logger.warning(f"[멘션 검증] 제거: {m.group(0)} → {plain}")
+                            reply = reply.replace(m.group(0), '', 1)
+                            mention_fixes.append(f"{m.group(0)} 제거")
+                            logger.warning(f"[멘션 검증] L3에 없던 멘션 제거: {m.group(0)}")
                 if mention_fixes:
                     logger.info(f"[멘션 검증] {len(mention_fixes)}건 수정: {', '.join(mention_fixes)}")
                 logger.info(f"[L4 Postprocess] 변환 ({_time.monotonic()-_t0:.2f}s)")
