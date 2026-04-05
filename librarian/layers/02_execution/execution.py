@@ -353,10 +353,6 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
         parts_out.append(text_response)
     if result_parts:
         parts_out.append("\n".join(result_parts))
-    # 경제 상태 요약 (L3가 선물 맥락 이해용)
-    bot_id = str(self.user.id) if self.user else ""
-    updated_balance = await self.library_db.get_balance(bot_id) if bot_id else 0
-    parts_out.append(f"(내 잔고: {updated_balance} sat)")
     tool_results_text = "\n".join(parts_out)
     logger.info(f"[Execution] 보고:\n{tool_results_text}")
 
