@@ -17,7 +17,7 @@
   "ai": {
     "model": "gemini-3.1-flash-lite-preview",
     "model_l2": "gemini-3.1-flash-lite-preview",
-    "model_l4": "gemini-2.5-flash-lite",
+    "model_l4": "gemini-3.1-flash-lite-preview",
     "model_l5": "gemini-3-flash-preview",
     "max_output_tokens": 500
   },
