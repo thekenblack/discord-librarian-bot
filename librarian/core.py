@@ -731,17 +731,17 @@ class AILibrarianBot(discord.Client):
                     except Exception as e:
                         logger.warning(f"[선물] 처리 실패: {e}")
 
-            # 일반 응답에 리액션이 포함된 경우 파싱 ("리액션: 😊")
-            if instruction:
-                reaction_match = _re.search(r'리액션\s*[:：]\s*(.+?)$', instruction, _re.MULTILINE)
+            # L1 분석에서 리액션 파싱 ("리액션: 😊")
+            if perception:
+                reaction_match = _re.search(r'리액션\s*[:：]\s*(.+?)$', perception, _re.MULTILINE)
                 if reaction_match:
                     emoji_str = reaction_match.group(1).strip()
                     emojis = _extract_emojis(emoji_str)
                     if emojis:
                         _meta["reaction"] = emoji_str
-                        logger.info(f"[L2] 리액션 감지: {emoji_str}")
-                    # 리액션 줄을 instruction에서 제거 (L3에 안 넘김)
-                    instruction = _re.sub(r'\n?리액션\s*[:：]\s*.+?$', '', instruction, flags=_re.MULTILINE).strip()
+                        logger.info(f"[L1] 리액션 감지: {emoji_str}")
+                    # 리액션 줄을 perception에서 제거 (L2/L3에 안 넘김)
+                    perception = _re.sub(r'\n?리액션\s*[:：]\s*.+?$', '', perception, flags=_re.MULTILINE).strip()
 
             # ── Layer 3: Character (대사 생성) ──
             _t0 = _time.monotonic()
