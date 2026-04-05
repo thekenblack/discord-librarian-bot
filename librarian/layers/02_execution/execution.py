@@ -347,13 +347,8 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
             elif tool_data.get("result"):
                 result_parts.append(tool_data["result"])
 
-    # 텍스트 보고 + 도구 실행 결과를 합쳐서 반환
-    parts_out = []
-    if text_response:
-        parts_out.append(text_response)
-    if result_parts:
-        parts_out.append("\n".join(result_parts))
-    tool_results_text = "\n".join(parts_out)
+    # 도구 실행 결과만 반환 (L2 텍스트 응답은 버림)
+    tool_results_text = "\n".join(result_parts) if result_parts else ""
     logger.info(f"[Execution] 보고:\n{tool_results_text}")
 
     return tool_results_text, files_to_send, _meta
