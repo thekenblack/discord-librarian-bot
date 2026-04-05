@@ -129,6 +129,8 @@ async def run_evaluation_batch(self, batch: list[dict]):
             batch_lines.append(f"[L3 대사] {raw}")
             if raw != reply:
                 batch_lines.append(f"[L4 최종] {reply}")
+            if turn.get("mention_fixes"):
+                batch_lines.append(f"[멘션 검증] 수정 {len(turn['mention_fixes'])}건: {', '.join(turn['mention_fixes'])}")
             if i == len(batch) - 1 and turn.get("context"):
                 batch_lines.append(f"[L1 분석] {turn['context'][:500]}")
 

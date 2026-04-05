@@ -817,7 +817,32 @@ class AILibrarianBot(discord.Client):
                 role_map=role_map,
                 emoji_map=emoji_map,
                 feedback=shared_ctx.get("feedback_l4", ""))
+            mention_fixes = []
             if reply != raw_reply:
+                # L4가 만든 <@ID> 중 유효하지 않은 것을 @이름으로 되돌림
+                valid_ids = set(self._mention_map.values())
+                if self.user:
+                    valid_ids.add(str(self.user.id))
+                l4_reply = reply  # L4 원본 보존
+                for m in re.finditer(r'<@!?(\d+)>', reply):
+                    uid = m.group(1)
+                    if uid not in valid_ids:
+                        # raw_reply에 있던 @이름 중 유효 <@ID>가 reply에 없는 것을 찾아 복원
+                        reverted = False
+                        for name, valid_id in self._mention_map.items():
+                            if f'@{name}' in raw_reply and f'<@{valid_id}>' not in reply:
+                                reply = reply.replace(m.group(0), f'@{name}', 1)
+                                mention_fixes.append(f"{m.group(0)} → @{name}")
+                                logger.warning(f"[멘션 검증] 복원: {m.group(0)} → @{name}")
+                                reverted = True
+                                break
+                        if not reverted:
+                            plain = m.group(0).replace('<', '').replace('>', '')
+                            reply = reply.replace(m.group(0), plain, 1)
+                            mention_fixes.append(f"{m.group(0)} → {plain}")
+                            logger.warning(f"[멘션 검증] 제거: {m.group(0)} → {plain}")
+                if mention_fixes:
+                    logger.info(f"[멘션 검증] {len(mention_fixes)}건 수정: {', '.join(mention_fixes)}")
                 logger.info(f"[L4 Postprocess] 변환 ({_time.monotonic()-_t0:.2f}s)")
             else:
                 logger.info(f"[L4 Postprocess] 통과 ({_time.monotonic()-_t0:.2f}s)")
@@ -828,13 +853,16 @@ class AILibrarianBot(discord.Client):
 
             # ── Layer 5: Evaluation (큐에 추가, 백그라운드 워커가 처리) ──
             if reply:
-                self._evaluation_queue.put_nowait({
+                turn_data = {
                     "user_id": user_id, "user_name": user_name,
                     "user_text": user_text, "bot_reply": reply,
                     "raw_reply": raw_reply,
                     "context": perception, "tool_results": instruction,
                     "channel_id": channel_id,
-                })
+                }
+                if mention_fixes:
+                    turn_data["mention_fixes"] = mention_fixes
+                self._evaluation_queue.put_nowait(turn_data)
 
             if len(reply) > 2000:
                 reply = reply[:1997] + "..."
