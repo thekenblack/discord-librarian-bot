@@ -769,6 +769,8 @@ class AILibrarianBot(discord.Client):
             if not raw_reply:
                 if history and history[-1].role == "user":
                     history.pop()
+                logger.info("[L4 Postprocess] 스킵 (빈 응답)")
+                logger.info("[L5 Evaluation] 스킵 (빈 응답)")
                 _meta["no_response"] = True
                 return "", files_to_send, _meta
 
