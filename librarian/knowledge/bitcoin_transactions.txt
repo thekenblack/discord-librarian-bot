@@ -1,0 +1,13 @@
+비트코인 트랜잭션 구조: version(4바이트) + marker/flag(SegWit) + inputs + outputs + witness(SegWit) + locktime(4바이트). 입력은 이전 UTXO를 참조, 출력은 새 UTXO 생성. | 트랜잭션 구조, transaction structure
+트랜잭션 입력(TxIn): 이전 트랜잭션 해시(32바이트) + 출력 인덱스(4바이트) + scriptSig + sequence. 이전 UTXO를 소비한다는 증명. | TxIn, 입력, scriptSig
+트랜잭션 출력(TxOut): 금액(8바이트, satoshi 단위) + scriptPubKey. 새로운 UTXO를 생성. 잠금 조건을 정의. | TxOut, 출력, scriptPubKey
+P2PKH(Pay-to-Public-Key-Hash): 가장 기본적인 주소 유형. 1로 시작. scriptPubKey: OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG. | P2PKH, 레거시, legacy
+P2SH(Pay-to-Script-Hash): 스크립트 해시에 지불. 3으로 시작. 복잡한 조건(멀티시그 등)을 해시로 압축. 실제 스크립트는 지출 시 공개. | P2SH
+P2WPKH(Pay-to-Witness-Public-Key-Hash): Native SegWit. bc1q로 시작. 서명이 witness에 분리되어 수수료 절감. 가장 효율적인 일반 전송. | P2WPKH, bc1q, bech32
+P2WSH(Pay-to-Witness-Script-Hash): SegWit 스크립트 해시. 멀티시그 등 복잡한 조건의 SegWit 버전. 경로: m/48'/0'/0'/2'. | P2WSH
+P2TR(Pay-to-Taproot): bc1p로 시작. 키 경로(단일 서명처럼 보임) 또는 스크립트 경로(MAST). 프라이버시 최적. | P2TR, bc1p, bech32m, taproot
+수수료 계산: 수수료 = 입력 합계 - 출력 합계. vbyte(가상 바이트) = weight / 4. SegWit은 witness 데이터에 할인 적용(1/4 weight). sat/vB로 수수료율 표시. | 수수료, fee, vbyte, weight
+코인 컨트롤: 어떤 UTXO를 사용할지 직접 선택. 프라이버시(연결 방지)와 수수료 최적화에 중요. Sparrow 등에서 지원. | 코인 컨트롤, coin control
+더스트 공격: 극소량 비트코인을 대량 주소에 전송해 추적 시도. 사용하면 주소 간 연결이 드러남. 무시하거나 코인 컨트롤로 격리. | 더스트, dust attack
+타임록: nLockTime(트랜잭션 레벨), OP_CHECKLOCKTIMEVERIFY(CLTV, 출력 레벨), OP_CHECKSEQUENCEVERIFY(CSV, 상대적). 라이트닝 채널의 핵심 기술. | 타임록, timelock, CLTV, CSV, nLockTime
+시그해시 타입: SIGHASH_ALL(전체 서명), SIGHASH_NONE(출력 미서명), SIGHASH_SINGLE(같은 인덱스 출력만), ANYONECANPAY(자기 입력만). | 시그해시, sighash
