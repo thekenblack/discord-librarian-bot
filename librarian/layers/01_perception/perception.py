@@ -215,9 +215,15 @@ async def gather_context(self, user_id: str, user_name: str,
         parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
     result = "\n\n".join(parts)
-    # 포함된 섹션 로깅
-    _sections = [p.split("\n")[0].strip("# ") for p in parts if p.startswith("##")]
-    logger.info(f"[gather_context] {len(result)}자, 섹션: {_sections}")
+    # 포함된 섹션 로깅 (내용 포함)
+    _log = []
+    for p in parts:
+        if p.startswith("##"):
+            title = p.split("\n")[0].strip("# ")
+            body = p[len(p.split("\n")[0]):].strip()
+            preview = body[:150].replace("\n", " ") if body else "(비어있음)"
+            _log.append(f"  {title}: {preview}")
+    logger.info(f"[gather_context] {len(result)}자\n" + "\n".join(_log))
     return result
 
 
