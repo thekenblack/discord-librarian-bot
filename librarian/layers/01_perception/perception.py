@@ -215,22 +215,24 @@ async def gather_context(self, user_id: str, user_name: str,
         parts.append("## 답글 흐름\n" + "\n".join(reply_chain))
 
     result = "\n\n".join(parts)
-    # 동적 맥락만 로깅 (답글, 앵커, 최근 대화)
+    # 동적 맥락만 로깅
     _dynamic = {"답글 흐름", "답글 대상 주변 맥락", "최근 채널 대화"}
     _log = []
+    _static = []
     for p in parts:
-        if p.startswith("##"):
-            title = p.split("\n")[0].strip("# ")
-            if title in _dynamic:
-                body = p[len(p.split("\n")[0]):].strip()
-                _log.append(f"  [{title}]")
-                for line in body.split("\n"):
-                    if line.strip():
-                        _log.append(f"    {line.strip()}")
-    _static = [p.split("\n")[0].strip("# ") for p in parts if p.startswith("##") and p.split("\n")[0].strip("# ") not in _dynamic]
+        if not p.startswith("##"):
+            continue
+        title = p.split("\n")[0].strip("# ")
+        if title in _dynamic:
+            _log.append(f"  [{title}]")
+            for line in p.split("\n")[1:]:
+                if line.strip():
+                    _log.append(f"    | {line.strip()}")
+        else:
+            _static.append(title)
     logger.info(f"[gather_context] {len(result)}자, 고정: {_static}")
     if _log:
-        logger.info("[gather_context] 동적 맥락:\n" + "\n".join(_log))
+        logger.info(f"[gather_context] 동적 맥락:\n" + "\n".join(_log))
     return result
 
 
