@@ -96,6 +96,7 @@ execution_declarations = [
             name="gift_user",
             description=(
                 "유저에게 선물을 준다. 고마울 때, 축하할 때, 위로할 때 등 감정적으로 주고 싶을 때 사용. "
+                "target을 생략하면 대화 상대에게 준다. "
                 "사용 가능한 아이템: " + ", ".join(
                     f"{item['emoji']}{item['name']}({item['id']})" for item in SHOP_ITEMS)
             ),
@@ -104,6 +105,7 @@ execution_declarations = [
                 properties={
                     "item_id": types.Schema(type="STRING", description="아이템 ID (예: coffee, cake, book)"),
                     "message": types.Schema(type="STRING", description="선물과 함께 보내는 메시지 (캐릭터에게 전달됨)"),
+                    "target": types.Schema(type="STRING", description="선물 대상 유저 ID. 생략하면 대화 상대."),
                 },
                 required=["item_id", "message"],
             ),
@@ -297,8 +299,22 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
                 "item_name": item["name"],
                 "item_emoji": item["emoji"],
             }, ensure_ascii=False)
-        user_id = args.get("_user_id")
-        user_name = args.get("_user_name", "")
+        # 대상 결정: target 지정 시 mention_map에서 조회
+        target_id = args.get("target")
+        mention_map = args.get("_mention_map", {})
+        if target_id and target_id in mention_map.values():
+            # 유효한 ID
+            target_name = next((n for n, i in mention_map.items() if i == target_id), "")
+        elif target_id:
+            return json.dumps({
+                "_action": "gift_failed",
+                "reason": f"대상을 찾을 수 없습니다 (ID: {target_id})",
+                "item_name": item["name"],
+                "item_emoji": item["emoji"],
+            }, ensure_ascii=False)
+        else:
+            target_id = args.get("_user_id")
+            target_name = args.get("_user_name", "")
         channel_id = args.get("_channel_id")
         msg = args.get("message", "")
         return json.dumps({
@@ -306,8 +322,8 @@ async def execute_tool(library_db: LibraryDB, librarian_db: LibrarianDB,
             "item_id": item["id"],
             "item_name": item["name"],
             "item_emoji": item["emoji"],
-            "user_id": user_id,
-            "user_name": user_name,
+            "user_id": target_id,
+            "user_name": target_name,
             "channel_id": channel_id,
             "message": msg,
         }, ensure_ascii=False)

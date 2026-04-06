@@ -620,6 +620,7 @@ class AILibrarianBot(discord.Client):
                 "balance": await self.library_db.get_balance(bot_id) if bot_id else 0,
                 "catalog": await self._build_catalog(),
                 "memories": await self._build_memories(user_id, user_name),
+                "mention_map": dict(self._mention_map),
                 "_all_channels": _all_channels,
                 "_all_roles": _all_roles,
                 "_all_emojis": _all_emojis,

@@ -223,6 +223,12 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
     if perception:
         parts.append(f"## 관찰자 분석 (Perception)\n{perception}")
 
+    # mention_map → L2가 gift_user target 지정에 사용
+    mention_map = (shared_ctx or {}).get("mention_map", {})
+    if mention_map:
+        mm_lines = [f"@{name} = {uid}" for name, uid in mention_map.items()]
+        parts.append("## 유저 목록 (gift_user target 지정용)\n" + "\n".join(mm_lines))
+
     role = "주인 (도서관 관리자)" if user_id in ADMIN_IDS else "일반 방문자"
     logger.info(f"[Execution] 대화 상대: @{user_name} (ID: {user_id}) → {role}")
 
@@ -306,6 +312,7 @@ async def run_execution(self, user_id: str, user_name: str, user_text: str,
             tool_args["_user_name"] = user_name
             tool_args["_channel_id"] = channel_id
             tool_args["_bot_balance"] = shared_ctx.get("balance", 0) if shared_ctx else 0
+            tool_args["_mention_map"] = shared_ctx.get("mention_map", {}) if shared_ctx else {}
             tool_result = await execute_tool(self.library_db, self.librarian_db, fc.name, tool_args)
             tool_data = json.loads(tool_result)
             _meta["tool_results"].append(tool_result)
