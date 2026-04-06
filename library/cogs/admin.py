@@ -147,6 +147,72 @@ class AdminCog(commands.Cog):
         e.set_footer(text=f"조회: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
         await interaction.followup.send(embed=e, ephemeral=True)
 
+    # ── /admin status ──────────────────────────────────────
+    @admin.command(name="status", description="사서봇 상태 조회")
+    async def admin_status(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+
+        ai = getattr(self.bot, "ai_bot_client", None)
+        if not ai:
+            return await interaction.followup.send(
+                embed=error_embed("사서봇 없음", "사서봇이 연결되어 있지 않습니다."), ephemeral=True
+            )
+
+        from config import VERSION, GIT_HASH
+        from librarian.core import MODEL_L1, MODEL_L2, MODEL_L3, MODEL_L4, MODEL_L5
+
+        # 감정/상태
+        bot_emo = await ai.librarian_db.get_bot_emotion()
+        mood = bot_emo.get("self_mood", 50)
+        energy = bot_emo.get("self_energy", 50)
+        vibe = bot_emo.get("server_vibe", 50)
+        fullness = bot_emo.get("fullness", 50)
+        hydration = bot_emo.get("hydration", 50)
+
+        # 런타임
+        history_users = len(ai.chat_histories)
+        history_channels = len(ai.perception_histories)
+        eval_queue = ai._evaluation_queue.qsize()
+        mention_map_size = len(ai._mention_map)
+
+        # 잔고
+        bot_id = str(ai.user.id) if ai.user else ""
+        balance = await ai.library_db.get_balance(bot_id) if bot_id else 0
+
+        e = discord.Embed(title=f"{ai.persona.name} 상태", color=0x9B59B6)
+        e.add_field(name="버전", value=f"v{VERSION} [{GIT_HASH[:7]}]", inline=True)
+        e.add_field(name="잔고", value=sat_fmt(balance), inline=True)
+        e.add_field(name="\u200b", value="\u200b", inline=True)
+
+        e.add_field(name="기분", value=f"{mood:.0f}", inline=True)
+        e.add_field(name="에너지", value=f"{energy:.0f}", inline=True)
+        e.add_field(name="서버 분위기", value=f"{vibe:.0f}", inline=True)
+
+        e.add_field(name="포만감", value=f"{fullness:.0f}", inline=True)
+        e.add_field(name="수분", value=f"{hydration:.0f}", inline=True)
+        e.add_field(name="\u200b", value="\u200b", inline=True)
+
+        e.add_field(name="대화 히스토리", value=f"{history_users}명", inline=True)
+        e.add_field(name="채널 히스토리", value=f"{history_channels}채널", inline=True)
+        e.add_field(name="평가 대기", value=f"{eval_queue}건", inline=True)
+
+        e.add_field(name="멘션맵", value=f"{mention_map_size}명", inline=True)
+        e.add_field(name="\u200b", value="\u200b", inline=True)
+        e.add_field(name="\u200b", value="\u200b", inline=True)
+
+        model_text = f"L1~L4: {MODEL_L1}\nL5: {MODEL_L5}"
+        if MODEL_L2 != MODEL_L1:
+            model_text = f"L1: {MODEL_L1}\nL2: {MODEL_L2}\nL3: {MODEL_L3}\nL4: {MODEL_L4}\nL5: {MODEL_L5}"
+        e.add_field(name="모델", value=model_text, inline=False)
+
+        from datetime import datetime, timezone
+        e.set_footer(text=f"조회: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
+        await interaction.followup.send(embed=e, ephemeral=True)
+
     # ── /admin log ──────────────────────────────────────────
     @admin.command(name="log", description="AI 봇 로그 파일 전송")
     @app_commands.describe(server_log="서버 로그(server.log) 전송 여부")
