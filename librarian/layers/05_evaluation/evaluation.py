@@ -312,3 +312,189 @@ async def run_evaluation_batch(self, batch: list[dict]):
 
     except Exception as e:
         logger.warning(f"[Evaluation] 배치 처리 실패: {e}")
+
+
+async def run_reflection(self):
+    """장기 리뷰 (3시간 회고). AFC 10회. search/forget/memorize/speak 등."""
+    try:
+        import os
+        _eval_tools = _il.import_module("librarian.layers.05_evaluation.tools")
+        reflection_tools = _eval_tools.reflection_tools
+
+        # 프롬프트 로드
+        prompt_path = os.path.join(os.path.dirname(__file__), "reflection_prompt.txt")
+        with open(prompt_path, encoding="utf-8") as f:
+            reflection_prompt = f.read().strip()
+
+        # ── 컨텍스트 조립 ──
+        sys_parts = [reflection_prompt]
+
+        # 봇 감정 (감쇠 후)
+        bot_emo = await self.librarian_db.get_bot_emotion()
+        emo_text = " ".join(f"{k}:{v:.1f}" for k, v in bot_emo.items())
+        sys_parts.append(f"## 현재 상태\n{emo_text}")
+
+        # 최근 대화 로그 (단기 리뷰 요약)
+        conv_logs = await self.librarian_db.get_recent_conversation_logs(limit=10)
+        if conv_logs:
+            log_lines = [f"- {c['created_at'][:16]}: {c.get('quality', '')[:150]}" for c in reversed(conv_logs)]
+            sys_parts.append("## 최근 대화 기록\n" + "\n".join(log_lines))
+
+        # 감정 변화 이력 (오늘)
+        emotion_logs = await self.librarian_db.get_emotion_log(limit=20)
+        if emotion_logs:
+            emo_log_lines = [f"- {e['created_at'][:16]}: {e.get('reason', '')} ({e.get('changes', '')})" for e in reversed(emotion_logs)]
+            sys_parts.append("## 오늘 감정 변화\n" + "\n".join(emo_log_lines))
+
+        # 패턴/자기 기록
+        patterns = await self.librarian_db.get_pattern_notes(limit=10)
+        self_notes = await self.librarian_db.get_self_notes(limit=5)
+        if patterns:
+            sys_parts.append("## 패턴 기록\n" + "\n".join(f"- [{p['scope']}] {p['observation']}" for p in patterns))
+        if self_notes:
+            sys_parts.append("## 자기 기록\n" + "\n".join(f"- [{n['category']}] {n['content']}" for n in self_notes))
+
+        # 최근 일기
+        diary = await self.librarian_db.get_diary(limit=5)
+        if diary:
+            diary_lines = [f"- {d['created_at'][:16]}: {d['entry']}" for d in reversed(diary)]
+            sys_parts.append("## 최근 일기\n" + "\n".join(diary_lines))
+
+        system_prompt = "\n\n".join(p for p in sys_parts if p)
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            tools=reflection_tools,
+            max_output_tokens=2000,
+            temperature=TEMP_L5,
+        )
+
+        # AFC 루프 (최대 10회)
+        contents = [types.Content(role="user", parts=[
+            types.Part.from_text(text="혼자 있는 시간이다. 돌아보고, 정리하고, 생각을 이어가.")
+        ])]
+
+        from librarian.core import MODEL_L5
+        _log_lines = []
+        spoke = False
+
+        for afc_round in range(10):
+            logger.info(f"[Reflection] AFC {afc_round + 1}/10 (model={MODEL_L5})")
+            response = await self._call_gemini(contents, config, model=MODEL_L5)
+
+            if not response or not response.candidates or not response.candidates[0].content:
+                break
+
+            response_parts = response.candidates[0].content.parts
+            if not response_parts:
+                break
+
+            # 응답을 히스토리에 추가
+            contents.append(response.candidates[0].content)
+
+            has_fc = False
+            func_responses = []
+
+            for part in response_parts:
+                if getattr(part, 'thought', False):
+                    continue
+
+                if part.text and part.text.strip():
+                    _log_lines.append(f"  텍스트: {part.text.strip()[:200]}")
+
+                if not part.function_call:
+                    continue
+
+                has_fc = True
+                fc = part.function_call
+                fc_args = dict(fc.args) if fc.args else {}
+                result_text = ""
+
+                if fc.name == "search":
+                    keyword = fc_args.get("keyword", "")
+                    search_result = await execute_tool(
+                        self.library_db, self.librarian_db, "search",
+                        {"keyword": keyword, "_user_name": ""})
+                    result_text = search_result
+                    _log_lines.append(f"  search: {keyword}")
+
+                elif fc.name == "memorize":
+                    content = fc_args.get("content", "")
+                    result_text = await execute_tool(
+                        self.library_db, self.librarian_db, "memorize",
+                        {"content": content, "_user_name": ""})
+                    _log_lines.append(f"  memorize: {content[:80]}")
+
+                elif fc.name == "forget":
+                    result_text = await execute_tool(
+                        self.library_db, self.librarian_db, "forget", fc_args)
+                    _log_lines.append(f"  forget: {fc_args}")
+
+                elif fc.name == "memorize_alias":
+                    result_text = await execute_tool(
+                        self.library_db, self.librarian_db, "memorize_alias", fc_args)
+                    _log_lines.append(f"  memorize_alias: {fc_args}")
+
+                elif fc.name == "forget_alias":
+                    result_text = await execute_tool(
+                        self.library_db, self.librarian_db, "forget_alias", fc_args)
+                    _log_lines.append(f"  forget_alias: {fc_args}")
+
+                elif fc.name == "note_pattern":
+                    await self.librarian_db.save_pattern_note(
+                        observation=fc_args.get("observation", ""),
+                        scope=fc_args.get("scope", "global"),
+                        target_id=fc_args.get("target_id"))
+                    result_text = json.dumps({"result": "패턴 기록 완료"})
+                    _log_lines.append(f"  패턴: {fc_args.get('observation', '')[:80]}")
+
+                elif fc.name == "note_self":
+                    await self.librarian_db.save_self_note(
+                        content=fc_args.get("content", ""),
+                        category=fc_args.get("category", "tendency"))
+                    result_text = json.dumps({"result": "자기 기록 완료"})
+                    _log_lines.append(f"  자기 기록: {fc_args.get('content', '')[:80]}")
+
+                elif fc.name == "write_diary":
+                    entry = fc_args.get("entry", "")
+                    if entry:
+                        await self.librarian_db.write_diary(entry)
+                        result_text = json.dumps({"result": "일기 저장 완료"})
+                        _log_lines.append(f"  일기: {entry[:100]}")
+
+                elif fc.name in ("feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4"):
+                    layer = fc.name.split("_")[1]
+                    scope = fc_args.get("scope", "global")
+                    scope_id = fc_args.get("scope_id", "")
+                    fb = fc_args.get("feedback", "")
+                    key = f"channel:{scope_id}" if scope == "channel" else (scope_id or "global")
+                    await self.librarian_db.save_layer_feedback(layer, key, fb)
+                    result_text = json.dumps({"result": "피드백 저장 완료"})
+                    _log_lines.append(f"  피드백 [{layer.upper()}] ({scope}:{key}): {fb[:80]}")
+
+                elif fc.name == "speak" and not spoke:
+                    msg = fc_args.get("message", "")
+                    if msg:
+                        self._reflection_speak_message = msg
+                        spoke = True
+                        result_text = json.dumps({"result": "메시지 전송 예약 완료"})
+                        _log_lines.append(f"  speak: {msg[:100]}")
+                elif fc.name == "speak" and spoke:
+                    result_text = json.dumps({"result": "이미 발화했다. 1회만 가능."})
+
+                func_responses.append(types.Part.from_function_response(
+                    name=fc.name,
+                    response=json.loads(result_text) if result_text.startswith("{") else {"result": result_text}
+                ))
+
+            if not has_fc:
+                break  # 도구 호출 없으면 종료
+
+            # function response를 히스토리에 추가
+            contents.append(types.Content(role="user", parts=func_responses))
+
+        report = "\n".join(_log_lines) if _log_lines else "  (활동 없음)"
+        logger.info(f"[Reflection] 장기 리뷰 완료\n{'─' * 50}\n{report}\n{'─' * 50}")
+
+    except Exception as e:
+        logger.warning(f"[Reflection] 장기 리뷰 실패: {e}")

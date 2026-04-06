@@ -213,6 +213,24 @@ class AdminCog(commands.Cog):
         e.set_footer(text=f"조회: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
         await interaction.followup.send(embed=e, ephemeral=True)
 
+    # ── /admin speak ──────────────────────────────────────
+    @admin.command(name="speak", description="사서봇 장기 리뷰 강제 실행")
+    async def admin_speak(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message(
+                embed=error_embed("권한 없음", "어드민만 사용할 수 있습니다."), ephemeral=True
+            )
+        ai = getattr(self.bot, "ai_bot_client", None)
+        if not ai:
+            return await interaction.response.send_message(
+                embed=error_embed("사서봇 없음", "사서봇이 연결되어 있지 않습니다."), ephemeral=True
+            )
+        await interaction.response.send_message(
+            embed=info_embed("장기 리뷰", "장기 리뷰를 시작합니다."), ephemeral=True
+        )
+        import asyncio
+        asyncio.create_task(ai.force_reflection())
+
     # ── /admin log ──────────────────────────────────────────
     @admin.command(name="log", description="AI 봇 로그 파일 전송")
     @app_commands.describe(server_log="서버 로그(server.log) 전송 여부")

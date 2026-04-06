@@ -107,6 +107,9 @@ class AILibrarianBot(discord.Client):
         self._bot_ready = False
         self._bg_semaphore = asyncio.Semaphore(2)  # 백그라운드 동시 실행 제한
         self._mention_map: dict[str, str] = {}  # 닉네임 → user_id (L4 멘션 변환용)
+        self._last_conversation_time: float = 0  # 마지막 대화 시각 (monotonic)
+        self._reflection_task: asyncio.Task | None = None  # 장기 리뷰 태스크
+        self._reflection_speak_message: str | None = None  # L5 speak 메시지
         self._catalog_cache: str = ""
         self._catalog_built_at: str = ""
 
@@ -269,10 +272,57 @@ class AILibrarianBot(discord.Client):
                 logger.info(f"[Evaluation Worker] 배치 시작 ({len(batch)}턴)")
                 await self._run_evaluation_batch(batch)
 
+                # 장기 리뷰 타이머 리셋 (대화가 있었으므로)
+                import time as _time_ref
+                self._last_conversation_time = _time_ref.monotonic()
+                self._schedule_reflection()
+
             except asyncio.CancelledError:
                 return
             except Exception as e:
                 logger.warning(f"[Evaluation Worker] 에러 (무시): {e}")
+
+    REFLECTION_DELAY = 10800.0  # 3시간
+
+    def _schedule_reflection(self):
+        """장기 리뷰 타이머를 (재)설정. 마지막 대화 후 3시간에 1회."""
+        if self._reflection_task and not self._reflection_task.done():
+            self._reflection_task.cancel()
+        self._reflection_task = asyncio.create_task(self._reflection_timer())
+
+    async def _reflection_timer(self):
+        """3시간 대기 후 장기 리뷰 실행."""
+        try:
+            await asyncio.sleep(self.REFLECTION_DELAY)
+            logger.info("[Reflection] 장기 리뷰 시작 (마지막 대화 후 3시간)")
+            self._reflection_speak_message = None
+            await self._run_reflection()
+
+            # speak 메시지가 있으면 자발적 채널에 전송
+            if self._reflection_speak_message and SPONTANEOUS_CHANNEL_ID:
+                channel = self.get_channel(int(SPONTANEOUS_CHANNEL_ID))
+                if channel:
+                    await channel.send(self._reflection_speak_message)
+                    logger.info(f"[Reflection] speak: {self._reflection_speak_message[:100]}")
+                self._reflection_speak_message = None
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"[Reflection] 장기 리뷰 에러: {e}")
+
+    async def force_reflection(self):
+        """어드민 명령으로 장기 리뷰를 강제 실행."""
+        logger.info("[Reflection] 강제 장기 리뷰 시작")
+        self._reflection_speak_message = None
+        await self._run_reflection()
+
+        if self._reflection_speak_message and SPONTANEOUS_CHANNEL_ID:
+            channel = self.get_channel(int(SPONTANEOUS_CHANNEL_ID))
+            if channel:
+                await channel.send(self._reflection_speak_message)
+                logger.info(f"[Reflection] speak: {self._reflection_speak_message[:100]}")
+            self._reflection_speak_message = None
 
     async def _flush_admin_notify(self, delay: float = 10.0):
         """대기열에 모인 에러를 일정 시간 후 한 번에 전송"""
@@ -1592,3 +1642,4 @@ AILibrarianBot._run_postprocess = _postprocess.run_postprocess
 
 _evaluation = _il.import_module("librarian.layers.05_evaluation.evaluation")
 AILibrarianBot._run_evaluation_batch = _evaluation.run_evaluation_batch
+AILibrarianBot._run_reflection = _evaluation.run_reflection

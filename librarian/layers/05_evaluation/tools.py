@@ -232,3 +232,47 @@ EVALUATION_TOOL_NAMES = {
 }
 
 evaluation_tools = [types.Tool(function_declarations=evaluation_declarations)]
+
+# ── 장기 리뷰 (3시간 회고) 도구 ──
+
+_search_decl = types.FunctionDeclaration(
+    name="search",
+    description="기억, 지식, 도서, 미디어, URL, 웹 캐시를 검색한다. 기억 정리 시 확인용.",
+    parameters=types.Schema(
+        type="OBJECT",
+        properties={
+            "keyword": types.Schema(type="STRING", description="검색 키워드"),
+        },
+        required=["keyword"],
+    ),
+)
+
+reflection_declarations = [_search_decl] + [
+    d for d in evaluation_declarations
+    if d.name in (
+        "memorize", "forget", "memorize_alias", "forget_alias",
+        "note_pattern", "note_self", "write_diary",
+        "feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4",
+    )
+] + [
+    types.FunctionDeclaration(
+        name="speak",
+        description="자발적 채널에 직접 메시지를 보낸다. 할 말이 있을 때만. 1회만 호출.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "message": types.Schema(type="STRING", description="보낼 메시지"),
+            },
+            required=["message"],
+        ),
+    ),
+]
+
+REFLECTION_TOOL_NAMES = {
+    "search", "memorize", "forget", "memorize_alias", "forget_alias",
+    "note_pattern", "note_self", "write_diary",
+    "feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4",
+    "speak",
+}
+
+reflection_tools = [types.Tool(function_declarations=reflection_declarations)]
