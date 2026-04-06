@@ -207,6 +207,22 @@ async def gather_context(self, user_id: str, user_name: str,
         if memories_text:
             parts.append(f"## 기억\n{memories_text}")
 
+    # 최근 미디어 (유저 5건 + 타유저 5건)
+    recent_media = ctx.get("recent_media")
+    if recent_media:
+        m_user, m_other, _ = recent_media
+        media_lines = []
+        if m_user:
+            media_lines.append(f"@{user_name}의 미디어:")
+            for m in m_user:
+                media_lines.append(f"  - [{m['filename']}] {m['result'][:80]}")
+        if m_other:
+            media_lines.append("그 외 미디어:")
+            for m in m_other:
+                media_lines.append(f"  - [{m['filename']}] {m['result'][:80]}")
+        if media_lines:
+            parts.append("## 최근 미디어\n" + "\n".join(media_lines))
+
     # 답글 대상 주변 맥락
     if anchor_context:
         parts.append("## 답글 대상 주변 맥락\n" + "\n".join(anchor_context))
