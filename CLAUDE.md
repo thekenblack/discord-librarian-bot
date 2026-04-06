@@ -61,7 +61,7 @@ L4 Postprocess (히스토리 없음)
   L4 직후 코드 검증: mention_map에 없는 <@ID>는 Discord API로 실존 확인, 무효 시 @이름으로 복원.
   도구 없음.
       |
-L5 Evaluation (단일 히스토리 5건, 큐 워커, 디바운스 5분/5건)
+L5 Evaluation (단일 히스토리 5건, 큐 워커, 단기 리뷰 디바운스 30분/5건)
   감정 변화 + 소견 + 유저/채널 요약 갱신.
   도구: feel, memorize, forget, memorize_alias, forget_alias, update_summary, update_channel_summary
 ```
