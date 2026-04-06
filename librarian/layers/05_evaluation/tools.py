@@ -157,6 +157,17 @@ evaluation_declarations = [
             required=["content"],
         ),
     ),
+    types.FunctionDeclaration(
+        name="write_diary",
+        description="일기를 쓴다. 이번 대화가 너에게 어떤 의미였는지, 지금 무슨 생각을 하는지. 반성이 아니라 서사. 네가 어떤 존재인지 이어가는 글.",
+        parameters=types.Schema(
+            type="OBJECT",
+            properties={
+                "entry": types.Schema(type="STRING", description="일기 내용"),
+            },
+            required=["entry"],
+        ),
+    ),
     # ── 레이어별 피드백 (각 레이어가 직접 읽음) ──
     types.FunctionDeclaration(
         name="feedback_l1",
@@ -215,7 +226,7 @@ evaluation_declarations = [
 EVALUATION_TOOL_NAMES = {
     "feel", "memorize", "forget", "update_summary", "update_channel_summary",
     "memorize_alias", "forget_alias",
-    "update_profile", "log_conversation", "note_pattern", "note_self",
+    "update_profile", "log_conversation", "note_pattern", "note_self", "write_diary",
     "feedback_l1", "feedback_l2", "feedback_l3", "feedback_l4", "feedback_l5",
     "feedback_admin",
 }

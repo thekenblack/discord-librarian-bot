@@ -92,6 +92,12 @@ async def run_evaluation_batch(self, batch: list[dict]):
         if self_notes:
             sys_parts.append("## 자기 기록\n" + "\n".join(f"- [{n['category']}] {n['content']}" for n in self_notes))
 
+        # 최근 일기
+        diary = await self.librarian_db.get_diary(limit=3)
+        if diary:
+            diary_lines = [f"- {d['created_at'][:16]}: {d['entry']}" for d in reversed(diary)]
+            sys_parts.append("## 최근 일기\n" + "\n".join(diary_lines))
+
         # L5 자기 피드백
         for uid in user_ids:
             fb_l5 = await self.librarian_db.get_layer_feedback("l5", uid)
@@ -279,6 +285,12 @@ async def run_evaluation_batch(self, batch: list[dict]):
                     fb = fc_args.get("feedback", "")
                     await self.librarian_db.save_layer_feedback("l5", uid, fb)
                     _log_lines.append(f"  피드백 [L5 셀프] ({uid}): {fb}")
+
+                elif fc.name == "write_diary":
+                    entry = fc_args.get("entry", "")
+                    if entry:
+                        await self.librarian_db.write_diary(entry)
+                        _log_lines.append(f"  일기: {entry[:100]}")
 
                 elif fc.name == "feedback_admin":
                     uid_raw = fc_args.get("user_id", batch[-1]["user_id"])

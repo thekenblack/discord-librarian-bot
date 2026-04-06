@@ -321,6 +321,14 @@ class LibrarianDB:
             """)
 
             await db.execute("""
+                CREATE TABLE IF NOT EXISTS diary (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entry      TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_thinking (
                     user_id  TEXT PRIMARY KEY,
                     l1       TEXT NOT NULL DEFAULT 'minimal',
@@ -1639,6 +1647,20 @@ class LibrarianDB:
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM self_notes ORDER BY id DESC LIMIT ?", (limit,))
+            return [dict(r) for r in await cursor.fetchall()]
+
+    # ── 일기 ──────────────────────────────────────────────
+
+    async def write_diary(self, entry: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("INSERT INTO diary (entry) VALUES (?)", (entry,))
+            await db.commit()
+
+    async def get_diary(self, limit: int = 5) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM diary ORDER BY id DESC LIMIT ?", (limit,))
             return [dict(r) for r in await cursor.fetchall()]
 
     async def get_recent_conversation_logs(self, limit: int = 5) -> list[dict]:
